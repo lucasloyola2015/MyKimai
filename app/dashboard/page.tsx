@@ -5,6 +5,7 @@ import { createClientComponentClient } from "@/lib/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { format, startOfDay, endOfDay, startOfWeek, endOfWeek } from "date-fns";
 import type { Database } from "@/lib/types/database";
+import { HoursChart } from "@/components/dashboard/hours-chart";
 
 type TimeEntry = Database["public"]["Tables"]["time_entries"]["Row"];
 
@@ -172,6 +173,7 @@ export default function DashboardPage() {
           </CardContent>
         </Card>
       </div>
+      <HoursChart />
     </div>
   );
 }

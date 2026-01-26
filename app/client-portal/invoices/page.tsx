@@ -112,13 +112,12 @@ export default function ClientInvoicesPage() {
                       <PDFDownloadLink
                         document={<InvoicePDF invoice={invoice as any} />}
                         fileName={`${invoice.invoice_number}.pdf`}
+                        className="inline-block"
                       >
-                        {({ loading }) => (
-                          <Button disabled={loading} variant="outline">
-                            <Download className="mr-2 h-4 w-4" />
-                            {loading ? "Generando..." : "Descargar"}
-                          </Button>
-                        )}
+                        <Button variant="outline">
+                          <Download className="mr-2 h-4 w-4" />
+                          Descargar
+                        </Button>
                       </PDFDownloadLink>
                     )}
                   </div>

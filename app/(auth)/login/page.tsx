@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import Link from "next/link";
 import { createClientComponentClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -81,12 +80,6 @@ export default function LoginPage() {
             <Button type="submit" className="w-full" disabled={loading}>
               {loading ? "Iniciando sesión..." : "Iniciar Sesión"}
             </Button>
-            <p className="text-center text-sm text-muted-foreground">
-              ¿No tienes una cuenta?{" "}
-              <Link href="/register" className="text-primary hover:underline">
-                Regístrate
-              </Link>
-            </p>
           </CardFooter>
         </form>
       </Card>

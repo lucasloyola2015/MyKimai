@@ -60,23 +60,60 @@ export default function ClientsPage() {
   }, []);
 
   const loadClients = async () => {
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/0fda1414-4390-4855-9462-9c9a0cf71bf7',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'clients/page.tsx:62',message:'loadClients called',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+    // #endregion
     try {
       const {
         data: { user },
+        error: authError,
       } = await supabase.auth.getUser();
 
-      if (!user) return;
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/0fda1414-4390-4855-9462-9c9a0cf71bf7',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'clients/page.tsx:69',message:'Auth check result',data:{hasUser:!!user,hasAuthError:!!authError,authErrorCode:authError?.code},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+      // #endregion
+
+      if (authError) {
+        console.error("Auth error:", authError);
+        return;
+      }
+
+      if (!user) {
+        console.error("No user found");
+        return;
+      }
+
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/0fda1414-4390-4855-9462-9c9a0cf71bf7',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'clients/page.tsx:79',message:'Before Supabase query',data:{userId:user.id},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+      // #endregion
 
       const { data, error } = await supabase
         .from("clients")
         .select("*")
-        .eq("user_id", user.id)
         .order("created_at", { ascending: false });
 
-      if (error) throw error;
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/0fda1414-4390-4855-9462-9c9a0cf71bf7',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'clients/page.tsx:84',message:'Supabase query result',data:{hasError:!!error,errorCode:error?.code,errorMessage:error?.message,dataLength:data?.length||0},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+      // #endregion
+
+      if (error) {
+        console.error("Supabase error:", error);
+        console.error("Error details:", JSON.stringify(error, null, 2));
+        throw error;
+      }
+      
+      console.log("Clients loaded:", data?.length || 0);
       setClients(data || []);
+      
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/0fda1414-4390-4855-9462-9c9a0cf71bf7',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'clients/page.tsx:91',message:'Clients set in state',data:{clientsCount:data?.length||0},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
+      // #endregion
     } catch (error) {
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/0fda1414-4390-4855-9462-9c9a0cf71bf7',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'clients/page.tsx:93',message:'Error caught',data:{errorMessage:error instanceof Error?error.message:String(error)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
+      // #endregion
       console.error("Error loading clients:", error);
+      alert("Error al cargar clientes. Verifica la consola para más detalles.");
     } finally {
       setLoading(false);
     }
@@ -113,8 +150,18 @@ export default function ClientsPage() {
 
         if (error) throw error;
       } else {
-        const { error } = await supabase.from("clients").insert(clientData);
-        if (error) throw error;
+        const { data: insertedData, error } = await supabase
+          .from("clients")
+          .insert(clientData)
+          .select();
+        
+        if (error) {
+          console.error("Error inserting client:", error);
+          console.error("Error details:", JSON.stringify(error, null, 2));
+          throw error;
+        }
+        
+        console.log("Client inserted:", insertedData);
       }
 
       // Cerrar diálogo y resetear formulario primero
