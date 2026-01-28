@@ -30,7 +30,7 @@ import {
   updateClient,
   deleteClient,
 } from "@/lib/actions/clients";
-import type { clients } from "@prisma/client";
+import type { clients } from "@/lib/generated/prisma";
 
 const CURRENCIES = [
   { value: "USD", label: "USD - Dólar Estadounidense" },

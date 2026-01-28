@@ -4,7 +4,7 @@ import { prisma } from "@/lib/prisma/client";
 import { getAuthUser } from "@/lib/auth/server";
 import { revalidatePath } from "next/cache";
 import { differenceInMinutes } from "date-fns";
-import type { time_entries } from "@prisma/client";
+import type { time_entries } from "@/lib/generated/prisma";
 
 export type ActionResponse<T> =
     | { success: true; data: T }
