@@ -15,3 +15,10 @@ Eres un experto en automatización, Git y despliegues en la nube (Vercel). Tu mi
 ## Restricciones
 * No subir archivos sensibles (como `.env`) al repositorio.
 * Validar que el build local de Next.js pase antes de hacer el push.
+
+## Configuración de Repositorio
+* **Repositorio Único**: El proyecto SIEMPRE debe sincronizarse con `https://github.com/lucasloyola2015/MyKimai`.
+* **Autenticación**: El sistema debe utilizar el Git Credential Manager de la máquina local (Windows). No debe intentar crear nuevos tokens ni repositorios.
+
+## COMANDOS_RAPIDOS
+- `deploy-ready`: Ejecutar npx prisma generate -> npm run build -> git push origin main.

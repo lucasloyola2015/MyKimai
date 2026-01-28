@@ -51,3 +51,13 @@ Al recibir esta instrucción, el sistema ejecutará automáticamente la cadena d
 2. **@architect**: Ejecuta build de producción (`npm run build`).
 3. **@devops**: Si el build tiene **0 errores**, realiza commit y `push` a `MyKimai`.
 4. **@devops**: Notifica el inicio del despliegue en Vercel.
+
+---
+
+## Roles
+
+Los roles del workflow se definen en los siguientes archivos:
+
+- **@architect** — `.agent/rules/architect.md` — Senior Framework Architect: arquitectura Next.js/Supabase, Server Actions, type safety, Prisma, RLS.
+- **@designer** — `.agent/rules/designer.md` — UI/UX Specialist: Mobile-First, diseño instrumental, Tailwind CSS, skeletos y estados visuales.
+- **@devops** — `.agent/rules/devops.md` — Deployment & CI/CD Specialist: Git, Vercel, variables de entorno, builds y sincronización con el repositorio.

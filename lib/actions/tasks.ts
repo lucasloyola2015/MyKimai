@@ -3,6 +3,11 @@
 import { prisma } from "@/lib/prisma/client";
 import { getAuthUser } from "@/lib/auth/server";
 import { revalidatePath } from "next/cache";
+import type { tasks } from "@prisma/client";
+
+export type ActionResponse<T> =
+    | { success: true; data: T }
+    | { success: false; error: string };
 
 /**
  * Obtiene todas las tareas del usuario
@@ -69,7 +74,7 @@ export async function createTask(data: {
     name: string;
     description?: string | null;
     rate?: number | null;
-}) {
+}): Promise<ActionResponse<tasks>> {
     const user = await getAuthUser();
 
     // Verificar que el proyecto pertenece al usuario
@@ -89,23 +94,30 @@ export async function createTask(data: {
         };
     }
 
-    const task = await prisma.tasks.create({
-        data,
-        include: {
-            project: {
-                include: {
-                    client: true,
+    try {
+        const task = await prisma.tasks.create({
+            data,
+            include: {
+                project: {
+                    include: {
+                        client: true,
+                    },
                 },
             },
-        },
-    });
+        });
 
-    revalidatePath("/dashboard/tasks");
+        revalidatePath("/dashboard/tasks");
 
-    return {
-        success: true,
-        data: task,
-    };
+        return {
+            success: true,
+            data: task,
+        };
+    } catch (error) {
+        return {
+            success: false,
+            error: error instanceof Error ? error.message : "Error al crear la tarea",
+        };
+    }
 }
 
 /**
@@ -118,7 +130,7 @@ export async function updateTask(
         description?: string | null;
         rate?: number | null;
     }
-) {
+): Promise<ActionResponse<tasks>> {
     const user = await getAuthUser();
 
     // Verificar que la tarea pertenece al usuario
@@ -140,24 +152,31 @@ export async function updateTask(
         };
     }
 
-    const task = await prisma.tasks.update({
-        where: { id },
-        data,
-        include: {
-            project: {
-                include: {
-                    client: true,
+    try {
+        const task = await prisma.tasks.update({
+            where: { id },
+            data,
+            include: {
+                project: {
+                    include: {
+                        client: true,
+                    },
                 },
             },
-        },
-    });
+        });
 
-    revalidatePath("/dashboard/tasks");
+        revalidatePath("/dashboard/tasks");
 
-    return {
-        success: true,
-        data: task,
-    };
+        return {
+            success: true,
+            data: task,
+        };
+    } catch (error) {
+        return {
+            success: false,
+            error: error instanceof Error ? error.message : "Error al actualizar la tarea",
+        };
+    }
 }
 
 /**

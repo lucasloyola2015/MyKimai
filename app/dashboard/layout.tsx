@@ -3,6 +3,8 @@ import { AppSidebar } from "@/components/layout/AppSidebar";
 import { ActiveTimeEntryProvider } from "@/contexts/active-time-entry-context";
 import { getNavStats } from "@/lib/actions/stats";
 
+export const dynamic = 'force-dynamic';
+
 export default async function DashboardLayout({
   children,
 }: {

@@ -1,4 +1,5 @@
-import { PrismaClient } from "@/lib/generated/prisma";
+import "server-only";
+import { PrismaClient } from "@prisma/client";
 
 // Singleton pattern para Prisma Client
 // Evita múltiples instancias en desarrollo con hot-reload

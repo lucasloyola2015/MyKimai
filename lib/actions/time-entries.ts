@@ -4,6 +4,11 @@ import { prisma } from "@/lib/prisma/client";
 import { getAuthUser } from "@/lib/auth/server";
 import { revalidatePath } from "next/cache";
 import { differenceInMinutes } from "date-fns";
+import type { time_entries } from "@prisma/client";
+
+export type ActionResponse<T> =
+    | { success: true; data: T }
+    | { success: false; error: string };
 
 /**
  * Obtiene el time entry activo del usuario (si existe)
@@ -91,7 +96,10 @@ async function calculateRate(taskId: string): Promise<number> {
 /**
  * Inicia un nuevo time entry
  */
-export async function startTimeEntry(taskId: string, description?: string) {
+export async function startTimeEntry(
+    taskId: string,
+    description?: string
+): Promise<ActionResponse<time_entries>> {
     const user = await getAuthUser();
 
     // Verificar que no haya un timer activo
@@ -124,45 +132,54 @@ export async function startTimeEntry(taskId: string, description?: string) {
     // Calcular tarifa aplicable
     const rate = await calculateRate(taskId);
 
-    // Crear time entry
-    const entry = await prisma.time_entries.create({
-        data: {
-            user_id: user.id,
-            task_id: taskId,
-            description: description || null,
-            start_time: new Date(),
-            end_time: null,
-            duration_minutes: null,
-            billable: true,
-            rate_applied: rate,
-            amount: null,
-        },
-        include: {
-            task: {
-                include: {
-                    project: {
-                        include: {
-                            client: true,
+    try {
+        // Crear time entry
+        const entry = await prisma.time_entries.create({
+            data: {
+                user_id: user.id,
+                task_id: taskId,
+                description: description || null,
+                start_time: new Date(),
+                end_time: null,
+                duration_minutes: null,
+                billable: true,
+                rate_applied: rate,
+                amount: null,
+            },
+            include: {
+                task: {
+                    include: {
+                        project: {
+                            include: {
+                                client: true,
+                            },
                         },
                     },
                 },
             },
-        },
-    });
+        });
 
-    revalidatePath("/dashboard/time-tracker");
-    revalidatePath("/dashboard");
+        revalidatePath("/dashboard/time-tracker");
+        revalidatePath("/dashboard");
 
-    return {
-        success: true,
-        data: entry,
-    };
+        return {
+            success: true,
+            data: entry,
+        };
+    } catch (error) {
+        return {
+            success: false,
+            error: error instanceof Error ? error.message : "Error al iniciar el timer",
+        };
+    }
 }
 
 /**
  * Detiene un time entry activo
  */
-export async function stopTimeEntry(entryId: string) {
+export async function stopTimeEntry(
+    entryId: string
+): Promise<ActionResponse<time_entries>> {
     const user = await getAuthUser();
 
     // Obtener el entry
@@ -197,35 +214,42 @@ export async function stopTimeEntry(entryId: string) {
     const rate = Number(entry.rate_applied || 0);
     const amount = (durationMinutes / 60) * rate;
 
-    // Actualizar entry
-    const updatedEntry = await prisma.time_entries.update({
-        where: { id: entryId },
-        data: {
-            end_time: endTime,
-            duration_minutes: durationMinutes,
-            amount: amount,
-        },
-        include: {
-            task: {
-                include: {
-                    project: {
-                        include: {
-                            client: true,
+    try {
+        // Actualizar entry
+        const updatedEntry = await prisma.time_entries.update({
+            where: { id: entryId },
+            data: {
+                end_time: endTime,
+                duration_minutes: durationMinutes,
+                amount: amount,
+            },
+            include: {
+                task: {
+                    include: {
+                        project: {
+                            include: {
+                                client: true,
+                            },
                         },
                     },
                 },
             },
-        },
-    });
+        });
 
-    revalidatePath("/dashboard/time-tracker");
-    revalidatePath("/dashboard");
-    revalidatePath("/dashboard/my-hours");
+        revalidatePath("/dashboard/time-tracker");
+        revalidatePath("/dashboard");
+        revalidatePath("/dashboard/my-hours");
 
-    return {
-        success: true,
-        data: updatedEntry,
-    };
+        return {
+            success: true,
+            data: updatedEntry,
+        };
+    } catch (error) {
+        return {
+            success: false,
+            error: error instanceof Error ? error.message : "Error al detener el timer",
+        };
+    }
 }
 
 /**

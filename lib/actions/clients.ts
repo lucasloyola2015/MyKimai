@@ -3,6 +3,11 @@
 import { prisma } from "@/lib/prisma/client";
 import { getAuthUser } from "@/lib/auth/server";
 import { revalidatePath } from "next/cache";
+import type { clients } from "@prisma/client";
+
+export type ActionResponse<T> =
+    | { success: true; data: T }
+    | { success: false; error: string };
 
 /**
  * Obtiene todos los clientes del usuario autenticado
@@ -49,23 +54,30 @@ export async function createClient(data: {
     currency?: string;
     default_rate?: number | null;
     notes?: string | null;
-}) {
+}): Promise<ActionResponse<clients>> {
     const user = await getAuthUser();
 
-    const client = await prisma.clients.create({
-        data: {
-            ...data,
-            user_id: user.id,
-            currency: data.currency || "USD",
-        },
-    });
+    try {
+        const client = await prisma.clients.create({
+            data: {
+                ...data,
+                user_id: user.id,
+                currency: data.currency || "USD",
+            },
+        });
 
-    revalidatePath("/dashboard/clients");
+        revalidatePath("/dashboard/clients");
 
-    return {
-        success: true,
-        data: client,
-    };
+        return {
+            success: true,
+            data: client,
+        };
+    } catch (error) {
+        return {
+            success: false,
+            error: error instanceof Error ? error.message : "Error al crear el cliente",
+        };
+    }
 }
 
 /**
@@ -82,7 +94,7 @@ export async function updateClient(
         default_rate?: number | null;
         notes?: string | null;
     }
-) {
+): Promise<ActionResponse<clients>> {
     const user = await getAuthUser();
 
     // Verificar que el cliente pertenece al usuario
@@ -100,17 +112,24 @@ export async function updateClient(
         };
     }
 
-    const client = await prisma.clients.update({
-        where: { id },
-        data,
-    });
+    try {
+        const client = await prisma.clients.update({
+            where: { id },
+            data,
+        });
 
-    revalidatePath("/dashboard/clients");
+        revalidatePath("/dashboard/clients");
 
-    return {
-        success: true,
-        data: client,
-    };
+        return {
+            success: true,
+            data: client,
+        };
+    } catch (error) {
+        return {
+            success: false,
+            error: error instanceof Error ? error.message : "Error al actualizar el cliente",
+        };
+    }
 }
 
 /**
