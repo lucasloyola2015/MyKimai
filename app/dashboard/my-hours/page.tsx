@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { createClientComponentClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -23,32 +22,34 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Pencil, Trash2 } from "lucide-react";
-import type { Database } from "@/lib/types/database";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
 import { DateTimePicker } from "@/components/ui/date-time-picker";
+import { getClients } from "@/lib/actions/clients";
+import { getProjects } from "@/lib/actions/projects";
+import {
+    getTimeEntries,
+    updateTimeEntry,
+    deleteTimeEntry,
+} from "@/lib/actions/time-entries";
+import type { time_entries, clients, projects, tasks } from "@/lib/generated/prisma";
+import { toast } from "@/hooks/use-toast";
 
-type TimeEntry = Database["public"]["Tables"]["time_entries"]["Row"];
-type Client = Database["public"]["Tables"]["clients"]["Row"];
-type Project = Database["public"]["Tables"]["projects"]["Row"];
-type Task = Database["public"]["Tables"]["tasks"]["Row"];
-
-interface TimeEntryWithRelations extends TimeEntry {
-  tasks?: Task & {
-    projects?: Project & {
-      clients?: Client;
+type TimeEntryWithRelations = time_entries & {
+    task?: tasks & {
+        project?: projects & {
+            client?: clients;
+        };
     };
-  };
-}
+};
 
 export default function MyHoursPage() {
   const [entries, setEntries] = useState<TimeEntryWithRelations[]>([]);
-  const [clients, setClients] = useState<Client[]>([]);
-  const [projects, setProjects] = useState<Project[]>([]);
+  const [clients, setClients] = useState<clients[]>([]);
+  const [projects, setProjects] = useState<(projects & { client: clients })[]>([]);
   const [loading, setLoading] = useState(true);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingEntry, setEditingEntry] = useState<TimeEntryWithRelations | null>(null);
-  const supabase = createClientComponentClient();
 
   const [filters, setFilters] = useState({
     client_id: "",
@@ -77,93 +78,58 @@ export default function MyHoursPage() {
 
   const loadClients = async () => {
     try {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-
-      if (!user) return;
-
-      const { data, error } = await supabase
-        .from("clients")
-        .select("*")
-        .eq("user_id", user.id)
-        .order("name");
-
-      if (error) throw error;
-      setClients(data || []);
+      const data = await getClients();
+      setClients(data);
     } catch (error) {
       console.error("Error loading clients:", error);
+      toast({
+        title: "Error",
+        description: "No se pudieron cargar los clientes.",
+        variant: "destructive",
+      });
     }
   };
 
   const loadProjects = async () => {
     try {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-
-      if (!user) return;
-
-      const { data, error } = await supabase
-        .from("projects")
-        .select("*, clients(*)")
-        .eq("clients.user_id", user.id)
-        .order("name");
-
-      if (error) throw error;
-      setProjects((data as any) || []);
+      const data = await getProjects();
+      setProjects(data);
     } catch (error) {
       console.error("Error loading projects:", error);
+      toast({
+        title: "Error",
+        description: "No se pudieron cargar los proyectos.",
+        variant: "destructive",
+      });
     }
   };
 
   const loadEntries = async () => {
     setLoading(true);
     try {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
+      const startDate = filters.start_date
+        ? new Date(`${filters.start_date}T00:00:00`)
+        : undefined;
+      const endDate = filters.end_date
+        ? new Date(`${filters.end_date}T23:59:59`)
+        : undefined;
 
-      if (!user) return;
+      const data = await getTimeEntries({
+        clientId: filters.client_id || undefined,
+        projectId: filters.project_id || undefined,
+        startDate,
+        endDate,
+        onlyCompleted: true, // Solo entradas completadas
+      });
 
-      let query = supabase
-        .from("time_entries")
-        .select("*, tasks(name, id, projects(name, id, clients(name, id)))")
-        .eq("user_id", user.id)
-        .not("end_time", "is", null) // Solo entradas completadas
-        .order("start_time", { ascending: false });
-
-      if (filters.start_date) {
-        query = query.gte("start_time", `${filters.start_date}T00:00:00`);
-      }
-
-      if (filters.end_date) {
-        query = query.lte("start_time", `${filters.end_date}T23:59:59`);
-      }
-
-      const { data, error } = await query;
-
-      if (error) throw error;
-
-      let filteredData = (data || []) as TimeEntryWithRelations[];
-
-      // Filtrar por cliente
-      if (filters.client_id) {
-        filteredData = filteredData.filter((entry: any) => {
-          return entry.tasks?.projects?.clients?.id === filters.client_id;
-        });
-      }
-
-      // Filtrar por proyecto
-      if (filters.project_id) {
-        filteredData = filteredData.filter((entry: any) => {
-          return entry.tasks?.projects?.id === filters.project_id;
-        });
-      }
-
-      setEntries(filteredData);
+      setEntries(data as TimeEntryWithRelations[]);
     } catch (error) {
       console.error("Error loading entries:", error);
+      toast({
+        title: "Error",
+        description: "No se pudieron cargar las entradas de tiempo.",
+        variant: "destructive",
+      });
     } finally {
       setLoading(false);
     }
@@ -185,13 +151,22 @@ export default function MyHoursPage() {
     if (!confirm("¿Estás seguro de eliminar esta entrada de tiempo?")) return;
 
     try {
-      const { error } = await supabase.from("time_entries").delete().eq("id", id);
-
-      if (error) throw error;
+      const result = await deleteTimeEntry(id);
+      if (!result.success) {
+        throw new Error(result.error);
+      }
+      toast({
+        title: "Éxito",
+        description: "Entrada eliminada correctamente.",
+      });
       loadEntries();
     } catch (error) {
       console.error("Error deleting entry:", error);
-      alert("Error al eliminar la entrada");
+      toast({
+        title: "Error",
+        description: "Error al eliminar la entrada.",
+        variant: "destructive",
+      });
     }
   };
 
@@ -199,7 +174,11 @@ export default function MyHoursPage() {
     e.preventDefault();
 
     if (!editingEntry || !formData.start_time || !formData.end_time) {
-      alert("Por favor completa las fechas de inicio y fin");
+      toast({
+        title: "Error",
+        description: "Por favor completa las fechas de inicio y fin",
+        variant: "destructive",
+      });
       return;
     }
 
@@ -211,38 +190,49 @@ export default function MyHoursPage() {
       );
 
       if (durationMinutes < 1) {
-        alert("La duración debe ser al menos 1 minuto");
+        toast({
+          title: "Error",
+          description: "La duración debe ser al menos 1 minuto",
+          variant: "destructive",
+        });
         return;
       }
 
       // Recalcular rate y amount si es necesario
-      const { getRateContext, resolveRate } = await import("@/lib/utils/rates");
+      const { getRateContext } = await import("@/lib/actions/rates");
+      const { resolveRate } = await import("@/lib/utils/rates");
       const rateContext = await getRateContext(editingEntry.task_id);
       const rate = resolveRate(rateContext);
 
-      const updateData = {
+      const result = await updateTimeEntry(editingEntry.id, {
         description: formData.description || null,
-        start_time: startTime.toISOString(),
-        end_time: endTime.toISOString(),
+        start_time: startTime,
+        end_time: endTime,
         duration_minutes: durationMinutes,
         billable: formData.billable,
         rate_applied: rate,
         amount: rate ? (durationMinutes / 60) * rate : null,
-      };
+      });
 
-      const { error } = await supabase
-        .from("time_entries")
-        .update(updateData)
-        .eq("id", editingEntry.id);
+      if (!result.success) {
+        throw new Error(result.error);
+      }
 
-      if (error) throw error;
+      toast({
+        title: "Éxito",
+        description: "Entrada actualizada correctamente.",
+      });
 
       setIsDialogOpen(false);
       setEditingEntry(null);
       loadEntries();
     } catch (error) {
       console.error("Error updating entry:", error);
-      alert("Error al actualizar la entrada");
+      toast({
+        title: "Error",
+        description: "Error al actualizar la entrada",
+        variant: "destructive",
+      });
     }
   };
 
@@ -253,14 +243,15 @@ export default function MyHoursPage() {
     return `${hours}:${mins.toString().padStart(2, "0")}`;
   };
 
-  const formatDateTime = (dateString: string | null): string => {
+  const formatDateTime = (dateString: string | Date | null): string => {
     if (!dateString) return "-";
-    return format(new Date(dateString), "dd/MM/yyyy HH:mm", { locale: es });
+    const date = dateString instanceof Date ? dateString : new Date(dateString);
+    return format(date, "dd/MM/yyyy HH:mm", { locale: es });
   };
 
   // Filtrar proyectos según el cliente seleccionado
   const filteredProjects = filters.client_id
-    ? projects.filter((p: any) => p.clients?.id === filters.client_id)
+    ? projects.filter((p) => p.client?.id === filters.client_id)
     : projects;
 
   return (
@@ -313,14 +304,14 @@ export default function MyHoursPage() {
                 <SelectTrigger>
                   <SelectValue placeholder="Todos los proyectos" />
                 </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">Todos los proyectos</SelectItem>
-                  {filteredProjects.map((project: any) => (
-                    <SelectItem key={project.id} value={project.id}>
-                      {project.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
+                    <SelectContent>
+                      <SelectItem value="all">Todos los proyectos</SelectItem>
+                      {filteredProjects.map((project) => (
+                        <SelectItem key={project.id} value={project.id}>
+                          {project.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
               </Select>
             </div>
 
@@ -357,9 +348,9 @@ export default function MyHoursPage() {
       ) : (
         <div className="space-y-4">
           {entries.map((entry) => {
-            const task = entry.tasks;
-            const project = task?.projects;
-            const client = project?.clients;
+            const task = entry.task;
+            const project = task?.project;
+            const client = project?.client;
 
             return (
               <Card key={entry.id}>
@@ -409,7 +400,7 @@ export default function MyHoursPage() {
                       <div className="flex justify-between">
                         <span className="text-muted-foreground">Tarifa:</span>
                         <span className="font-medium">
-                          ${entry.rate_applied.toFixed(2)}/h
+                          ${Number(entry.rate_applied).toFixed(2)}/h
                         </span>
                       </div>
                     )}
@@ -417,7 +408,7 @@ export default function MyHoursPage() {
                       <div className="flex justify-between">
                         <span className="text-muted-foreground">Monto:</span>
                         <span className="font-medium">
-                          ${entry.amount.toFixed(2)}
+                          ${Number(entry.amount).toFixed(2)}
                         </span>
                       </div>
                     )}

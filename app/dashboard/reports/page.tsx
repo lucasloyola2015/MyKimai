@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { createClientComponentClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -14,18 +13,16 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Download } from "lucide-react";
-import type { Database } from "@/lib/types/database";
 import { format } from "date-fns";
-
-type TimeEntry = Database["public"]["Tables"]["time_entries"]["Row"];
+import { getClients } from "@/lib/actions/clients";
+import { getTimeEntries } from "@/lib/actions/time-entries";
+import type { clients, time_entries } from "@/lib/generated/prisma";
+import { toast } from "@/hooks/use-toast";
 
 export default function ReportsPage() {
-  const [entries, setEntries] = useState<TimeEntry[]>([]);
-  const [clients, setClients] = useState<
-    Database["public"]["Tables"]["clients"]["Row"][]
-  >([]);
+  const [entries, setEntries] = useState<time_entries[]>([]);
+  const [clients, setClients] = useState<clients[]>([]);
   const [loading, setLoading] = useState(false);
-  const supabase = createClientComponentClient();
 
   const [filters, setFilters] = useState({
     client_id: "",
@@ -40,63 +37,42 @@ export default function ReportsPage() {
 
   const loadClients = async () => {
     try {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-
-      if (!user) return;
-
-      const { data, error } = await supabase
-        .from("clients")
-        .select("*")
-        .eq("user_id", user.id)
-        .order("name");
-
-      if (error) throw error;
-      setClients(data || []);
+      const data = await getClients();
+      setClients(data);
     } catch (error) {
       console.error("Error loading clients:", error);
+      toast({
+        title: "Error",
+        description: "No se pudieron cargar los clientes.",
+        variant: "destructive",
+      });
     }
   };
 
   const loadEntries = async () => {
     setLoading(true);
     try {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
+      const startDate = filters.start_date
+        ? new Date(`${filters.start_date}T00:00:00`)
+        : undefined;
+      const endDate = filters.end_date
+        ? new Date(`${filters.end_date}T23:59:59`)
+        : undefined;
 
-      if (!user) return;
+      const data = await getTimeEntries({
+        clientId: filters.client_id || undefined,
+        startDate,
+        endDate,
+      });
 
-      let query = supabase
-        .from("time_entries")
-        .select("*, tasks(name, projects(name, clients(name, id)))")
-        .eq("user_id", user.id)
-        .order("start_time", { ascending: false });
-
-      if (filters.start_date) {
-        query = query.gte("start_time", `${filters.start_date}T00:00:00`);
-      }
-
-      if (filters.end_date) {
-        query = query.lte("start_time", `${filters.end_date}T23:59:59`);
-      }
-
-      const { data, error } = await query;
-
-      if (error) throw error;
-
-      let filteredData = (data || []) as any[];
-
-      if (filters.client_id) {
-        filteredData = filteredData.filter((entry: any) => {
-          return entry.tasks?.projects?.clients?.id === filters.client_id;
-        });
-      }
-
-      setEntries(filteredData as any);
+      setEntries(data);
     } catch (error) {
       console.error("Error loading entries:", error);
+      toast({
+        title: "Error",
+        description: "No se pudieron cargar las entradas.",
+        variant: "destructive",
+      });
     } finally {
       setLoading(false);
     }
@@ -115,10 +91,10 @@ export default function ReportsPage() {
       "Monto",
     ];
 
-    const rows = entries.map((entry: any) => {
-      const task = entry.tasks;
-      const project = task?.projects;
-      const client = project?.clients;
+    const rows = entries.map((entry) => {
+      const task = (entry as any).task;
+      const project = task?.project;
+      const client = project?.client;
 
       return [
         format(new Date(entry.start_time), "dd/MM/yyyy HH:mm"),
@@ -128,8 +104,8 @@ export default function ReportsPage() {
         entry.description || "",
         entry.duration_minutes || 0,
         ((entry.duration_minutes || 0) / 60).toFixed(2),
-        entry.rate_applied || 0,
-        entry.amount || 0,
+        Number(entry.rate_applied || 0),
+        Number(entry.amount || 0),
       ];
     });
 
@@ -227,10 +203,10 @@ export default function ReportsPage() {
         </CardHeader>
         <CardContent>
           <div className="space-y-4">
-            {entries.map((entry: any) => {
-              const task = entry.tasks;
-              const project = task?.projects;
-              const client = project?.clients;
+            {entries.map((entry) => {
+              const task = (entry as any).task;
+              const project = task?.project;
+              const client = project?.client;
 
               return (
                 <div
@@ -252,7 +228,7 @@ export default function ReportsPage() {
                       </p>
                       {entry.amount && (
                         <p className="text-muted-foreground">
-                          {entry.amount.toFixed(2)} {project?.currency || ""}
+                          {Number(entry.amount).toFixed(2)} {project?.currency || ""}
                         </p>
                       )}
                     </div>

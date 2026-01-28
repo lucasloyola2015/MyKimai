@@ -91,7 +91,8 @@ export function ActiveTimeEntryProvider({ children }: { children: ReactNode }) {
       }
 
       // Importar funciones de rate si es necesario
-      const { getRateContext, resolveRate } = await import("@/lib/utils/rates");
+      const { getRateContext } = await import("@/lib/actions/rates");
+      const { resolveRate } = await import("@/lib/utils/rates");
       const rateContext = await getRateContext(activeEntry.task_id);
       const rate = resolveRate(rateContext);
 

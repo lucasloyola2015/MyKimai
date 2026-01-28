@@ -9,13 +9,14 @@ import { startOfDay, endOfDay } from "date-fns";
  * Migrado de Supabase a Prisma
  */
 export async function getNavStats() {
-    const user = await getAuthUser();
+    try {
+        const user = await getAuthUser();
 
-    // Queries en paralelo para mejor performance
-    const [activeProjectsCount, pendingInvoicesCount, activeEntry, todayEntries] =
-        await Promise.all([
-            // Proyectos activos del usuario
-            prisma.projects.count({
+        // Queries en paralelo para mejor performance
+        const [activeProjectsCount, pendingInvoicesCount, activeEntry, todayEntries] =
+            await Promise.all([
+                // Proyectos activos del usuario
+                prisma.projects.count({
                 where: {
                     client: {
                         user_id: user.id,
@@ -68,10 +69,20 @@ export async function getNavStats() {
         0
     );
 
-    return {
-        activeProjects: activeProjectsCount,
-        pendingInvoices: pendingInvoicesCount,
-        activeTimeEntry: !!activeEntry,
-        todayHours: todayMinutes,
-    };
+        return {
+            activeProjects: activeProjectsCount,
+            pendingInvoices: pendingInvoicesCount,
+            activeTimeEntry: !!activeEntry,
+            todayHours: todayMinutes,
+        };
+    } catch (error) {
+        console.error("Error in getNavStats:", error);
+        // Retornar valores por defecto en caso de error
+        return {
+            activeProjects: 0,
+            pendingInvoices: 0,
+            activeTimeEntry: false,
+            todayHours: 0,
+        };
+    }
 }

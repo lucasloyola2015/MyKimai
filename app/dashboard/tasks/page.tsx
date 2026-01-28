@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { createClientComponentClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -24,22 +23,26 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Plus, Pencil, Trash2 } from "lucide-react";
-import type { Database } from "@/lib/types/database";
 import Link from "next/link";
-
-type Task = Database["public"]["Tables"]["tasks"]["Row"];
-type Project = Database["public"]["Tables"]["projects"]["Row"];
-type Client = Database["public"]["Tables"]["clients"]["Row"];
+import { getClients } from "@/lib/actions/clients";
+import { getProjects } from "@/lib/actions/projects";
+import {
+    getTasks,
+    createTask,
+    updateTask,
+    deleteTask,
+} from "@/lib/actions/tasks";
+import type { tasks, projects, clients } from "@/lib/generated/prisma";
+import { toast } from "@/hooks/use-toast";
 
 export default function TasksPage() {
-  const [tasks, setTasks] = useState<(Task & { projects: Project })[]>([]);
-  const [clients, setClients] = useState<Client[]>([]);
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [filteredProjects, setFilteredProjects] = useState<Project[]>([]);
+  const [tasks, setTasks] = useState<(tasks & { project: projects & { client: clients } })[]>([]);
+  const [clients, setClients] = useState<clients[]>([]);
+  const [projects, setProjects] = useState<(projects & { client: clients })[]>([]);
+  const [filteredProjects, setFilteredProjects] = useState<(projects & { client: clients })[]>([]);
   const [loading, setLoading] = useState(true);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
-  const [editingTask, setEditingTask] = useState<Task | null>(null);
-  const supabase = createClientComponentClient();
+  const [editingTask, setEditingTask] = useState<tasks | null>(null);
 
   const [formData, setFormData] = useState({
     client_id: "",
@@ -55,49 +58,24 @@ export default function TasksPage() {
 
   const loadData = async () => {
     try {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-
-      if (!user) return;
-
       // Load clients
-      const { data: clientsData, error: clientsError } = await supabase
-        .from("clients")
-        .select("*")
-        .eq("user_id", user.id)
-        .order("name");
-
-      if (clientsError) throw clientsError;
-      setClients(clientsData || []);
+      const clientsData = await getClients();
+      setClients(clientsData);
 
       // Load projects
-      const { data: projectsData, error: projectsError } = await supabase
-        .from("projects")
-        .select("*, clients(*)")
-        .eq("clients.user_id", user.id)
-        .order("name");
+      const projectsData = await getProjects();
+      setProjects(projectsData);
 
-      if (projectsError) throw projectsError;
-      setProjects((projectsData as any) || []);
-
-      // Load tasks with projects
-      const { data: tasksData, error: tasksError } = await supabase
-        .from("tasks")
-        .select("*, projects(*)")
-        .order("created_at", { ascending: false });
-
-      if (tasksError) throw tasksError;
-
-      // Filter tasks that belong to user's projects
-      const userProjectIds = (projectsData || []).map((p: any) => p.id);
-      const filteredTasks = (tasksData || []).filter((t: any) =>
-        userProjectIds.includes(t.project_id)
-      );
-
-      setTasks(filteredTasks as any);
+      // Load tasks
+      const tasksData = await getTasks();
+      setTasks(tasksData);
     } catch (error) {
       console.error("Error loading data:", error);
+      toast({
+        title: "Error",
+        description: "No se pudieron cargar los datos.",
+        variant: "destructive",
+      });
     } finally {
       setLoading(false);
     }
@@ -114,31 +92,43 @@ export default function TasksPage() {
         rate: formData.rate ? parseFloat(formData.rate) : null,
       };
 
+      let result;
       if (editingTask) {
-        const { error } = await supabase
-          .from("tasks")
-          .update(taskData)
-          .eq("id", editingTask.id);
-
-        if (error) throw error;
+        result = await updateTask(editingTask.id, {
+          name: taskData.name,
+          description: taskData.description,
+          rate: taskData.rate,
+        });
       } else {
-        const { error } = await supabase.from("tasks").insert(taskData);
-        if (error) throw error;
+        result = await createTask(taskData);
       }
+
+      if (!result.success) {
+        throw new Error(result.error);
+      }
+
+      toast({
+        title: "Éxito",
+        description: editingTask ? "Tarea actualizada correctamente." : "Tarea creada correctamente.",
+      });
 
       setIsDialogOpen(false);
       resetForm();
       loadData();
     } catch (error) {
       console.error("Error saving task:", error);
-      alert("Error al guardar la tarea");
+      toast({
+        title: "Error",
+        description: "Error al guardar la tarea",
+        variant: "destructive",
+      });
     }
   };
 
-  const handleEdit = async (task: Task) => {
+  const handleEdit = async (task: tasks) => {
     // Get the project to find the client
-    const project = (projects as any[]).find((p: any) => p.id === task.project_id);
-    const clientId = project?.clients?.id || "";
+    const project = projects.find((p) => p.id === task.project_id);
+    const clientId = project?.client?.id || "";
 
     setEditingTask(task);
     setFormData({
@@ -151,7 +141,7 @@ export default function TasksPage() {
     
     // Filter projects for the selected client
     if (clientId) {
-      const filtered = projects.filter((p: any) => p.clients?.id === clientId);
+      const filtered = projects.filter((p) => p.client?.id === clientId);
       setFilteredProjects(filtered);
     }
     
@@ -162,13 +152,22 @@ export default function TasksPage() {
     if (!confirm("¿Estás seguro de eliminar esta tarea?")) return;
 
     try {
-      const { error } = await supabase.from("tasks").delete().eq("id", id);
-
-      if (error) throw error;
+      const result = await deleteTask(id);
+      if (!result.success) {
+        throw new Error(result.error);
+      }
+      toast({
+        title: "Éxito",
+        description: "Tarea eliminada correctamente.",
+      });
       loadData();
     } catch (error) {
       console.error("Error deleting task:", error);
-      alert("Error al eliminar la tarea");
+      toast({
+        title: "Error",
+        description: "Error al eliminar la tarea",
+        variant: "destructive",
+      });
     }
   };
 
@@ -187,7 +186,7 @@ export default function TasksPage() {
   const handleClientChange = (clientId: string) => {
     setFormData({ ...formData, client_id: clientId, project_id: "" });
     // Filter projects for the selected client
-    const filtered = projects.filter((p: any) => p.clients?.id === clientId);
+    const filtered = projects.filter((p) => p.client?.id === clientId);
     setFilteredProjects(filtered);
   };
 
@@ -256,7 +255,7 @@ export default function TasksPage() {
                         <SelectValue placeholder="Selecciona un proyecto" />
                       </SelectTrigger>
                       <SelectContent>
-                        {filteredProjects.map((project: any) => (
+                        {filteredProjects.map((project) => (
                           <SelectItem key={project.id} value={project.id}>
                             {project.name}
                           </SelectItem>
@@ -333,7 +332,7 @@ export default function TasksPage() {
 
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
         {tasks.map((task) => {
-          const project = task.projects as Project;
+          const project = task.project;
           return (
             <Card key={task.id}>
               <CardHeader>
@@ -369,7 +368,7 @@ export default function TasksPage() {
                   )}
                   {task.rate && (
                     <p className="text-muted-foreground">
-                      <strong>Tarifa:</strong> {task.rate}/h
+                      <strong>Tarifa:</strong> {Number(task.rate)}/h
                     </p>
                   )}
                 </div>

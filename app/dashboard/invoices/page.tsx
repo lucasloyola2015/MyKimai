@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { createClientComponentClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -21,17 +20,22 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Plus, FileText, Download, Send, Check } from "lucide-react";
-import type { Database } from "@/lib/types/database";
 import { format } from "date-fns";
 import Link from "next/link";
 import { InvoicePDF } from "@/components/invoices/invoice-pdf";
+import { getClients } from "@/lib/actions/clients";
+import {
+    getInvoices,
+    getUnbilledTimeEntries,
+    createInvoiceFromTimeEntries,
+    updateInvoiceStatus,
+    getClientBillingSummary,
+} from "@/lib/actions/invoices";
+import type { invoices, clients, time_entries } from "@/lib/generated/prisma";
+import { toast } from "@/hooks/use-toast";
 
-type Invoice = Database["public"]["Tables"]["invoices"]["Row"];
-type Client = Database["public"]["Tables"]["clients"]["Row"];
-type TimeEntry = Database["public"]["Tables"]["time_entries"]["Row"];
-
-interface InvoiceWithClient extends Invoice {
-  clients: Client;
+interface InvoiceWithClient extends invoices {
+  client: clients;
 }
 
 const INVOICE_STATUSES = [
@@ -53,12 +57,11 @@ interface ClientSummary {
 
 export default function InvoicesPage() {
   const [invoices, setInvoices] = useState<InvoiceWithClient[]>([]);
-  const [clients, setClients] = useState<Client[]>([]);
-  const [timeEntries, setTimeEntries] = useState<TimeEntry[]>([]);
+  const [clients, setClients] = useState<clients[]>([]);
+  const [timeEntries, setTimeEntries] = useState<time_entries[]>([]);
   const [clientSummaries, setClientSummaries] = useState<ClientSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
-  const supabase = createClientComponentClient();
 
   const formatTime = (minutes: number): string => {
     const hours = Math.floor(minutes / 60);
@@ -78,108 +81,28 @@ export default function InvoicesPage() {
 
   const loadData = async () => {
     try {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-
-      if (!user) return;
-
       // Load clients
-      const { data: clientsData, error: clientsError } = await supabase
-        .from("clients")
-        .select("*")
-        .eq("user_id", user.id)
-        .order("name");
-
-      if (clientsError) throw clientsError;
-      setClients(clientsData || []);
+      const clientsData = await getClients();
+      setClients(clientsData);
 
       // Load invoices
-      const { data: invoicesData, error: invoicesError } = await supabase
-        .from("invoices")
-        .select("*, clients(*)")
-        .eq("clients.user_id", user.id)
-        .order("created_at", { ascending: false });
+      const invoicesData = await getInvoices();
+      setInvoices(invoicesData);
 
-      if (invoicesError) throw invoicesError;
-      setInvoices((invoicesData as any) || []);
+      // Load unbilled time entries
+      const unbilledEntries = await getUnbilledTimeEntries();
+      setTimeEntries(unbilledEntries);
 
-      // Load all time entries
-      const { data: allEntries, error: entriesError } = await supabase
-        .from("time_entries")
-        .select("*, tasks(name, projects(name, clients(name)))")
-        .eq("user_id", user.id)
-        .eq("billable", true)
-        .order("start_time", { ascending: false });
-
-      // Get billed entry IDs
-      const { data: billedItems } = await supabase
-        .from("invoice_items")
-        .select("time_entry_id");
-
-      const billedEntryIds = new Set(
-        (billedItems || [])
-          .map((item) => item.time_entry_id)
-          .filter((id): id is string => Boolean(id))
-      );
-
-      // Filter out billed entries
-      const entriesData = (allEntries || []).filter(
-        (entry) => !billedEntryIds.has(entry.id)
-      );
-
-      if (entriesError) throw entriesError;
-      setTimeEntries((entriesData as any) || []);
-
-      // Calculate client summaries
-      const summaries: ClientSummary[] = clientsData.map((client) => {
-        // Unbilled time entries for this client
-        const clientUnbilledEntries = (entriesData as any[]).filter(
-          (entry) => entry.tasks?.projects?.clients?.id === client.id
-        );
-        const unbilledMinutes = clientUnbilledEntries.reduce(
-          (sum, entry) => sum + (entry.duration_minutes || 0),
-          0
-        );
-        const unbilledAmount = clientUnbilledEntries.reduce(
-          (sum, entry) => sum + (entry.amount || 0),
-          0
-        );
-
-        // Billed but unpaid (draft or sent)
-        const clientUnpaidInvoices = (invoicesData as any[]).filter(
-          (inv) =>
-            inv.clients?.id === client.id &&
-            (inv.status === "draft" || inv.status === "sent")
-        );
-        const billedUnpaidAmount = clientUnpaidInvoices.reduce(
-          (sum, inv) => sum + (inv.total_amount || 0),
-          0
-        );
-
-        // Billed and paid
-        const clientPaidInvoices = (invoicesData as any[]).filter(
-          (inv) => inv.clients?.id === client.id && inv.status === "paid"
-        );
-        const billedPaidAmount = clientPaidInvoices.reduce(
-          (sum, inv) => sum + (inv.total_amount || 0),
-          0
-        );
-
-        return {
-          clientId: client.id,
-          clientName: client.name,
-          currency: client.currency,
-          unbilledHours: unbilledMinutes,
-          unbilledAmount,
-          billedUnpaidAmount,
-          billedPaidAmount,
-        };
-      });
-
+      // Get client billing summaries
+      const summaries = await getClientBillingSummary();
       setClientSummaries(summaries);
     } catch (error) {
       console.error("Error loading data:", error);
+      toast({
+        title: "Error",
+        description: "No se pudieron cargar los datos.",
+        variant: "destructive",
+      });
     } finally {
       setLoading(false);
     }
@@ -187,94 +110,90 @@ export default function InvoicesPage() {
 
   const handleCreateInvoice = async () => {
     if (!formData.client_id) {
-      alert("Por favor selecciona un cliente");
+      toast({
+        title: "Error",
+        description: "Por favor selecciona un cliente",
+        variant: "destructive",
+      });
       return;
     }
 
     try {
       const selectedEntries = timeEntries.filter(
-        (entry: any) => entry.tasks?.projects?.clients?.id === formData.client_id
+        (entry) => {
+          const task = (entry as any).task;
+          const project = task?.project;
+          const client = project?.client;
+          return client?.id === formData.client_id;
+        }
       );
 
       if (selectedEntries.length === 0) {
-        alert("No hay períodos de trabajo sin facturar para este cliente");
+        toast({
+          title: "Error",
+          description: "No hay períodos de trabajo sin facturar para este cliente",
+          variant: "destructive",
+        });
         return;
       }
 
-      // Calculate totals
-      const subtotal = selectedEntries.reduce(
-        (sum, entry) => sum + (entry.amount || 0),
-        0
-      );
+      const timeEntryIds = selectedEntries.map((entry) => entry.id);
       const taxRate = parseFloat(formData.tax_rate) || 0;
-      const taxAmount = subtotal * (taxRate / 100);
-      const total = subtotal + taxAmount;
+      const dueDate = formData.due_date ? new Date(formData.due_date) : null;
 
-      const client = clients.find((c) => c.id === formData.client_id);
-      if (!client) return;
+      const result = await createInvoiceFromTimeEntries({
+        client_id: formData.client_id,
+        time_entry_ids: timeEntryIds,
+        tax_rate: taxRate,
+        due_date: dueDate,
+      });
 
-      // Create invoice
-      const { data: invoice, error: invoiceError } = await supabase
-        .from("invoices")
-        .insert({
-          client_id: formData.client_id,
-          status: "draft",
-          subtotal,
-          tax_rate: taxRate,
-          tax_amount: taxAmount,
-          total_amount: total,
-          currency: client.currency,
-          due_date: formData.due_date || null,
-        })
-        .select()
-        .single();
+      if (!result.success) {
+        throw new Error(result.error);
+      }
 
-      if (invoiceError) throw invoiceError;
-
-      // Create invoice items
-      const items = selectedEntries.map((entry: any) => ({
-        invoice_id: invoice.id,
-        time_entry_id: entry.id,
-        description: entry.description || entry.tasks?.name || "Trabajo",
-        quantity: (entry.duration_minutes || 0) / 60,
-        rate: entry.rate_applied || 0,
-        amount: entry.amount || 0,
-        type: "time" as const,
-      }));
-
-      const { error: itemsError } = await supabase
-        .from("invoice_items")
-        .insert(items);
-
-      if (itemsError) throw itemsError;
+      toast({
+        title: "Éxito",
+        description: "Factura creada exitosamente",
+      });
 
       setIsDialogOpen(false);
       setFormData({ client_id: "", tax_rate: "0", due_date: "" });
       loadData();
-      alert("Factura creada exitosamente");
     } catch (error) {
       console.error("Error creating invoice:", error);
-      alert("Error al crear la factura");
+      toast({
+        title: "Error",
+        description: "Error al crear la factura",
+        variant: "destructive",
+      });
     }
   };
 
   const handleStatusChange = async (invoiceId: string, newStatus: string) => {
     try {
-      const updateData: any = { status: newStatus };
-      if (newStatus === "paid") {
-        updateData.paid_at = new Date().toISOString();
+      const result = await updateInvoiceStatus(
+        invoiceId,
+        newStatus as "draft" | "sent" | "paid" | "overdue"
+      );
+
+      if (!result.success) {
+        throw new Error(result.error);
       }
 
-      const { error } = await supabase
-        .from("invoices")
-        .update(updateData)
-        .eq("id", invoiceId);
+      toast({
+        title: "Éxito",
+        description: "Estado de factura actualizado correctamente.",
+      });
 
-      if (error) throw error;
       loadData();
     } catch (error) {
       console.error("Error updating invoice status:", error);
-      alert("Error al actualizar el estado de la factura");
+      toast({
+        title: "Error",
+        description: "Error al actualizar el estado de la factura",
+        variant: "destructive",
+      });
     }
   };
 
@@ -320,8 +239,12 @@ export default function InvoicesPage() {
                   <SelectContent>
                     {clients.map((client) => {
                       const clientEntries = timeEntries.filter(
-                        (entry: any) =>
-                          entry.tasks?.projects?.clients?.id === client.id
+                        (entry) => {
+                          const task = (entry as any).task;
+                          const project = task?.project;
+                          const entryClient = project?.client;
+                          return entryClient?.id === client.id;
+                        }
                       );
                       return (
                         <SelectItem key={client.id} value={client.id}>
@@ -396,13 +319,13 @@ export default function InvoicesPage() {
                       {formatTime(summary.unbilledHours)}h
                     </td>
                     <td className="p-2 text-right">
-                      {summary.unbilledAmount.toFixed(2)} {summary.currency}
+                      {Number(summary.unbilledAmount).toFixed(2)} {summary.currency}
                     </td>
                     <td className="p-2 text-right">
-                      {summary.billedUnpaidAmount.toFixed(2)} {summary.currency}
+                      {Number(summary.billedUnpaidAmount).toFixed(2)} {summary.currency}
                     </td>
                     <td className="p-2 text-right">
-                      {summary.billedPaidAmount.toFixed(2)} {summary.currency}
+                      {Number(summary.billedPaidAmount).toFixed(2)} {summary.currency}
                     </td>
                   </tr>
                 ))}
@@ -438,13 +361,13 @@ export default function InvoicesPage() {
                       </span>
                     </CardTitle>
                     <p className="text-sm text-muted-foreground mt-1">
-                      {invoice.clients.name} -{" "}
+                      {invoice.client.name} -{" "}
                       {format(new Date(invoice.issue_date), "dd/MM/yyyy")}
                     </p>
                   </div>
                   <div className="flex items-center space-x-2">
                     <span className="text-2xl font-bold">
-                      {invoice.total_amount.toFixed(2)} {invoice.currency}
+                      {Number(invoice.total_amount).toFixed(2)} {invoice.currency}
                     </span>
                   </div>
                 </div>

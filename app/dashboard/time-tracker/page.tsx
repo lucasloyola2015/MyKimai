@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { createClientComponentClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -16,35 +15,37 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Play, Square, Clock } from "lucide-react";
-import type { Database } from "@/lib/types/database";
-import { getRateContext, resolveRate } from "@/lib/utils/rates";
 import { format, differenceInMinutes } from "date-fns";
 import { useActiveTimeEntry } from "@/contexts/active-time-entry-context";
+import { getClients } from "@/lib/actions/clients";
+import { getProjects } from "@/lib/actions/projects";
+import { getTaskWithRelations } from "@/lib/actions/tasks";
+import {
+    startTimeEntry,
+    stopTimeEntry,
+    updateTimeEntryDescription,
+    getRecentTimeEntries,
+} from "@/lib/actions/time-entries";
+import type { clients, projects, tasks, time_entries } from "@/lib/generated/prisma";
+import { toast } from "@/hooks/use-toast";
 
-type Task = Database["public"]["Tables"]["tasks"]["Row"];
-type Project = Database["public"]["Tables"]["projects"]["Row"];
-type Client = Database["public"]["Tables"]["clients"]["Row"];
-
-interface TaskWithRelations extends Task {
-  projects: Project & { clients: Client };
+interface TaskWithRelations extends tasks {
+  project: projects & { client: clients };
 }
-
-type TimeEntry = Database["public"]["Tables"]["time_entries"]["Row"];
 
 export default function TimeTrackerPage() {
   const searchParams = useSearchParams();
-  const [clients, setClients] = useState<Client[]>([]);
-  const [projects, setProjects] = useState<Project[]>([]);
+  const [clients, setClients] = useState<clients[]>([]);
+  const [projects, setProjects] = useState<(projects & { client: clients })[]>([]);
   const [tasks, setTasks] = useState<TaskWithRelations[]>([]);
   const [selectedClientId, setSelectedClientId] = useState<string>("");
   const [selectedProjectId, setSelectedProjectId] = useState<string>("");
   const [selectedTaskId, setSelectedTaskId] = useState<string>("");
   const [description, setDescription] = useState("");
   const [currentTime, setCurrentTime] = useState<Date>(new Date());
-  const [recentEntries, setRecentEntries] = useState<TimeEntry[]>([]);
+  const [recentEntries, setRecentEntries] = useState<time_entries[]>([]);
   const [loading, setLoading] = useState(true);
   const [preloaded, setPreloaded] = useState(false);
-  const supabase = createClientComponentClient();
   const { activeEntry, refreshActiveEntry } = useActiveTimeEntry();
 
   // Determinar si hay una tarea activa
@@ -95,15 +96,11 @@ export default function TimeTrackerPage() {
       // Buscar el cliente y proyecto de la tarea activa
       const loadActiveTaskData = async () => {
         try {
-          const { data: taskData } = await supabase
-            .from("tasks")
-            .select("*, projects(*, clients(*))")
-            .eq("id", activeEntry.task_id)
-            .single();
+          const taskData = await getTaskWithRelations(activeEntry.task_id);
 
           if (taskData) {
-            const project = (taskData as any).projects;
-            const client = project?.clients;
+            const project = taskData.project;
+            const client = project?.client;
             
             if (client && project) {
               setSelectedClientId(client.id);
@@ -154,22 +151,15 @@ export default function TimeTrackerPage() {
 
   const loadClients = async () => {
     try {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-
-      if (!user) return;
-
-      const { data, error } = await supabase
-        .from("clients")
-        .select("*")
-        .eq("user_id", user.id)
-        .order("name");
-
-      if (error) throw error;
-      setClients(data || []);
+      const data = await getClients();
+      setClients(data);
     } catch (error) {
       console.error("Error loading clients:", error);
+      toast({
+        title: "Error",
+        description: "No se pudieron cargar los clientes.",
+        variant: "destructive",
+      });
     } finally {
       setLoading(false);
     }
@@ -177,59 +167,44 @@ export default function TimeTrackerPage() {
 
   const loadProjects = async (clientId: string) => {
     try {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-
-      if (!user) return;
-
-      const { data, error } = await supabase
-        .from("projects")
-        .select("*")
-        .eq("client_id", clientId)
-        .order("name");
-
-      if (error) throw error;
-      setProjects(data || []);
+      const data = await getProjects(clientId);
+      setProjects(data);
     } catch (error) {
       console.error("Error loading projects:", error);
+      toast({
+        title: "Error",
+        description: "No se pudieron cargar los proyectos.",
+        variant: "destructive",
+      });
     }
   };
 
   const loadTasks = async (projectId: string) => {
     try {
-      const { data, error } = await supabase
-        .from("tasks")
-        .select("*, projects(*, clients(*))")
-        .eq("project_id", projectId)
-        .order("name");
-
-      if (error) throw error;
-      setTasks((data as TaskWithRelations[]) || []);
+      const { getTasks } = await import("@/lib/actions/tasks");
+      const allTasks = await getTasks(projectId);
+      setTasks(allTasks as TaskWithRelations[]);
     } catch (error) {
       console.error("Error loading tasks:", error);
+      toast({
+        title: "Error",
+        description: "No se pudieron cargar las tareas.",
+        variant: "destructive",
+      });
     }
   };
 
   const loadRecentEntries = async () => {
     try {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-
-      if (!user) return;
-
-      const { data, error } = await supabase
-        .from("time_entries")
-        .select("*, tasks(name, projects(name, clients(name)))")
-        .eq("user_id", user.id)
-        .order("created_at", { ascending: false })
-        .limit(10);
-
-      if (error) throw error;
-      setRecentEntries((data as any) || []);
+      const data = await getRecentTimeEntries(10);
+      setRecentEntries(data);
     } catch (error) {
       console.error("Error loading recent entries:", error);
+      toast({
+        title: "Error",
+        description: "No se pudieron cargar las entradas recientes.",
+        variant: "destructive",
+      });
     }
   };
 
@@ -247,41 +222,44 @@ export default function TimeTrackerPage() {
 
   const handleStart = async () => {
     if (!selectedTaskId) {
-      alert("Por favor selecciona una tarea");
+      toast({
+        title: "Error",
+        description: "Por favor selecciona una tarea",
+        variant: "destructive",
+      });
       return;
     }
 
     if (activeEntry) {
-      alert("Ya hay una tarea en curso. Detén la tarea actual antes de iniciar una nueva.");
+      toast({
+        title: "Error",
+        description: "Ya hay una tarea en curso. Detén la tarea actual antes de iniciar una nueva.",
+        variant: "destructive",
+      });
       return;
     }
 
     try {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
+      const result = await startTimeEntry(selectedTaskId, description || undefined);
 
-      if (!user) return;
+      if (!result.success) {
+        throw new Error(result.error);
+      }
 
-      // Crear entrada de tiempo sin end_time
-      const entryData = {
-        user_id: user.id,
-        task_id: selectedTaskId,
-        description: description || null,
-        start_time: new Date().toISOString(),
-        end_time: null,
-        billable: true,
-      };
-
-      const { error } = await supabase.from("time_entries").insert(entryData);
-
-      if (error) throw error;
+      toast({
+        title: "Éxito",
+        description: "Timer iniciado correctamente.",
+      });
 
       // Refrescar la entrada activa
       await refreshActiveEntry();
     } catch (error) {
       console.error("Error starting time entry:", error);
-      alert("Error al iniciar la tarea");
+      toast({
+        title: "Error",
+        description: "Error al iniciar la tarea",
+        variant: "destructive",
+      });
     }
   };
 
@@ -290,41 +268,36 @@ export default function TimeTrackerPage() {
 
     const totalMinutes = calculateElapsedTime();
     if (totalMinutes < 1) {
-      alert("El tiempo debe ser al menos 1 minuto");
+      toast({
+        title: "Error",
+        description: "El tiempo debe ser al menos 1 minuto",
+        variant: "destructive",
+      });
       return;
     }
 
     try {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
+      const result = await stopTimeEntry(activeEntry.id);
 
-      if (!user) return;
+      if (!result.success) {
+        throw new Error(result.error);
+      }
 
-      // Get rate context
-      const rateContext = await getRateContext(activeEntry.task_id);
-      const rate = resolveRate(rateContext);
-
-      const endTime = new Date();
-      const { error } = await supabase
-        .from("time_entries")
-        .update({
-          end_time: endTime.toISOString(),
-          duration_minutes: totalMinutes,
-          rate_applied: rate,
-          amount: rate ? (totalMinutes / 60) * rate : null,
-        })
-        .eq("id", activeEntry.id);
-
-      if (error) throw error;
+      toast({
+        title: "Éxito",
+        description: "Período de trabajo guardado exitosamente",
+      });
 
       // Refrescar la entrada activa (debería ser null ahora)
       await refreshActiveEntry();
       loadRecentEntries();
-      alert("Período de trabajo guardado exitosamente");
     } catch (error) {
       console.error("Error stopping time entry:", error);
-      alert("Error al guardar el período de trabajo");
+      toast({
+        title: "Error",
+        description: "Error al guardar el período de trabajo",
+        variant: "destructive",
+      });
     }
   };
 
@@ -420,10 +393,10 @@ export default function TimeTrackerPage() {
             {selectedTask && (
               <div className="rounded-lg border bg-muted p-3 text-sm">
                 <p>
-                  <strong>Cliente:</strong> {selectedTask.projects.clients.name}
+                  <strong>Cliente:</strong> {selectedTask.project.client.name}
                 </p>
                 <p>
-                  <strong>Proyecto:</strong> {selectedTask.projects.name}
+                  <strong>Proyecto:</strong> {selectedTask.project.name}
                 </p>
                 <p>
                   <strong>Tarea:</strong> {selectedTask.name}
@@ -441,12 +414,14 @@ export default function TimeTrackerPage() {
                   setDescription(newDescription);
                   // Actualizar la descripción en la entrada activa si existe
                   if (activeEntry) {
-                    await supabase
-                      .from("time_entries")
-                      .update({ description: newDescription || null })
-                      .eq("id", activeEntry.id);
-                    // Refrescar el contexto para que la navegación tenga la info actualizada
-                    await refreshActiveEntry();
+                    const result = await updateTimeEntryDescription(
+                      activeEntry.id,
+                      newDescription || null
+                    );
+                    if (result.success) {
+                      // Refrescar el contexto para que la navegación tenga la info actualizada
+                      await refreshActiveEntry();
+                    }
                   }
                 }}
                 placeholder="¿Qué estás haciendo?"
@@ -501,10 +476,10 @@ export default function TimeTrackerPage() {
               </p>
             ) : (
               <div className="space-y-4">
-                {recentEntries.map((entry: any) => {
-                  const task = entry.tasks;
-                  const project = task?.projects;
-                  const client = project?.clients;
+                {recentEntries.map((entry) => {
+                  const task = (entry as any).task;
+                  const project = task?.project;
+                  const client = project?.client;
                   return (
                     <div
                       key={entry.id}
@@ -530,7 +505,7 @@ export default function TimeTrackerPage() {
                       )}
                       {entry.amount && (
                         <p className="mt-2 font-medium">
-                          {entry.amount.toFixed(2)} {project?.currency || ""}
+                          {Number(entry.amount).toFixed(2)} {project?.currency || ""}
                         </p>
                       )}
                       <p className="mt-2 text-xs text-muted-foreground">

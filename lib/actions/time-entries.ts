@@ -319,3 +319,187 @@ export async function getAvailableTasks() {
 
     return tasks;
 }
+
+/**
+ * Obtiene time entries con filtros opcionales
+ */
+export async function getTimeEntries(filters?: {
+    clientId?: string;
+    projectId?: string;
+    startDate?: Date;
+    endDate?: Date;
+    onlyCompleted?: boolean; // Solo entradas con end_time
+}) {
+    const user = await getAuthUser();
+
+    const where: any = {
+        user_id: user.id,
+    };
+
+    if (filters?.onlyCompleted) {
+        where.end_time = {
+            not: null,
+        };
+    }
+
+    if (filters?.startDate) {
+        where.start_time = {
+            ...where.start_time,
+            gte: filters.startDate,
+        };
+    }
+
+    if (filters?.endDate) {
+        const endOfDay = new Date(filters.endDate);
+        endOfDay.setHours(23, 59, 59, 999);
+        where.start_time = {
+            ...where.start_time,
+            lte: endOfDay,
+        };
+    }
+
+    if (filters?.clientId) {
+        where.task = {
+            project: {
+                client_id: filters.clientId,
+            },
+        };
+    }
+
+    if (filters?.projectId) {
+        where.task = {
+            ...where.task,
+            project_id: filters.projectId,
+        };
+    }
+
+    const entries = await prisma.time_entries.findMany({
+        where,
+        include: {
+            task: {
+                include: {
+                    project: {
+                        include: {
+                            client: true,
+                        },
+                    },
+                },
+            },
+        },
+        orderBy: {
+            start_time: "desc",
+        },
+    });
+
+    return entries;
+}
+
+/**
+ * Actualiza un time entry existente
+ */
+export async function updateTimeEntry(
+    entryId: string,
+    data: {
+        description?: string | null;
+        start_time?: Date;
+        end_time?: Date | null;
+        duration_minutes?: number | null;
+        billable?: boolean;
+        rate_applied?: number | null;
+        amount?: number | null;
+    }
+): Promise<ActionResponse<time_entries>> {
+    const user = await getAuthUser();
+
+    // Verificar que el entry pertenece al usuario
+    const entry = await prisma.time_entries.findUnique({
+        where: { id: entryId },
+    });
+
+    if (!entry) {
+        return {
+            success: false,
+            error: "Time entry no encontrado.",
+        };
+    }
+
+    if (entry.user_id !== user.id) {
+        return {
+            success: false,
+            error: "No autorizado.",
+        };
+    }
+
+    // Si se actualiza start_time o end_time, recalcular duración y monto
+    let updateData = { ...data };
+
+    if (data.start_time || data.end_time) {
+        const startTime = data.start_time || entry.start_time;
+        const endTime = data.end_time ?? entry.end_time;
+
+        if (endTime && startTime) {
+            const durationMinutes = differenceInMinutes(endTime, startTime);
+            updateData.duration_minutes = durationMinutes;
+
+            // Recalcular monto si hay tarifa
+            if (data.rate_applied !== undefined) {
+                const rate = data.rate_applied || 0;
+                updateData.amount = (durationMinutes / 60) * rate;
+            } else if (entry.rate_applied) {
+                const rate = Number(entry.rate_applied);
+                updateData.amount = (durationMinutes / 60) * rate;
+            }
+        }
+    }
+
+    // Si solo se actualiza la descripción, mantener rate y amount
+    if (Object.keys(updateData).length === 1 && updateData.description !== undefined) {
+        updateData = {
+            description: updateData.description,
+        };
+    }
+
+    try {
+        const updatedEntry = await prisma.time_entries.update({
+            where: { id: entryId },
+            data: updateData,
+            include: {
+                task: {
+                    include: {
+                        project: {
+                            include: {
+                                client: true,
+                            },
+                        },
+                    },
+                },
+            },
+        });
+
+        revalidatePath("/dashboard/my-hours");
+        revalidatePath("/dashboard/time-tracker");
+
+        return {
+            success: true,
+            data: updatedEntry,
+        };
+    } catch (error) {
+        return {
+            success: false,
+            error:
+                error instanceof Error
+                    ? error.message
+                    : "Error al actualizar la entrada de tiempo",
+        };
+    }
+}
+
+/**
+ * Actualiza solo la descripción de un time entry activo
+ */
+export async function updateTimeEntryDescription(
+    entryId: string,
+    description: string | null
+): Promise<ActionResponse<time_entries>> {
+    return updateTimeEntry(entryId, { description });
+}
