@@ -1,0 +1,211 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../lib/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// Enums
+enum BillingType {
+  fixed
+  hourly
+}
+
+enum ProjectStatus {
+  active
+  paused
+  completed
+  cancelled
+}
+
+enum InvoiceStatus {
+  draft
+  sent
+  paid
+  overdue
+}
+
+enum InvoiceItemType {
+  time
+  fixed
+}
+
+enum AccessLevel {
+  read
+  read_write
+}
+
+// Models
+model clients {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id      String   @db.Uuid
+  name         String
+  email        String?
+  phone        String?
+  address      String?
+  currency     String   @default("USD")
+  default_rate Decimal? @db.Decimal(10, 2)
+  notes        String?
+  created_at   DateTime @default(now()) @db.Timestamptz(6)
+  updated_at   DateTime @default(now()) @db.Timestamptz(6)
+
+  // Relations
+  projects      projects[]
+  hour_packages hour_packages[]
+  invoices      invoices[]
+  client_users  client_users[]
+
+  @@index([user_id])
+}
+
+model projects {
+  id           String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  client_id    String        @db.Uuid
+  name         String
+  description  String?
+  currency     String        @default("USD")
+  rate         Decimal?      @db.Decimal(10, 2)
+  billing_type BillingType   @default(hourly)
+  status       ProjectStatus @default(active)
+  start_date   DateTime?     @db.Date
+  end_date     DateTime?     @db.Date
+  created_at   DateTime      @default(now()) @db.Timestamptz(6)
+  updated_at   DateTime      @default(now()) @db.Timestamptz(6)
+
+  // Relations
+  client        clients         @relation(fields: [client_id], references: [id], onDelete: Cascade)
+  tasks         tasks[]
+  hour_packages hour_packages[]
+
+  @@index([client_id])
+  @@index([status])
+}
+
+model tasks {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  project_id  String   @db.Uuid
+  name        String
+  description String?
+  rate        Decimal? @db.Decimal(10, 2)
+  created_at  DateTime @default(now()) @db.Timestamptz(6)
+  updated_at  DateTime @default(now()) @db.Timestamptz(6)
+
+  // Relations
+  project      projects      @relation(fields: [project_id], references: [id], onDelete: Cascade)
+  time_entries time_entries[]
+
+  @@index([project_id])
+}
+
+model time_entries {
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id          String   @db.Uuid
+  task_id          String   @db.Uuid
+  description      String?
+  start_time       DateTime @db.Timestamptz(6)
+  end_time         DateTime? @db.Timestamptz(6)
+  duration_minutes Int?
+  billable         Boolean  @default(true)
+  rate_applied     Decimal? @db.Decimal(10, 2)
+  amount           Decimal? @db.Decimal(10, 2)
+  created_at       DateTime @default(now()) @db.Timestamptz(6)
+  updated_at       DateTime @default(now()) @db.Timestamptz(6)
+
+  // Relations
+  task          tasks           @relation(fields: [task_id], references: [id], onDelete: Cascade)
+  invoice_items invoice_items[]
+
+  @@index([user_id])
+  @@index([task_id])
+  @@index([start_time])
+}
+
+model hour_packages {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  client_id    String    @db.Uuid
+  project_id   String?   @db.Uuid
+  hours        Decimal   @db.Decimal(10, 2)
+  hours_used   Decimal   @default(0) @db.Decimal(10, 2)
+  price        Decimal   @db.Decimal(10, 2)
+  currency     String    @default("USD")
+  purchased_at DateTime  @default(now()) @db.Timestamptz(6)
+  expires_at   DateTime? @db.Timestamptz(6)
+  notes        String?
+  created_at   DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at   DateTime  @default(now()) @db.Timestamptz(6)
+
+  // Relations
+  client  clients   @relation(fields: [client_id], references: [id], onDelete: Cascade)
+  project projects? @relation(fields: [project_id], references: [id], onDelete: SetNull)
+
+  @@index([client_id])
+  @@index([project_id])
+}
+
+model invoices {
+  id             String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  client_id      String        @db.Uuid
+  invoice_number String        @unique
+  status         InvoiceStatus @default(draft)
+  subtotal       Decimal       @default(0) @db.Decimal(10, 2)
+  tax_rate       Decimal?      @db.Decimal(5, 2)
+  tax_amount     Decimal?      @db.Decimal(10, 2)
+  total_amount   Decimal       @default(0) @db.Decimal(10, 2)
+  currency       String        @default("USD")
+  issue_date     DateTime      @default(now()) @db.Date
+  due_date       DateTime?     @db.Date
+  paid_at        DateTime?     @db.Timestamptz(6)
+  notes          String?
+  created_at     DateTime      @default(now()) @db.Timestamptz(6)
+  updated_at     DateTime      @default(now()) @db.Timestamptz(6)
+
+  // Relations
+  client        clients         @relation(fields: [client_id], references: [id], onDelete: Cascade)
+  invoice_items invoice_items[]
+
+  @@index([client_id])
+  @@index([status])
+  @@index([issue_date])
+}
+
+model invoice_items {
+  id            String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  invoice_id    String          @db.Uuid
+  time_entry_id String?         @db.Uuid
+  description   String
+  quantity      Decimal         @db.Decimal(10, 2)
+  rate          Decimal         @db.Decimal(10, 2)
+  amount        Decimal         @db.Decimal(10, 2)
+  type          InvoiceItemType @default(time)
+  created_at    DateTime        @default(now()) @db.Timestamptz(6)
+
+  // Relations
+  invoice    invoices      @relation(fields: [invoice_id], references: [id], onDelete: Cascade)
+  time_entry time_entries? @relation(fields: [time_entry_id], references: [id], onDelete: SetNull)
+
+  @@index([invoice_id])
+  @@index([time_entry_id])
+}
+
+model client_users {
+  id           String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  client_id    String      @db.Uuid
+  email        String
+  user_id      String?     @db.Uuid
+  access_level AccessLevel @default(read)
+  invited_at   DateTime    @default(now()) @db.Timestamptz(6)
+  accepted_at  DateTime?   @db.Timestamptz(6)
+  created_at   DateTime    @default(now()) @db.Timestamptz(6)
+
+  // Relations
+  client clients @relation(fields: [client_id], references: [id], onDelete: Cascade)
+
+  @@unique([client_id, email])
+  @@index([client_id])
+  @@index([user_id])
+}

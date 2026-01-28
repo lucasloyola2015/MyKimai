@@ -1,7 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { createClientComponentClient } from "@/lib/supabase/client";
+import { useEffect, useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -24,9 +23,14 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Plus, Pencil, Trash2 } from "lucide-react";
-import type { Database } from "@/lib/types/database";
-
-type Client = Database["public"]["Tables"]["clients"]["Row"];
+import { useToast } from "@/hooks/use-toast";
+import {
+  getClients,
+  createClient,
+  updateClient,
+  deleteClient,
+} from "@/lib/actions/clients";
+import type { clients } from "@/lib/generated/prisma";
 
 const CURRENCIES = [
   { value: "USD", label: "USD - Dólar Estadounidense" },
@@ -34,16 +38,17 @@ const CURRENCIES = [
   { value: "GBP", label: "GBP - Libra Esterlina" },
   { value: "MXN", label: "MXN - Peso Mexicano" },
   { value: "ARS", label: "ARS - Peso Argentino" },
-  { value: "CLP", label: "CLP - Peso Chileno" },
+  { value: "CLP", label: "CLP - Chileno" },
   { value: "COP", label: "COP - Peso Colombiano" },
 ];
 
 export default function ClientsPage() {
-  const [clients, setClients] = useState<Client[]>([]);
+  const [clients, setClients] = useState<clients[]>([]);
   const [loading, setLoading] = useState(true);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
-  const [editingClient, setEditingClient] = useState<Client | null>(null);
-  const supabase = createClientComponentClient();
+  const [editingClient, setEditingClient] = useState<clients | null>(null);
+  const [isPending, startTransition] = useTransition();
+  const { toast } = useToast();
 
   const [formData, setFormData] = useState({
     name: "",
@@ -60,60 +65,15 @@ export default function ClientsPage() {
   }, []);
 
   const loadClients = async () => {
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/0fda1414-4390-4855-9462-9c9a0cf71bf7',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'clients/page.tsx:62',message:'loadClients called',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
-    // #endregion
     try {
-      const {
-        data: { user },
-        error: authError,
-      } = await supabase.auth.getUser();
-
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/0fda1414-4390-4855-9462-9c9a0cf71bf7',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'clients/page.tsx:69',message:'Auth check result',data:{hasUser:!!user,hasAuthError:!!authError,authErrorCode:authError?.code},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
-      // #endregion
-
-      if (authError) {
-        console.error("Auth error:", authError);
-        return;
-      }
-
-      if (!user) {
-        console.error("No user found");
-        return;
-      }
-
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/0fda1414-4390-4855-9462-9c9a0cf71bf7',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'clients/page.tsx:79',message:'Before Supabase query',data:{userId:user.id},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
-      // #endregion
-
-      const { data, error } = await supabase
-        .from("clients")
-        .select("*")
-        .order("created_at", { ascending: false });
-
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/0fda1414-4390-4855-9462-9c9a0cf71bf7',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'clients/page.tsx:84',message:'Supabase query result',data:{hasError:!!error,errorCode:error?.code,errorMessage:error?.message,dataLength:data?.length||0},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
-      // #endregion
-
-      if (error) {
-        console.error("Supabase error:", error);
-        console.error("Error details:", JSON.stringify(error, null, 2));
-        throw error;
-      }
-      
-      console.log("Clients loaded:", data?.length || 0);
-      setClients(data || []);
-      
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/0fda1414-4390-4855-9462-9c9a0cf71bf7',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'clients/page.tsx:91',message:'Clients set in state',data:{clientsCount:data?.length||0},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
-      // #endregion
+      const data = await getClients();
+      setClients(data);
     } catch (error) {
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/0fda1414-4390-4855-9462-9c9a0cf71bf7',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'clients/page.tsx:93',message:'Error caught',data:{errorMessage:error instanceof Error?error.message:String(error)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
-      // #endregion
-      console.error("Error loading clients:", error);
-      alert("Error al cargar clientes. Verifica la consola para más detalles.");
+      toast({
+        title: "Error",
+        description: "No se pudieron cargar los clientes.",
+        variant: "destructive",
+      });
     } finally {
       setLoading(false);
     }
@@ -122,63 +82,64 @@ export default function ClientsPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    try {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
+    startTransition(async () => {
+      try {
+        const clientData = {
+          name: formData.name,
+          email: formData.email || null,
+          phone: formData.phone || null,
+          address: formData.address || null,
+          currency: formData.currency,
+          default_rate: formData.default_rate
+            ? parseFloat(formData.default_rate)
+            : null,
+          notes: formData.notes || null,
+        };
 
-      if (!user) return;
-
-      const clientData = {
-        user_id: user.id,
-        name: formData.name,
-        email: formData.email || null,
-        phone: formData.phone || null,
-        address: formData.address || null,
-        currency: formData.currency,
-        default_rate: formData.default_rate
-          ? parseFloat(formData.default_rate)
-          : null,
-        notes: formData.notes || null,
-      };
-
-      if (editingClient) {
-        const { error } = await supabase
-          .from("clients")
-          .update(clientData)
-          .eq("id", editingClient.id);
-
-        if (error) throw error;
-      } else {
-        const { data: insertedData, error } = await supabase
-          .from("clients")
-          .insert(clientData)
-          .select();
-        
-        if (error) {
-          console.error("Error inserting client:", error);
-          console.error("Error details:", JSON.stringify(error, null, 2));
-          throw error;
+        if (editingClient) {
+          const result = await updateClient(editingClient.id, clientData);
+          if (!result.success) {
+            toast({
+              title: "Error",
+              description: result.error,
+              variant: "destructive",
+            });
+            return;
+          }
+          toast({
+            title: "Cliente actualizado",
+            description: "El cliente se actualizó correctamente.",
+          });
+        } else {
+          const result = await createClient(clientData);
+          if (!result.success) {
+            toast({
+              title: "Error",
+              description: result.error,
+              variant: "destructive",
+            });
+            return;
+          }
+          toast({
+            title: "Cliente creado",
+            description: "El cliente se creó correctamente.",
+          });
         }
-        
-        console.log("Client inserted:", insertedData);
-      }
 
-      // Cerrar diálogo y resetear formulario primero
-      setIsDialogOpen(false);
-      resetForm();
-      
-      // Recargar clientes después de un pequeño delay para asegurar que el diálogo se cierre
-      setTimeout(() => {
+        setIsDialogOpen(false);
+        resetForm();
         loadClients();
-      }, 100);
-    } catch (error) {
-      console.error("Error saving client:", error);
-      alert("Error al guardar el cliente");
-    }
+      } catch (error) {
+        toast({
+          title: "Error",
+          description: "Ocurrió un error al guardar el cliente.",
+          variant: "destructive",
+        });
+      }
+    });
   };
 
-  const handleEdit = (client: Client) => {
+  const handleEdit = (client: clients) => {
     setEditingClient(client);
     setFormData({
       name: client.name,
@@ -195,18 +156,30 @@ export default function ClientsPage() {
   const handleDelete = async (id: string) => {
     if (!confirm("¿Estás seguro de eliminar este cliente?")) return;
 
-    try {
-      const { error } = await supabase
-        .from("clients")
-        .delete()
-        .eq("id", id);
-
-      if (error) throw error;
-      loadClients();
-    } catch (error) {
-      console.error("Error deleting client:", error);
-      alert("Error al eliminar el cliente");
-    }
+    startTransition(async () => {
+      try {
+        const result = await deleteClient(id);
+        if (!result.success) {
+          toast({
+            title: "Error",
+            description: result.error,
+            variant: "destructive",
+          });
+          return;
+        }
+        toast({
+          title: "Cliente eliminado",
+          description: "El cliente se eliminó correctamente.",
+        });
+        loadClients();
+      } catch (error) {
+        toast({
+          title: "Error",
+          description: "Ocurrió un error al eliminar el cliente.",
+          variant: "destructive",
+        });
+      }
+    });
   };
 
   const resetForm = () => {
@@ -223,7 +196,11 @@ export default function ClientsPage() {
   };
 
   if (loading) {
-    return <div>Cargando...</div>;
+    return (
+      <div className="flex items-center justify-center min-h-[400px]">
+        <div className="text-muted-foreground">Cargando...</div>
+      </div>
+    );
   }
 
   return (
@@ -235,12 +212,11 @@ export default function ClientsPage() {
             Gestiona tus clientes y sus tarifas
           </p>
         </div>
-        <Dialog 
-          open={isDialogOpen} 
+        <Dialog
+          open={isDialogOpen}
           onOpenChange={(open) => {
             setIsDialogOpen(open);
             if (!open) {
-              // Si se cierra el diálogo, resetear el formulario
               resetForm();
             }
           }}
@@ -271,6 +247,7 @@ export default function ClientsPage() {
                       setFormData({ ...formData, name: e.target.value })
                     }
                     required
+                    disabled={isPending}
                   />
                 </div>
                 <div className="grid grid-cols-2 gap-4">
@@ -283,6 +260,7 @@ export default function ClientsPage() {
                       onChange={(e) =>
                         setFormData({ ...formData, email: e.target.value })
                       }
+                      disabled={isPending}
                     />
                   </div>
                   <div className="grid gap-2">
@@ -293,6 +271,7 @@ export default function ClientsPage() {
                       onChange={(e) =>
                         setFormData({ ...formData, phone: e.target.value })
                       }
+                      disabled={isPending}
                     />
                   </div>
                 </div>
@@ -304,6 +283,7 @@ export default function ClientsPage() {
                     onChange={(e) =>
                       setFormData({ ...formData, address: e.target.value })
                     }
+                    disabled={isPending}
                   />
                 </div>
                 <div className="grid grid-cols-2 gap-4">
@@ -314,6 +294,7 @@ export default function ClientsPage() {
                       onValueChange={(value) =>
                         setFormData({ ...formData, currency: value })
                       }
+                      disabled={isPending}
                     >
                       <SelectTrigger>
                         <SelectValue />
@@ -341,6 +322,7 @@ export default function ClientsPage() {
                         })
                       }
                       placeholder="0.00"
+                      disabled={isPending}
                     />
                   </div>
                 </div>
@@ -352,6 +334,7 @@ export default function ClientsPage() {
                     onChange={(e) =>
                       setFormData({ ...formData, notes: e.target.value })
                     }
+                    disabled={isPending}
                   />
                 </div>
               </div>
@@ -363,11 +346,16 @@ export default function ClientsPage() {
                     setIsDialogOpen(false);
                     resetForm();
                   }}
+                  disabled={isPending}
                 >
                   Cancelar
                 </Button>
-                <Button type="submit">
-                  {editingClient ? "Actualizar" : "Crear"}
+                <Button type="submit" disabled={isPending}>
+                  {isPending
+                    ? "Guardando..."
+                    : editingClient
+                      ? "Actualizar"
+                      : "Crear"}
                 </Button>
               </DialogFooter>
             </form>
@@ -386,6 +374,7 @@ export default function ClientsPage() {
                     variant="ghost"
                     size="icon"
                     onClick={() => handleEdit(client)}
+                    disabled={isPending}
                   >
                     <Pencil className="h-4 w-4" />
                   </Button>
@@ -393,6 +382,7 @@ export default function ClientsPage() {
                     variant="ghost"
                     size="icon"
                     onClick={() => handleDelete(client.id)}
+                    disabled={isPending}
                   >
                     <Trash2 className="h-4 w-4" />
                   </Button>
@@ -416,7 +406,7 @@ export default function ClientsPage() {
                 </p>
                 {client.default_rate && (
                   <p className="text-muted-foreground">
-                    <strong>Tarifa:</strong> {client.default_rate}{" "}
+                    <strong>Tarifa:</strong> {client.default_rate.toString()}{" "}
                     {client.currency}/h
                   </p>
                 )}

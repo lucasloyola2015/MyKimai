@@ -2,22 +2,29 @@
 
 import { useEffect, useState } from "react";
 import { createClientComponentClient } from "@/lib/supabase/client";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { format, startOfDay, endOfDay, startOfWeek, endOfWeek } from "date-fns";
+import { Clock, FolderKanban, FileText, DollarSign } from "lucide-react";
 import type { Database } from "@/lib/types/database";
 import { HoursChart } from "@/components/dashboard/hours-chart";
+import { StatCard } from "@/components/dashboard/stat-card";
 
 type TimeEntry = Database["public"]["Tables"]["time_entries"]["Row"];
 
 export default function DashboardPage() {
   const [stats, setStats] = useState({
-    hoursToday: 0,
-    hoursThisWeek: 0,
+    hoursToday: 0, // minutos
+    hoursThisWeek: 0, // minutos
     activeProjects: 0,
     totalClients: 0,
     pendingInvoices: 0,
     totalRevenue: 0,
   });
+
+  const formatTime = (minutes: number): string => {
+    const hours = Math.floor(minutes / 60);
+    const mins = minutes % 60;
+    return `${hours}:${mins.toString().padStart(2, "0")}`;
+  };
   const [loading, setLoading] = useState(true);
   const supabase = createClientComponentClient();
 
@@ -47,11 +54,11 @@ export default function DashboardPage() {
         .gte("start_time", todayStart.toISOString())
         .lte("start_time", todayEnd.toISOString());
 
-      const hoursToday =
-        (todayEntries?.reduce(
+      const minutesToday =
+        todayEntries?.reduce(
           (sum, e) => sum + (e.duration_minutes || 0),
           0
-        ) || 0) / 60;
+        ) || 0;
 
       // Hours this week
       const { data: weekEntries } = await supabase
@@ -61,11 +68,11 @@ export default function DashboardPage() {
         .gte("start_time", weekStart.toISOString())
         .lte("start_time", weekEnd.toISOString());
 
-      const hoursThisWeek =
-        (weekEntries?.reduce(
+      const minutesThisWeek =
+        weekEntries?.reduce(
           (sum, e) => sum + (e.duration_minutes || 0),
           0
-        ) || 0) / 60;
+        ) || 0;
 
       // Active projects
       const { count: activeProjectsCount } = await supabase
@@ -99,8 +106,8 @@ export default function DashboardPage() {
       ) || 0;
 
       setStats({
-        hoursToday: Math.round(hoursToday * 100) / 100,
-        hoursThisWeek: Math.round(hoursThisWeek * 100) / 100,
+        hoursToday: minutesToday,
+        hoursThisWeek: minutesThisWeek,
         activeProjects: activeProjectsCount || 0,
         totalClients: clientsCount || 0,
         pendingInvoices: invoicesCount || 0,
@@ -114,7 +121,22 @@ export default function DashboardPage() {
   };
 
   if (loading) {
-    return <div>Cargando...</div>;
+    return (
+      <div className="space-y-6">
+        <div>
+          <h1 className="text-3xl font-bold">Dashboard</h1>
+          <p className="text-muted-foreground">
+            Resumen de tu actividad y métricas
+          </p>
+        </div>
+        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+          <StatCard title="" value="" loading />
+          <StatCard title="" value="" loading />
+          <StatCard title="" value="" loading />
+          <StatCard title="" value="" loading />
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -126,52 +148,30 @@ export default function DashboardPage() {
         </p>
       </div>
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Horas Hoy</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{stats.hoursToday}h</div>
-            <p className="text-xs text-muted-foreground">
-              {stats.hoursThisWeek}h esta semana
-            </p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Proyectos Activos</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{stats.activeProjects}</div>
-            <p className="text-xs text-muted-foreground">
-              {stats.totalClients} clientes totales
-            </p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Facturas Pendientes</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{stats.pendingInvoices}</div>
-            <p className="text-xs text-muted-foreground">
-              Requieren atención
-            </p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Ingresos Totales</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">
-              {stats.totalRevenue.toFixed(2)}
-            </div>
-            <p className="text-xs text-muted-foreground">
-              Facturas pagadas
-            </p>
-          </CardContent>
-        </Card>
+        <StatCard
+          title="Horas Hoy"
+          value={`${formatTime(stats.hoursToday)}h`}
+          subtitle={`${formatTime(stats.hoursThisWeek)}h esta semana`}
+          icon={Clock}
+        />
+        <StatCard
+          title="Proyectos Activos"
+          value={stats.activeProjects}
+          subtitle={`${stats.totalClients} clientes totales`}
+          icon={FolderKanban}
+        />
+        <StatCard
+          title="Facturas Pendientes"
+          value={stats.pendingInvoices}
+          subtitle="Requieren atención"
+          icon={FileText}
+        />
+        <StatCard
+          title="Ingresos Totales"
+          value={stats.totalRevenue.toFixed(2)}
+          subtitle="Facturas pagadas"
+          icon={DollarSign}
+        />
       </div>
       <HoursChart />
     </div>

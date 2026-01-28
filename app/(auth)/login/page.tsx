@@ -21,7 +21,14 @@ export default function LoginPage() {
     setError(null);
     setLoading(true);
 
+    if (!supabase) {
+      setError("Error de configuración. Por favor, contacta al administrador.");
+      setLoading(false);
+      return;
+    }
+
     try {
+
       const { error } = await supabase.auth.signInWithPassword({
         email,
         password,

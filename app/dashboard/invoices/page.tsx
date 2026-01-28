@@ -41,13 +41,30 @@ const INVOICE_STATUSES = [
   { value: "overdue", label: "Vencida", color: "bg-red-100 text-red-800" },
 ];
 
+interface ClientSummary {
+  clientId: string;
+  clientName: string;
+  currency: string;
+  unbilledHours: number; // minutos
+  unbilledAmount: number;
+  billedUnpaidAmount: number;
+  billedPaidAmount: number;
+}
+
 export default function InvoicesPage() {
   const [invoices, setInvoices] = useState<InvoiceWithClient[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
   const [timeEntries, setTimeEntries] = useState<TimeEntry[]>([]);
+  const [clientSummaries, setClientSummaries] = useState<ClientSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const supabase = createClientComponentClient();
+
+  const formatTime = (minutes: number): string => {
+    const hours = Math.floor(minutes / 60);
+    const mins = minutes % 60;
+    return `${hours}:${mins.toString().padStart(2, "0")}`;
+  };
 
   const [formData, setFormData] = useState({
     client_id: "",
@@ -113,6 +130,54 @@ export default function InvoicesPage() {
 
       if (entriesError) throw entriesError;
       setTimeEntries((entriesData as any) || []);
+
+      // Calculate client summaries
+      const summaries: ClientSummary[] = clientsData.map((client) => {
+        // Unbilled time entries for this client
+        const clientUnbilledEntries = (entriesData as any[]).filter(
+          (entry) => entry.tasks?.projects?.clients?.id === client.id
+        );
+        const unbilledMinutes = clientUnbilledEntries.reduce(
+          (sum, entry) => sum + (entry.duration_minutes || 0),
+          0
+        );
+        const unbilledAmount = clientUnbilledEntries.reduce(
+          (sum, entry) => sum + (entry.amount || 0),
+          0
+        );
+
+        // Billed but unpaid (draft or sent)
+        const clientUnpaidInvoices = (invoicesData as any[]).filter(
+          (inv) =>
+            inv.clients?.id === client.id &&
+            (inv.status === "draft" || inv.status === "sent")
+        );
+        const billedUnpaidAmount = clientUnpaidInvoices.reduce(
+          (sum, inv) => sum + (inv.total_amount || 0),
+          0
+        );
+
+        // Billed and paid
+        const clientPaidInvoices = (invoicesData as any[]).filter(
+          (inv) => inv.clients?.id === client.id && inv.status === "paid"
+        );
+        const billedPaidAmount = clientPaidInvoices.reduce(
+          (sum, inv) => sum + (inv.total_amount || 0),
+          0
+        );
+
+        return {
+          clientId: client.id,
+          clientName: client.name,
+          currency: client.currency,
+          unbilledHours: unbilledMinutes,
+          unbilledAmount,
+          billedUnpaidAmount,
+          billedPaidAmount,
+        };
+      });
+
+      setClientSummaries(summaries);
     } catch (error) {
       console.error("Error loading data:", error);
     } finally {
@@ -305,6 +370,54 @@ export default function InvoicesPage() {
           </DialogContent>
         </Dialog>
       </div>
+
+      {/* Tabla de resumen por cliente */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Resumen por Cliente</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse">
+              <thead>
+                <tr className="border-b">
+                  <th className="text-left p-2 font-medium">Cliente</th>
+                  <th className="text-right p-2 font-medium">Horas Sin Facturar</th>
+                  <th className="text-right p-2 font-medium">Monto Sin Facturar</th>
+                  <th className="text-right p-2 font-medium">Facturado No Pagado</th>
+                  <th className="text-right p-2 font-medium">Facturado y Pagado</th>
+                </tr>
+              </thead>
+              <tbody>
+                {clientSummaries.map((summary) => (
+                  <tr key={summary.clientId} className="border-b hover:bg-muted/50">
+                    <td className="p-2 font-medium">{summary.clientName}</td>
+                    <td className="p-2 text-right">
+                      {formatTime(summary.unbilledHours)}h
+                    </td>
+                    <td className="p-2 text-right">
+                      {summary.unbilledAmount.toFixed(2)} {summary.currency}
+                    </td>
+                    <td className="p-2 text-right">
+                      {summary.billedUnpaidAmount.toFixed(2)} {summary.currency}
+                    </td>
+                    <td className="p-2 text-right">
+                      {summary.billedPaidAmount.toFixed(2)} {summary.currency}
+                    </td>
+                  </tr>
+                ))}
+                {clientSummaries.length === 0 && (
+                  <tr>
+                    <td colSpan={5} className="p-4 text-center text-muted-foreground">
+                      No hay clientes registrados
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </CardContent>
+      </Card>
 
       <div className="grid gap-4">
         {invoices.map((invoice) => {
