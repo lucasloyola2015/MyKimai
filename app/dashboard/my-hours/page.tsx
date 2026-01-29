@@ -1,8 +1,18 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Button } from "@/components/ui/button";
+import { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Label } from "@/components/ui/label";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Dialog,
   DialogContent,
@@ -11,138 +21,113 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
-import { Pencil, Trash2 } from "lucide-react";
-import { format } from "date-fns";
-import { es } from "date-fns/locale";
-import { DateTimePicker } from "@/components/ui/date-time-picker";
+import { Pencil, Trash2, Plus, Coffee, X, Wrench, ChevronRight } from "lucide-react";
 import { getClients } from "@/lib/actions/clients";
 import { getProjects } from "@/lib/actions/projects";
 import {
-    getTimeEntries,
-    updateTimeEntry,
-    deleteTimeEntry,
+  getTimeEntries,
+  updateTimeEntry,
+  deleteTimeEntry,
+  addTimeEntryBreak,
+  updateTimeEntryBreak,
+  deleteTimeEntryBreak,
+  previewConsolidation,
+  executeConsolidation,
+  type ConsolidationPreview
 } from "@/lib/actions/time-entries";
-import type { time_entries, clients, projects, tasks } from "@/lib/generated/prisma";
+import { format } from "date-fns";
 import { toast } from "@/hooks/use-toast";
+import { cn } from "@/lib/utils";
+import type { clients, projects, time_entries } from "@prisma/client";
+import { DayTimeline } from "@/components/dashboard/DayTimeline";
 
-type TimeEntryWithRelations = time_entries & {
-    task?: tasks & {
-        project?: projects & {
-            client?: clients;
-        };
-    };
-};
-
-export default function MyHoursPage() {
-  const [entries, setEntries] = useState<TimeEntryWithRelations[]>([]);
+export default function Page() {
+  const [loading, setLoading] = useState(true);
   const [clients, setClients] = useState<clients[]>([]);
   const [projects, setProjects] = useState<(projects & { client: clients })[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [entries, setEntries] = useState<time_entries[]>([]);
+  const [maintenancePreview, setMaintenancePreview] = useState<ConsolidationPreview[] | null>(null);
+  const [isMaintenanceLoading, setIsMaintenanceLoading] = useState(false);
+  const [selectedClient, setSelectedClient] = useState<string>("");
+  const [selectedProject, setSelectedProject] = useState<string>("");
   const [isDialogOpen, setIsDialogOpen] = useState(false);
-  const [editingEntry, setEditingEntry] = useState<TimeEntryWithRelations | null>(null);
-
-  const [filters, setFilters] = useState({
-    client_id: "",
-    project_id: "",
-    start_date: "",
-    end_date: "",
-  });
-
-  const [formData, setFormData] = useState({
+  const [editingEntry, setEditingEntry] = useState<any | null>(null);
+  const [formData, setFormData] = useState<any>({
     description: "",
-    start_time: null as Date | null,
-    end_time: null as Date | null,
-    duration_minutes: "",
-    billable: true,
+    start_date: "",
+    start_time: "",
+    end_date: "",
+    end_time: "",
   });
 
   useEffect(() => {
-    loadClients();
-    loadProjects();
-    loadEntries();
+    loadData();
   }, []);
 
   useEffect(() => {
+    if (selectedClient) {
+      loadProjects(selectedClient);
+    } else {
+      setProjects([]);
+      setSelectedProject("");
+    }
+  }, [selectedClient]);
+
+  useEffect(() => {
     loadEntries();
-  }, [filters]);
+  }, [selectedClient, selectedProject]);
 
-  const loadClients = async () => {
+  const loadData = async () => {
     try {
-      const data = await getClients();
-      setClients(data);
+      const [clientsData, entriesData] = await Promise.all([
+        getClients(),
+        getTimeEntries(),
+      ]);
+      setClients(clientsData);
+      setEntries(entriesData);
     } catch (error) {
-      console.error("Error loading clients:", error);
-      toast({
-        title: "Error",
-        description: "No se pudieron cargar los clientes.",
-        variant: "destructive",
-      });
-    }
-  };
-
-  const loadProjects = async () => {
-    try {
-      const data = await getProjects();
-      setProjects(data);
-    } catch (error) {
-      console.error("Error loading projects:", error);
-      toast({
-        title: "Error",
-        description: "No se pudieron cargar los proyectos.",
-        variant: "destructive",
-      });
-    }
-  };
-
-  const loadEntries = async () => {
-    setLoading(true);
-    try {
-      const startDate = filters.start_date
-        ? new Date(`${filters.start_date}T00:00:00`)
-        : undefined;
-      const endDate = filters.end_date
-        ? new Date(`${filters.end_date}T23:59:59`)
-        : undefined;
-
-      const data = await getTimeEntries({
-        clientId: filters.client_id || undefined,
-        projectId: filters.project_id || undefined,
-        startDate,
-        endDate,
-        onlyCompleted: true, // Solo entradas completadas
-      });
-
-      setEntries(data as TimeEntryWithRelations[]);
-    } catch (error) {
-      console.error("Error loading entries:", error);
-      toast({
-        title: "Error",
-        description: "No se pudieron cargar las entradas de tiempo.",
-        variant: "destructive",
-      });
+      console.error("Error loading data:", error);
     } finally {
       setLoading(false);
     }
   };
 
-  const handleEdit = (entry: TimeEntryWithRelations) => {
+  const loadProjects = async (clientId: string) => {
+    try {
+      const projectsData = await getProjects(clientId);
+      setProjects(projectsData);
+    } catch (error) {
+      console.error("Error loading projects:", error);
+    }
+  };
+
+  const loadEntries = async () => {
+    try {
+      const entriesData = await getTimeEntries({
+        clientId: selectedClient || undefined,
+        projectId: selectedProject || undefined,
+      });
+      setEntries(entriesData);
+    } catch (error) {
+      console.error("Error loading entries:", error);
+    }
+  };
+
+  const filteredProjects = selectedClient
+    ? projects.filter((p) => p.client_id === selectedClient)
+    : [];
+
+  const handleEdit = (entry: any) => {
     setEditingEntry(entry);
+    const startDate = new Date(entry.start_time);
+    const endDate = entry.end_time ? new Date(entry.end_time) : new Date();
+
     setFormData({
       description: entry.description || "",
-      start_time: entry.start_time ? new Date(entry.start_time) : null,
-      end_time: entry.end_time ? new Date(entry.end_time) : null,
-      duration_minutes: entry.duration_minutes?.toString() || "",
-      billable: entry.billable ?? true,
+      start_date: format(startDate, "yyyy-MM-dd"),
+      start_time: format(startDate, "HH:mm"),
+      end_date: format(endDate, "yyyy-MM-dd"),
+      end_time: entry.end_time ? format(endDate, "HH:mm") : "",
     });
     setIsDialogOpen(true);
   };
@@ -157,14 +142,13 @@ export default function MyHoursPage() {
       }
       toast({
         title: "Éxito",
-        description: "Entrada eliminada correctamente.",
+        description: "Entrada de tiempo eliminada correctamente.",
       });
       loadEntries();
     } catch (error) {
-      console.error("Error deleting entry:", error);
       toast({
         title: "Error",
-        description: "Error al eliminar la entrada.",
+        description: error instanceof Error ? error.message : "Error al eliminar la entrada",
         variant: "destructive",
       });
     }
@@ -172,46 +156,18 @@ export default function MyHoursPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-
-    if (!editingEntry || !formData.start_time || !formData.end_time) {
-      toast({
-        title: "Error",
-        description: "Por favor completa las fechas de inicio y fin",
-        variant: "destructive",
-      });
-      return;
-    }
+    if (!editingEntry) return;
 
     try {
-      const startTime = formData.start_time;
-      const endTime = formData.end_time;
-      const durationMinutes = Math.floor(
-        (endTime.getTime() - startTime.getTime()) / (1000 * 60)
-      );
-
-      if (durationMinutes < 1) {
-        toast({
-          title: "Error",
-          description: "La duración debe ser al menos 1 minuto",
-          variant: "destructive",
-        });
-        return;
-      }
-
-      // Recalcular rate y amount si es necesario
-      const { getRateContext } = await import("@/lib/actions/rates");
-      const { resolveRate } = await import("@/lib/utils/rates");
-      const rateContext = await getRateContext(editingEntry.task_id);
-      const rate = resolveRate(rateContext);
+      const startDateTime = new Date(`${formData.start_date}T${formData.start_time}`);
+      const endDateTime = (formData.end_date && formData.end_time && editingEntry.end_time)
+        ? new Date(`${formData.end_date}T${formData.end_time}`)
+        : null;
 
       const result = await updateTimeEntry(editingEntry.id, {
         description: formData.description || null,
-        start_time: startTime,
-        end_time: endTime,
-        duration_minutes: durationMinutes,
-        billable: formData.billable,
-        rate_applied: rate,
-        amount: rate ? (durationMinutes / 60) * rate : null,
+        start_time: startDateTime,
+        end_time: endDateTime,
       });
 
       if (!result.success) {
@@ -220,39 +176,109 @@ export default function MyHoursPage() {
 
       toast({
         title: "Éxito",
-        description: "Entrada actualizada correctamente.",
+        description: "Entrada de tiempo actualizada correctamente.",
       });
 
       setIsDialogOpen(false);
       setEditingEntry(null);
       loadEntries();
     } catch (error) {
-      console.error("Error updating entry:", error);
       toast({
         title: "Error",
-        description: "Error al actualizar la entrada",
+        description: error instanceof Error ? error.message : "Error al actualizar la entrada",
         variant: "destructive",
       });
     }
   };
 
-  const formatTime = (minutes: number | null): string => {
-    if (!minutes) return "0:00";
-    const hours = Math.floor(minutes / 60);
-    const mins = minutes % 60;
-    return `${hours}:${mins.toString().padStart(2, "0")}`;
+  const handleAddBreak = async () => {
+    if (!editingEntry) return;
+    const now = new Date();
+    // Hora por defecto: hace 5 minutos hasta ahora
+    const start = new Date(now.getTime() - 5 * 60000);
+    const result = await addTimeEntryBreak(editingEntry.id, start, now);
+    if (result.success) {
+      loadEntries();
+      // Recargar el editingEntry localmente para ver la nueva pausa
+      const updatedEntries = await getTimeEntries();
+      const updated = updatedEntries.find((e: any) => e.id === editingEntry.id);
+      if (updated) setEditingEntry(updated);
+    }
   };
 
-  const formatDateTime = (dateString: string | Date | null): string => {
-    if (!dateString) return "-";
-    const date = dateString instanceof Date ? dateString : new Date(dateString);
-    return format(date, "dd/MM/yyyy HH:mm", { locale: es });
+  const handleUpdateBreak = async (breakId: string, startTimeStr: string, endTimeStr: string) => {
+    if (!editingEntry) return;
+    const dateStr = formData.start_date; // Usamos la misma fecha que el entry por defecto
+    const start = new Date(`${dateStr}T${startTimeStr}`);
+    const end = endTimeStr ? new Date(`${dateStr}T${endTimeStr}`) : null;
+
+    await updateTimeEntryBreak(breakId, start, end);
+    loadEntries();
   };
 
-  // Filtrar proyectos según el cliente seleccionado
-  const filteredProjects = filters.client_id
-    ? projects.filter((p) => p.client?.id === filters.client_id)
-    : projects;
+  const handleDeleteBreak = async (breakId: string) => {
+    if (!confirm("¿Eliminar esta pausa?")) return;
+    const result = await deleteTimeEntryBreak(breakId);
+    if (result.success) {
+      loadEntries();
+      const updatedEntries = await getTimeEntries();
+      const updated = updatedEntries.find((e: any) => e.id === editingEntry.id);
+      if (updated) setEditingEntry(updated);
+    }
+  };
+  const handlePreview = async () => {
+    setIsMaintenanceLoading(true);
+    try {
+      const previews = await previewConsolidation();
+      setMaintenancePreview(previews);
+      if (previews.length === 0) {
+        toast({
+          title: "Limpieza",
+          description: "No se encontraron registros fragmentados para consolidar.",
+        });
+      }
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: "Error al generar vista previa de mantenimiento",
+        variant: "destructive",
+      });
+    } finally {
+      setIsMaintenanceLoading(false);
+    }
+  };
+
+  const handleExecuteConsolidation = async () => {
+    setIsMaintenanceLoading(true);
+    try {
+      const results = await executeConsolidation();
+      toast({
+        title: "Éxito",
+        description: `Consolidación completada: ${results.consolidated} grupos procesados, ${results.removed} registros eliminados, ${results.breaksCreated} pausas automáticas creadas.`,
+      });
+      setMaintenancePreview(null);
+      loadEntries();
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: "Error al ejecutar consolidación de mantenimiento",
+        variant: "destructive",
+      });
+    } finally {
+      setIsMaintenanceLoading(false);
+    }
+  };
+
+  const resetForm = () => {
+    setFormData({
+      description: "",
+      start_date: "",
+      start_time: "",
+      end_date: "",
+      end_time: "",
+    });
+    setEditingEntry(null);
+  };
 
   return (
     <div className="space-y-6">
@@ -263,19 +289,18 @@ export default function MyHoursPage() {
         </p>
       </div>
 
-      {/* Filtros */}
       <Card>
         <CardHeader>
           <CardTitle>Filtros</CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="grid gap-4 md:grid-cols-4">
+          <div className="grid gap-4 md:grid-cols-2">
             <div className="grid gap-2">
               <Label htmlFor="client_filter">Cliente</Label>
               <Select
-                value={filters.client_id || "all"}
+                value={selectedClient || "all"}
                 onValueChange={(value) => {
-                  setFilters({ ...filters, client_id: value === "all" ? "" : value, project_id: "" });
+                  setSelectedClient(value === "all" ? "" : value);
                 }}
               >
                 <SelectTrigger>
@@ -291,160 +316,253 @@ export default function MyHoursPage() {
                 </SelectContent>
               </Select>
             </div>
-
             <div className="grid gap-2">
               <Label htmlFor="project_filter">Proyecto</Label>
               <Select
-                value={filters.project_id || "all"}
+                value={selectedProject || "all"}
                 onValueChange={(value) => {
-                  setFilters({ ...filters, project_id: value === "all" ? "" : value });
+                  setSelectedProject(value === "all" ? "" : value);
                 }}
-                disabled={!filters.client_id}
+                disabled={!selectedClient}
               >
                 <SelectTrigger>
                   <SelectValue placeholder="Todos los proyectos" />
                 </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">Todos los proyectos</SelectItem>
-                      {filteredProjects.map((project) => (
-                        <SelectItem key={project.id} value={project.id}>
-                          {project.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
+                <SelectContent>
+                  <SelectItem value="all">Todos los proyectos</SelectItem>
+                  {filteredProjects.map((project) => (
+                    <SelectItem key={project.id} value={project.id}>
+                      {project.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
               </Select>
-            </div>
-
-            <div className="grid gap-2">
-              <Label htmlFor="start_date">Fecha Inicio</Label>
-              <Input
-                id="start_date"
-                type="date"
-                value={filters.start_date}
-                onChange={(e) =>
-                  setFilters({ ...filters, start_date: e.target.value })
-                }
-              />
-            </div>
-
-            <div className="grid gap-2">
-              <Label htmlFor="end_date">Fecha Fin</Label>
-              <Input
-                id="end_date"
-                type="date"
-                value={filters.end_date}
-                onChange={(e) =>
-                  setFilters({ ...filters, end_date: e.target.value })
-                }
-              />
             </div>
           </div>
         </CardContent>
       </Card>
 
-      {/* Lista de entradas */}
-      {loading ? (
-        <div>Cargando...</div>
-      ) : (
-        <div className="space-y-4">
-          {entries.map((entry) => {
-            const task = entry.task;
-            const project = task?.project;
-            const client = project?.client;
+      {/* Herramientas de Limpieza */}
+      <Card className="border-orange-200 bg-orange-50/30 overflow-hidden">
+        <CardHeader className="bg-orange-100/50 pb-4">
+          <div className="flex items-center gap-2">
+            <Wrench className="w-5 h-5 text-orange-600" />
+            <CardTitle className="text-sm font-bold text-orange-800 uppercase tracking-wider">
+              Herramientas de Limpieza
+            </CardTitle>
+          </div>
+        </CardHeader>
+        <CardContent className="pt-6 space-y-4">
+          {!maintenancePreview ? (
+            <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+              <div>
+                <p className="text-sm text-orange-900 font-medium">Unificador de Registros</p>
+                <p className="text-xs text-orange-700/80">Busca registros del mismo cliente en el mismo día y los une creando pausas automáticas.</p>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                className="bg-white border-orange-200 hover:bg-orange-100 text-orange-700 font-bold shrink-0"
+                onClick={handlePreview}
+                disabled={isMaintenanceLoading}
+              >
+                {isMaintenanceLoading ? "Analizando..." : "Analizar Registros"}
+                <ChevronRight className="ml-2 w-4 h-4" />
+              </Button>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <div className="bg-white/80 rounded-xl border border-orange-100 overflow-hidden">
+                <table className="w-full text-xs">
+                  <thead className="bg-orange-50/50 border-b border-orange-100 text-orange-900 font-bold">
+                    <tr>
+                      <th className="px-3 py-2 text-left">Fecha</th>
+                      <th className="px-3 py-2 text-left">Cliente</th>
+                      <th className="px-3 py-2 text-center">Fragmentos</th>
+                      <th className="px-3 py-2 text-center">Pausas Nuevas</th>
+                      <th className="px-3 py-2 text-right">Duración Total</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-orange-50/50">
+                    {maintenancePreview.map((p, i) => (
+                      <tr key={i} className="hover:bg-orange-50/30 transition-colors">
+                        <td className="px-3 py-2 text-orange-800 font-medium">{p.date}</td>
+                        <td className="px-3 py-2 text-slate-700">{p.clientName}</td>
+                        <td className="px-3 py-2 text-center">
+                          <span className="bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded-md font-bold">
+                            {p.originalCount}
+                          </span>
+                        </td>
+                        <td className="px-3 py-2 text-center text-slate-500">{p.newBreaksCount}</td>
+                        <td className="px-3 py-2 text-right text-slate-600 font-mono">
+                          {Math.floor(p.totalDuration / 60)}h {p.totalDuration % 60}m
+                        </td>
+                      </tr>
+                    ))}
+                    {maintenancePreview.length === 0 && (
+                      <tr>
+                        <td colSpan={5} className="px-3 py-8 text-center text-slate-400 italic">
+                          No se encontraron registros para unificar.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
 
-            return (
-              <Card key={entry.id}>
-                <CardHeader>
-                  <CardTitle className="flex items-center justify-between">
-                    <div className="flex flex-col gap-1">
-                      <span className="text-lg">
-                        {formatDateTime(entry.start_time)}
-                      </span>
-                      <span className="text-sm font-normal text-muted-foreground">
-                        {client?.name} → {project?.name} → {task?.name}
-                      </span>
-                    </div>
-                    <div className="flex space-x-2">
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => handleEdit(entry)}
-                      >
-                        <Pencil className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => handleDelete(entry.id)}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="grid gap-2 text-sm">
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">Duración:</span>
-                      <span className="font-medium">
-                        {formatTime(entry.duration_minutes)}
-                      </span>
-                    </div>
-                    {entry.description && (
-                      <div>
-                        <span className="text-muted-foreground">Descripción: </span>
-                        <span>{entry.description}</span>
-                      </div>
-                    )}
-                    {entry.rate_applied && (
-                      <div className="flex justify-between">
-                        <span className="text-muted-foreground">Tarifa:</span>
-                        <span className="font-medium">
-                          ${Number(entry.rate_applied).toFixed(2)}/h
-                        </span>
-                      </div>
-                    )}
-                    {entry.amount && (
-                      <div className="flex justify-between">
-                        <span className="text-muted-foreground">Monto:</span>
-                        <span className="font-medium">
-                          ${Number(entry.amount).toFixed(2)}
-                        </span>
-                      </div>
-                    )}
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">Facturable:</span>
-                      <span className="font-medium">
-                        {entry.billable ? "Sí" : "No"}
-                      </span>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            );
-          })}
-
-          {entries.length === 0 && (
-            <div className="text-center py-12">
-              <p className="text-muted-foreground">
-                No hay entradas de tiempo registradas con los filtros seleccionados.
-              </p>
+              <div className="flex justify-end gap-3 pt-2">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="text-orange-700 font-bold hover:bg-orange-100"
+                  onClick={() => setMaintenancePreview(null)}
+                  disabled={isMaintenanceLoading}
+                >
+                  Cancelar
+                </Button>
+                {maintenancePreview.length > 0 && (
+                  <Button
+                    size="sm"
+                    className="bg-orange-600 hover:bg-orange-700 text-white font-bold"
+                    onClick={handleExecuteConsolidation}
+                    disabled={isMaintenanceLoading}
+                  >
+                    {isMaintenanceLoading ? "Procesando..." : "Ejecutar Unificación"}
+                  </Button>
+                )}
+              </div>
             </div>
           )}
-        </div>
-      )}
+        </CardContent>
+      </Card>
 
-      {/* Dialog de edición */}
-      <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-        <DialogContent className="max-w-2xl">
+      <Card>
+        <CardHeader>
+          <CardTitle>
+            Entradas de Tiempo ({entries.length} resultados)
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {loading ? (
+            <div className="text-center py-12">
+              <p className="text-muted-foreground">Cargando...</p>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {entries.map((entry) => {
+                const task = (entry as any).task;
+                const project = task?.project;
+                const client = project?.client;
+                const activeBreak = (entry as any).breaks?.find((b: any) => b.end_time === null);
+
+                return (
+                  <div
+                    key={entry.id}
+                    className={cn(
+                      "rounded-lg border p-4 text-sm transition-all",
+                      !entry.end_time ? "border-primary/50 bg-primary/5 shadow-sm" : ""
+                    )}
+                  >
+                    <div className="flex items-start justify-between mb-2">
+                      <div className="flex-1">
+                        <p className="font-medium">
+                          {task?.name || "Tarea eliminada"}
+                        </p>
+                        <p className="text-muted-foreground">
+                          {client?.name} - {project?.name}
+                        </p>
+                        {!entry.end_time && (
+                          <div className="flex items-center gap-2 mt-1">
+                            {activeBreak ? (
+                              <span className="inline-flex items-center rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700 border border-amber-200">
+                                <span className="mr-1 h-1 w-1 rounded-full bg-amber-500 animate-pulse" />
+                                PAUSADO
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700 border border-emerald-200">
+                                <span className="mr-1 h-1 w-1 rounded-full bg-emerald-500 animate-pulse" />
+                                EN CURSO
+                              </span>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2 ml-4 text-right">
+                        <div>
+                          <p className="font-medium">
+                            {((entry.duration_minutes || 0) / 60).toFixed(2)}h
+                          </p>
+                          {entry.amount && (
+                            <p className="text-muted-foreground">
+                              {Number(entry.amount).toFixed(2)}{" "}
+                              {project?.currency || ""}
+                            </p>
+                          )}
+                        </div>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => handleEdit(entry)}
+                          className="h-8 w-8"
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => handleDelete(entry.id)}
+                          className="h-8 w-8 text-destructive hover:text-destructive"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </div>
+                    {entry.description && (
+                      <p className="text-muted-foreground">{entry.description}</p>
+                    )}
+                    <p className="text-xs text-muted-foreground mt-2">
+                      {format(new Date(entry.start_time), "dd/MM/yyyy HH:mm")}
+                      {entry.end_time ? (
+                        ` - ${format(new Date(entry.end_time), "HH:mm")}`
+                      ) : (
+                        <span className="ml-1 text-primary italic">(En progreso...)</span>
+                      )}
+                    </p>
+
+                    <DayTimeline
+                      startTime={new Date(entry.start_time)}
+                      endTime={entry.end_time ? new Date(entry.end_time) : null}
+                      breaks={(entry as any).breaks}
+                    />
+                  </div>
+                );
+              })}
+
+              {entries.length === 0 && (
+                <div className="text-center py-12">
+                  <p className="text-muted-foreground">
+                    No hay entradas de tiempo que coincidan con los filtros.
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Dialog open={isDialogOpen} onOpenChange={(open) => {
+        setIsDialogOpen(open);
+        if (!open) resetForm();
+      }}>
+        <DialogContent className="sm:max-w-[550px] max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Editar Entrada de Tiempo</DialogTitle>
             <DialogDescription>
-              Modifica los detalles de esta entrada de tiempo
+              Modifica los detalles , incluyendo pausas registradas.
             </DialogDescription>
           </DialogHeader>
-          <form onSubmit={handleSubmit}>
-            <div className="grid gap-4 py-4">
+          <form onSubmit={handleSubmit} className="space-y-6">
+            <div className="grid gap-4">
               <div className="grid gap-2">
                 <Label htmlFor="description">Descripción</Label>
                 <Textarea
@@ -453,86 +571,132 @@ export default function MyHoursPage() {
                   onChange={(e) =>
                     setFormData({ ...formData, description: e.target.value })
                   }
-                  placeholder="¿Qué trabajo realizaste?"
+                  placeholder="Descripción de la tarea realizada..."
+                  rows={2}
                 />
               </div>
 
-              <div className="grid gap-4 md:grid-cols-2">
-                <DateTimePicker
-                  label="Fecha y Hora Inicio"
-                  date={formData.start_time}
-                  onDateChange={(date) => {
-                    setFormData({ ...formData, start_time: date });
-                    // Recalcular duración
-                    if (date && formData.end_time) {
-                      const minutes = Math.floor(
-                        (formData.end_time.getTime() - date.getTime()) / (1000 * 60)
-                      );
-                      setFormData((prev) => ({
-                        ...prev,
-                        duration_minutes: minutes > 0 ? minutes.toString() : "",
-                      }));
+              <div className="grid grid-cols-2 gap-4">
+                <div className="grid gap-2">
+                  <Label htmlFor="start_date">Fecha Inicio</Label>
+                  <Input
+                    id="start_date"
+                    type="date"
+                    value={formData.start_date}
+                    onChange={(e) =>
+                      setFormData({ ...formData, start_date: e.target.value })
                     }
-                  }}
-                  required
-                />
-
-                <DateTimePicker
-                  label="Fecha y Hora Fin"
-                  date={formData.end_time}
-                  onDateChange={(date) => {
-                    setFormData({ ...formData, end_time: date });
-                    // Recalcular duración
-                    if (formData.start_time && date) {
-                      const minutes = Math.floor(
-                        (date.getTime() - formData.start_time.getTime()) / (1000 * 60)
-                      );
-                      setFormData((prev) => ({
-                        ...prev,
-                        duration_minutes: minutes > 0 ? minutes.toString() : "",
-                      }));
+                    required
+                  />
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="start_time">Hora Inicio</Label>
+                  <Input
+                    id="start_time"
+                    type="time"
+                    value={formData.start_time}
+                    onChange={(e) =>
+                      setFormData({ ...formData, start_time: e.target.value })
                     }
-                  }}
-                  required
-                />
+                    required
+                  />
+                </div>
               </div>
 
-              <div className="grid gap-2">
-                <Label htmlFor="duration">Duración (minutos)</Label>
-                <Input
-                  id="duration"
-                  type="number"
-                  value={formData.duration_minutes}
-                  disabled
-                  className="bg-muted"
-                />
-                <p className="text-xs text-muted-foreground">
-                  Se calcula automáticamente según las fechas de inicio y fin
-                </p>
+              <div className="grid grid-cols-2 gap-4 border-b pb-4">
+                <div className="grid gap-2">
+                  <Label htmlFor="end_date">Fecha Fin</Label>
+                  <Input
+                    id="end_date"
+                    type="date"
+                    value={formData.end_date}
+                    onChange={(e) =>
+                      setFormData({ ...formData, end_date: e.target.value })
+                    }
+                    required={!!editingEntry?.end_time}
+                    disabled={!editingEntry?.end_time}
+                  />
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="end_time">Hora Fin</Label>
+                  <Input
+                    id="end_time"
+                    type="time"
+                    value={formData.end_time}
+                    onChange={(e) =>
+                      setFormData({ ...formData, end_time: e.target.value })
+                    }
+                    required={!!editingEntry?.end_time}
+                    disabled={!editingEntry?.end_time}
+                    placeholder={!editingEntry?.end_time ? "En progreso..." : ""}
+                  />
+                </div>
               </div>
 
-              <div className="flex items-center space-x-2">
-                <input
-                  type="checkbox"
-                  id="billable"
-                  checked={formData.billable}
-                  onChange={(e) =>
-                    setFormData({ ...formData, billable: e.target.checked })
-                  }
-                  className="h-4 w-4"
-                />
-                <Label htmlFor="billable" className="cursor-pointer">
-                  Facturable
-                </Label>
+              {/* Sección de Pausas */}
+              <div className="space-y-3 pt-2">
+                <div className="flex items-center justify-between">
+                  <Label className="flex items-center gap-2 text-amber-600">
+                    <Coffee className="h-4 w-4" />
+                    Pausas / Descansos
+                  </Label>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-7 text-xs gap-1"
+                    onClick={handleAddBreak}
+                  >
+                    <Plus className="h-3 w-3" /> Añadir Pausa
+                  </Button>
+                </div>
+
+                <div className="space-y-2">
+                  {editingEntry?.breaks?.length > 0 ? (
+                    editingEntry.breaks.map((b: any) => (
+                      <div key={b.id} className="flex items-center gap-2 bg-muted/50 p-2 rounded-md">
+                        <Input
+                          type="time"
+                          defaultValue={format(new Date(b.start_time), "HH:mm")}
+                          className="h-8 text-xs"
+                          onBlur={(e) => handleUpdateBreak(b.id, e.target.value, format(new Date(b.end_time || b.start_time), "HH:mm"))}
+                        />
+                        <span className="text-muted-foreground text-xs">→</span>
+                        <Input
+                          type="time"
+                          defaultValue={b.end_time ? format(new Date(b.end_time), "HH:mm") : ""}
+                          className="h-8 text-xs"
+                          placeholder="En curso"
+                          disabled={!b.end_time}
+                          onBlur={(e) => handleUpdateBreak(b.id, format(new Date(b.start_time), "HH:mm"), e.target.value)}
+                        />
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 text-destructive"
+                          onClick={() => handleDeleteBreak(b.id)}
+                        >
+                          <X className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    ))
+                  ) : (
+                    <p className="text-xs text-muted-foreground text-center py-2 italic">
+                      No hay pausas registradas en esta sesión.
+                    </p>
+                  )}
+                </div>
               </div>
             </div>
-            <DialogFooter>
+
+            <DialogFooter className="pt-4 border-t">
               <Button
                 type="button"
                 variant="outline"
                 onClick={() => {
                   setIsDialogOpen(false);
-                  setEditingEntry(null);
+                  resetForm();
                 }}
               >
                 Cancelar

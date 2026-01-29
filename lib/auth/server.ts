@@ -2,21 +2,45 @@ import { createServerComponentClient } from "@/lib/supabase/server";
 import { User } from "@supabase/supabase-js";
 
 /**
+ * Helper para agregar timeout a una promesa
+ */
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+    return Promise.race([
+        promise,
+        new Promise<T>((_, reject) =>
+            setTimeout(() => reject(new Error("Authentication timeout")), timeoutMs)
+        ),
+    ]);
+}
+
+/**
  * Helper para obtener el usuario autenticado en Server Actions
- * @throws Error si no hay usuario autenticado
+ * @throws Error si no hay usuario autenticado o si hay timeout
  */
 export async function getAuthUser(): Promise<User> {
-    const supabase = await createServerComponentClient();
-    const {
-        data: { user },
-        error,
-    } = await supabase.auth.getUser();
+    try {
+        const supabase = await createServerComponentClient();
+        
+        // Timeout de 3 segundos para evitar bloqueos
+        const getUserPromise = supabase.auth.getUser();
+        const {
+            data: { user },
+            error,
+        } = await withTimeout(getUserPromise, 3000);
 
-    if (error || !user) {
-        throw new Error("Unauthorized");
+        if (error || !user) {
+            throw new Error("Unauthorized");
+        }
+
+        return user;
+    } catch (error) {
+        // Si es un timeout, lanzar error más descriptivo
+        if (error instanceof Error && error.message === "Authentication timeout") {
+            console.error("Authentication timeout - possible connection issue");
+            throw new Error("Authentication timeout");
+        }
+        throw error;
     }
-
-    return user;
 }
 
 /**

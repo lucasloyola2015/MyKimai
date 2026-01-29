@@ -3,8 +3,8 @@
 import { prisma } from "@/lib/prisma/client";
 import { getAuthUser } from "@/lib/auth/server";
 import { revalidatePath } from "next/cache";
-import { differenceInMinutes } from "date-fns";
-import type { time_entries } from "@/lib/generated/prisma";
+import { differenceInMinutes, format } from "date-fns";
+import type { time_entries } from "@prisma/client";
 
 export type ActionResponse<T> =
     | { success: true; data: T }
@@ -31,6 +31,7 @@ export async function getActiveTimeEntry() {
                     },
                 },
             },
+            breaks: true,
         },
     });
 
@@ -65,6 +66,38 @@ export async function getRecentTimeEntries(limit: number = 10) {
     });
 
     return entries;
+}
+
+/**
+ * Obtiene la última entrada completada del usuario (para precargar datos en Time Tracker)
+ */
+export async function getLastCompletedEntry() {
+    const user = await getAuthUser();
+
+    const entry = await prisma.time_entries.findFirst({
+        where: {
+            user_id: user.id,
+            end_time: {
+                not: null,
+            },
+        },
+        include: {
+            task: {
+                include: {
+                    project: {
+                        include: {
+                            client: true,
+                        },
+                    },
+                },
+            },
+        },
+        orderBy: {
+            start_time: "desc",
+        },
+    });
+
+    return entry;
 }
 
 /**
@@ -143,7 +176,7 @@ export async function startTimeEntry(
                 end_time: null,
                 duration_minutes: null,
                 billable: true,
-                rate_applied: rate,
+                rate_applied: Number(rate),
                 amount: null,
             },
             include: {
@@ -210,9 +243,33 @@ export async function stopTimeEntry(
 
     // Calcular duración y monto
     const endTime = new Date();
-    const durationMinutes = differenceInMinutes(endTime, entry.start_time);
+
+    // Obtener los breaks para restar
+    const entryWithBreaks = await prisma.time_entries.findUnique({
+        where: { id: entryId },
+        include: { breaks: true }
+    });
+
+    // Si hay un break activo, cerrarlo con el endTime final
+    const activeBreak = entryWithBreaks?.breaks.find(b => b.end_time === null);
+    if (activeBreak) {
+        await prisma.time_entry_breaks.update({
+            where: { id: activeBreak.id },
+            data: { end_time: endTime }
+        });
+        // Actualizar localmente para el cálculo
+        if (activeBreak) activeBreak.end_time = endTime;
+    }
+
+    const grossMinutes = differenceInMinutes(endTime, entry.start_time);
+    const breakMinutes = entryWithBreaks?.breaks.reduce((acc, b) => {
+        const bEnd = b.end_time || endTime;
+        return acc + differenceInMinutes(bEnd, b.start_time);
+    }, 0) || 0;
+
+    const durationMinutes = Math.max(0, grossMinutes - breakMinutes);
     const rate = Number(entry.rate_applied || 0);
-    const amount = (durationMinutes / 60) * rate;
+    const amount = Number(((durationMinutes / 60) * rate).toFixed(2));
 
     try {
         // Actualizar entry
@@ -220,7 +277,7 @@ export async function stopTimeEntry(
             where: { id: entryId },
             data: {
                 end_time: endTime,
-                duration_minutes: durationMinutes,
+                duration_minutes: Math.round(durationMinutes),
                 amount: amount,
             },
             include: {
@@ -233,6 +290,7 @@ export async function stopTimeEntry(
                         },
                     },
                 },
+                breaks: true,
             },
         });
 
@@ -242,7 +300,7 @@ export async function stopTimeEntry(
 
         return {
             success: true,
-            data: updatedEntry,
+            data: updatedEntry as any, // Cast temporal para evitar problemas de tipos hasta el siguiente build
         };
     } catch (error) {
         return {
@@ -385,6 +443,7 @@ export async function getTimeEntries(filters?: {
                     },
                 },
             },
+            breaks: true,
         },
         orderBy: {
             start_time: "desc",
@@ -430,25 +489,36 @@ export async function updateTimeEntry(
         };
     }
 
-    // Si se actualiza start_time o end_time, recalcular duración y monto
+    // Si se actualiza start_time o end_time, recalcular duración y monto considerando las pausas
     let updateData = { ...data };
 
-    if (data.start_time || data.end_time) {
+    if (data.start_time || data.end_time !== undefined) {
         const startTime = data.start_time || entry.start_time;
-        const endTime = data.end_time ?? entry.end_time;
+        const endTime = data.end_time || entry.end_time;
 
         if (endTime && startTime) {
-            const durationMinutes = differenceInMinutes(endTime, startTime);
-            updateData.duration_minutes = durationMinutes;
+            // Obtener pausas para el cálculo neto
+            const breaks = await prisma.time_entry_breaks.findMany({
+                where: { time_entry_id: entryId },
+            });
+
+            const grossDuration = differenceInMinutes(endTime, startTime);
+            const totalBreakMinutes = breaks.reduce((acc, b) => {
+                if (b.start_time && b.end_time) {
+                    return acc + differenceInMinutes(b.end_time, b.start_time);
+                }
+                return acc;
+            }, 0);
+
+            const netDuration = Math.max(0, grossDuration - totalBreakMinutes);
+            updateData.duration_minutes = netDuration;
 
             // Recalcular monto si hay tarifa
-            if (data.rate_applied !== undefined) {
-                const rate = data.rate_applied || 0;
-                updateData.amount = (durationMinutes / 60) * rate;
-            } else if (entry.rate_applied) {
-                const rate = Number(entry.rate_applied);
-                updateData.amount = (durationMinutes / 60) * rate;
-            }
+            const rate = data.rate_applied !== undefined
+                ? (data.rate_applied || 0)
+                : Number(entry.rate_applied || 0);
+
+            updateData.amount = (netDuration / 60) * rate;
         }
     }
 
@@ -503,3 +573,402 @@ export async function updateTimeEntryDescription(
 ): Promise<ActionResponse<time_entries>> {
     return updateTimeEntry(entryId, { description });
 }
+
+/**
+ * Inicia una pausa en el time entry activo
+ */
+export async function pauseTimeEntry(
+    entryId: string
+): Promise<ActionResponse<any>> {
+    const user = await getAuthUser();
+
+    try {
+        const entry = await prisma.time_entries.findUnique({
+            where: { id: entryId },
+            include: { breaks: true }
+        });
+
+        if (!entry || entry.user_id !== user.id) {
+            return { success: false, error: "No autorizado o no encontrado" };
+        }
+
+        // Verificar si ya hay una pausa activa
+        const activeBreak = entry.breaks.find(b => b.end_time === null);
+        if (activeBreak) {
+            return { success: false, error: "Ya existe una pausa activa" };
+        }
+
+        const breakEntry = await prisma.time_entry_breaks.create({
+            data: {
+                time_entry_id: entryId,
+                start_time: new Date(),
+            }
+        });
+
+        revalidatePath("/dashboard/time-tracker");
+        revalidatePath("/dashboard");
+
+        return { success: true, data: breakEntry };
+    } catch (error) {
+        console.error("Error in pauseTimeEntry:", error);
+        return { success: false, error: "Error al iniciar la pausa" };
+    }
+}
+
+/**
+ * Reanuda el trabajo (termina la pausa activa)
+ */
+export async function resumeTimeEntry(
+    entryId: string
+): Promise<ActionResponse<any>> {
+    const user = await getAuthUser();
+
+    try {
+        const entry = await prisma.time_entries.findUnique({
+            where: { id: entryId },
+            include: { breaks: true }
+        });
+
+        if (!entry || entry.user_id !== user.id) {
+            return { success: false, error: "No autorizado o no encontrado" };
+        }
+
+        const activeBreak = entry.breaks.find(b => b.end_time === null);
+        if (!activeBreak) {
+            return { success: false, error: "No hay ninguna pausa activa" };
+        }
+
+        await prisma.time_entry_breaks.update({
+            where: { id: activeBreak.id },
+            data: { end_time: new Date() }
+        });
+
+        revalidatePath("/dashboard/time-tracker");
+        revalidatePath("/dashboard");
+
+        return { success: true, data: entry };
+    } catch (error) {
+        console.error("Error in resumeTimeEntry:", error);
+        return { success: false, error: "Error al reanudar la jornada" };
+    }
+}
+
+/**
+ * Función interna para recalcular tiempo neto y monto de un entry
+ */
+async function recalculateEntry(entryId: string) {
+    const entry = await prisma.time_entries.findUnique({
+        where: { id: entryId },
+        include: { breaks: true }
+    });
+
+    if (!entry || !entry.end_time) return;
+
+    const grossDuration = differenceInMinutes(entry.end_time, entry.start_time);
+    const totalBreakMinutes = entry.breaks.reduce((acc, b) => {
+        if (b.start_time && b.end_time) {
+            return acc + differenceInMinutes(b.end_time, b.start_time);
+        }
+        return acc;
+    }, 0);
+
+    const netDuration = Math.max(0, grossDuration - totalBreakMinutes);
+    const rate = Number(entry.rate_applied || 0);
+
+    await prisma.time_entries.update({
+        where: { id: entryId },
+        data: {
+            duration_minutes: netDuration,
+            amount: (netDuration / 60) * rate
+        }
+    });
+
+    revalidatePath("/dashboard/my-hours");
+}
+
+/**
+ * Crea una pausa manualmente
+ */
+export async function addTimeEntryBreak(
+    entryId: string,
+    startTime: Date,
+    endTime: Date | null
+): Promise<ActionResponse<any>> {
+    const user = await getAuthUser();
+    try {
+        const entry = await prisma.time_entries.findUnique({ where: { id: entryId } });
+        if (!entry || entry.user_id !== user.id) return { success: false, error: "No autorizado" };
+
+        const newBreak = await prisma.time_entry_breaks.create({
+            data: { time_entry_id: entryId, start_time: startTime, end_time: endTime }
+        });
+
+        await recalculateEntry(entryId);
+        return { success: true, data: newBreak };
+    } catch (error) {
+        return { success: false, error: "Error al crear pausa" };
+    }
+}
+
+/**
+ * Actualiza una pausa existente
+ */
+export async function updateTimeEntryBreak(
+    breakId: string,
+    startTime: Date,
+    endTime: Date | null
+): Promise<ActionResponse<any>> {
+    const user = await getAuthUser();
+    try {
+        const breakNode = await prisma.time_entry_breaks.findUnique({
+            where: { id: breakId },
+            include: { time_entry: true }
+        });
+
+        if (!breakNode || breakNode.time_entry.user_id !== user.id) {
+            return { success: false, error: "No autorizado" };
+        }
+
+        const updatedBreak = await prisma.time_entry_breaks.update({
+            where: { id: breakId },
+            data: { start_time: startTime, end_time: endTime }
+        });
+
+        await recalculateEntry(breakNode.time_entry_id);
+        return { success: true, data: updatedBreak };
+    } catch (error) {
+        return { success: false, error: "Error al actualizar pausa" };
+    }
+}
+
+/**
+ * Elimina una pausa
+ */
+export async function deleteTimeEntryBreak(breakId: string): Promise<ActionResponse<any>> {
+    const user = await getAuthUser();
+    try {
+        const breakNode = await prisma.time_entry_breaks.findUnique({
+            where: { id: breakId },
+            include: { time_entry: true }
+        });
+
+        if (!breakNode || breakNode.time_entry.user_id !== user.id) {
+            return { success: false, error: "No autorizado" };
+        }
+
+        await prisma.time_entry_breaks.delete({ where: { id: breakId } });
+        await recalculateEntry(breakNode.time_entry_id);
+
+        return { success: true, data: null };
+    } catch (error) {
+        return { success: false, error: "Error al eliminar pausa" };
+    }
+}
+
+export interface ConsolidationPreview {
+    date: string;
+    clientName: string;
+    originalCount: number;
+    newBreaksCount: number;
+    startTime: string;
+    endTime: string;
+    totalDuration: number;
+}
+
+/**
+ * Genera una vista previa de la consolidación de registros de tiempo
+ */
+export async function previewConsolidation(): Promise<ConsolidationPreview[]> {
+    const user = await getAuthUser();
+
+    const entries = await prisma.time_entries.findMany({
+        where: {
+            user_id: user.id,
+            end_time: { not: null }
+        },
+        include: {
+            task: {
+                include: {
+                    project: {
+                        include: {
+                            client: true,
+                        },
+                    },
+                },
+            },
+        },
+        orderBy: { start_time: "asc" },
+    });
+
+    const groups: Record<string, any[]> = {};
+
+    entries.forEach((entry: any) => {
+        const dateKey = format(entry.start_time, "yyyy-MM-dd");
+        const clientId = entry.task.project.client.id;
+        const groupKey = `${dateKey}_${clientId}`;
+
+        if (!groups[groupKey]) {
+            groups[groupKey] = [];
+        }
+        groups[groupKey].push(entry);
+    });
+
+    const previews: ConsolidationPreview[] = [];
+
+    for (const key in groups) {
+        const group = groups[key];
+        if (group.length <= 1) continue;
+
+        const first = group[0];
+        const last = group[group.length - 1];
+        const clientName = first.task.project.client.name;
+        const date = format(first.start_time, "dd/MM/yyyy");
+
+        let breaksCount = 0;
+        for (let i = 0; i < group.length - 1; i++) {
+            const currentEnd = group[i].end_time!;
+            const nextStart = group[i + 1].start_time;
+            if (differenceInMinutes(nextStart, currentEnd) > 1) {
+                breaksCount++;
+            }
+        }
+
+        previews.push({
+            date,
+            clientName,
+            originalCount: group.length,
+            newBreaksCount: breaksCount,
+            startTime: format(first.start_time, "HH:mm"),
+            endTime: format(last.end_time!, "HH:mm"),
+            totalDuration: differenceInMinutes(last.end_time!, first.start_time),
+        });
+    }
+
+    return previews;
+}
+
+/**
+ * Ejecuta la consolidación de registros de tiempo
+ */
+export async function executeConsolidation() {
+    const user = await getAuthUser();
+
+    const entries = await prisma.time_entries.findMany({
+        where: {
+            user_id: user.id,
+            end_time: { not: null }
+        },
+        include: {
+            task: {
+                include: {
+                    project: {
+                        include: {
+                            client: true,
+                        },
+                    },
+                },
+            },
+            breaks: true,
+        },
+        orderBy: { start_time: "asc" },
+    });
+
+    const groups: Record<string, any[]> = {};
+    entries.forEach((entry: any) => {
+        const dateKey = format(entry.start_time, "yyyy-MM-dd");
+        const clientId = entry.task.project.client.id;
+        const groupKey = `${dateKey}_${clientId}`;
+        if (!groups[groupKey]) groups[groupKey] = [];
+        groups[groupKey].push(entry);
+    });
+
+    const results = {
+        consolidated: 0,
+        removed: 0,
+        breaksCreated: 0,
+    };
+
+    await prisma.$transaction(async (tx) => {
+        for (const key in groups) {
+            const group = groups[key];
+            if (group.length <= 1) continue;
+
+            const first = group[0];
+            const last = group[group.length - 1];
+            const originalIds = group.map((e) => e.id);
+
+            const allBreaks = group.flatMap((e: any) => e.breaks || []);
+
+            const newBreaksData: { start_time: Date; end_time: Date }[] = [];
+            for (let i = 0; i < group.length - 1; i++) {
+                const currentEnd = group[i].end_time!;
+                const nextStart = group[i + 1].start_time;
+                if (differenceInMinutes(nextStart, currentEnd) > 1) {
+                    newBreaksData.push({
+                        start_time: currentEnd,
+                        end_time: nextStart,
+                    });
+                }
+            }
+
+            const totalMinutes = differenceInMinutes(last.end_time!, first.start_time);
+            const totalBreakMinutes = [...allBreaks, ...newBreaksData].reduce((acc, b: any) => {
+                return acc + differenceInMinutes(b.end_time!, b.start_time);
+            }, 0);
+            const netDuration = Math.max(0, totalMinutes - totalBreakMinutes);
+
+            const rate = Number(first.rate_applied || 0);
+            const amount = (netDuration / 60) * rate;
+
+            const masterEntry = await (tx.time_entries as any).create({
+                data: {
+                    user_id: user.id,
+                    task_id: first.task_id,
+                    description: group
+                        .map((e: any) => e.description)
+                        .filter(Boolean)
+                        .join(" | "),
+                    start_time: first.start_time,
+                    end_time: last.end_time,
+                    duration_minutes: Math.round(netDuration),
+                    billable: first.billable,
+                    rate_applied: first.rate_applied,
+                    amount: amount,
+                    is_billed: group.some((e: any) => e.is_billed),
+                },
+            });
+
+            for (const b of allBreaks) {
+                await (tx.time_entry_breaks as any).create({
+                    data: {
+                        time_entry_id: masterEntry.id,
+                        start_time: b.start_time,
+                        end_time: b.end_time,
+                    }
+                });
+            }
+
+            for (const nb of newBreaksData) {
+                await (tx.time_entry_breaks as any).create({
+                    data: {
+                        time_entry_id: masterEntry.id,
+                        start_time: nb.start_time,
+                        end_time: nb.end_time,
+                    }
+                });
+                results.breaksCreated++;
+            }
+
+            await tx.time_entries.deleteMany({
+                where: { id: { in: originalIds } },
+            });
+
+            results.consolidated++;
+            results.removed += originalIds.length;
+        }
+    });
+
+    revalidatePath("/dashboard/my-hours");
+    return results;
+}
+

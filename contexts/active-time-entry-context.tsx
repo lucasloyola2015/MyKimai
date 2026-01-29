@@ -2,6 +2,7 @@
 
 import { createContext, useContext, useEffect, useState, ReactNode } from "react";
 import { createClientComponentClient } from "@/lib/supabase/client";
+import { pauseTimeEntry, resumeTimeEntry, stopTimeEntry } from "@/lib/actions/time-entries";
 import type { Database } from "@/lib/types/database";
 
 type TimeEntry = Database["public"]["Tables"]["time_entries"]["Row"];
@@ -16,6 +17,11 @@ interface ActiveTimeEntry extends TimeEntry {
       };
     };
   };
+  breaks?: Array<{
+    id: string;
+    start_time: string;
+    end_time: string | null;
+  }>;
 }
 
 interface ActiveTimeEntryContextType {
@@ -23,6 +29,8 @@ interface ActiveTimeEntryContextType {
   isLoading: boolean;
   refreshActiveEntry: () => Promise<void>;
   stopActiveEntry: () => Promise<void>;
+  pauseActiveEntry: () => Promise<void>;
+  resumeActiveEntry: () => Promise<void>;
 }
 
 const ActiveTimeEntryContext = createContext<ActiveTimeEntryContextType | undefined>(undefined);
@@ -47,7 +55,7 @@ export function ActiveTimeEntryProvider({ children }: { children: ReactNode }) {
       // Buscar entrada activa (con start_time pero sin end_time)
       const { data, error } = await supabase
         .from("time_entries")
-        .select("*, tasks(name, projects(name, clients(name)))")
+        .select("*, tasks(name, projects(name, clients(name))), breaks:time_entry_breaks(*)")
         .eq("user_id", user.id)
         .is("end_time", null)
         .order("start_time", { ascending: false })
@@ -73,46 +81,42 @@ export function ActiveTimeEntryProvider({ children }: { children: ReactNode }) {
     if (!activeEntry) return;
 
     try {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-
-      if (!user) return;
-
-      const endTime = new Date();
-      const startTime = new Date(activeEntry.start_time);
-      const durationMinutes = Math.floor(
-        (endTime.getTime() - startTime.getTime()) / (1000 * 60)
-      );
-
-      if (durationMinutes < 1) {
-        alert("El tiempo debe ser al menos 1 minuto");
-        return;
-      }
-
-      // Importar funciones de rate si es necesario
-      const { getRateContext } = await import("@/lib/actions/rates");
-      const { resolveRate } = await import("@/lib/utils/rates");
-      const rateContext = await getRateContext(activeEntry.task_id);
-      const rate = resolveRate(rateContext);
-
-      const { error } = await supabase
-        .from("time_entries")
-        .update({
-          end_time: endTime.toISOString(),
-          duration_minutes: durationMinutes,
-          rate_applied: rate,
-          amount: rate ? (durationMinutes / 60) * rate : null,
-        })
-        .eq("id", activeEntry.id);
-
-      if (error) throw error;
+      const result = await stopTimeEntry(activeEntry.id);
+      if (!result.success) throw new Error(result.error);
 
       // Refrescar la entrada activa (ahora debería ser null)
       await refreshActiveEntry();
     } catch (error) {
       console.error("Error stopping active entry:", error);
-      alert("Error al detener la tarea");
+      alert(error instanceof Error ? error.message : "Error al detener la tarea");
+    }
+  };
+
+  const pauseActiveEntry = async () => {
+    if (!activeEntry) return;
+
+    try {
+      const result = await pauseTimeEntry(activeEntry.id);
+      if (!result.success) throw new Error(result.error);
+
+      await refreshActiveEntry();
+    } catch (error) {
+      console.error("Error pausing active entry:", error);
+      alert(error instanceof Error ? error.message : "Error al pausar la tarea");
+    }
+  };
+
+  const resumeActiveEntry = async () => {
+    if (!activeEntry) return;
+
+    try {
+      const result = await resumeTimeEntry(activeEntry.id);
+      if (!result.success) throw new Error(result.error);
+
+      await refreshActiveEntry();
+    } catch (error) {
+      console.error("Error resuming active entry:", error);
+      alert(error instanceof Error ? error.message : "Error al reanudar la tarea");
     }
   };
 
@@ -131,6 +135,8 @@ export function ActiveTimeEntryProvider({ children }: { children: ReactNode }) {
         isLoading,
         refreshActiveEntry,
         stopActiveEntry,
+        pauseActiveEntry,
+        resumeActiveEntry,
       }}
     >
       {children}

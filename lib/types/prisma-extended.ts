@@ -10,7 +10,7 @@ import type {
     clients,
     invoices,
     invoice_items,
-} from "@/lib/generated/prisma";
+} from "@prisma/client";
 
 /**
  * Time entry con todas sus relaciones

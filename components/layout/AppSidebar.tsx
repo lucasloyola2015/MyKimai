@@ -56,7 +56,8 @@ export function AppSidebar({ stats }: AppSidebarProps) {
     // Cerrar sidebar móvil al cambiar de ruta
     useEffect(() => {
         close();
-    }, [pathname, close]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [pathname]);
 
     return (
         <>
@@ -66,6 +67,7 @@ export function AppSidebar({ stats }: AppSidebarProps) {
                     className="fixed inset-0 bg-black/50 z-40 md:hidden sidebar-backdrop"
                     onClick={close}
                     aria-hidden="true"
+                    style={{ pointerEvents: 'auto' }}
                 />
             )}
 
@@ -83,6 +85,7 @@ export function AppSidebar({ stats }: AppSidebarProps) {
                     "md:relative md:z-auto",
                     isCollapsed && "md:w-16"
                 )}
+                style={{ zIndex: 50 }}
             >
                 {/* Header */}
                 <div className="flex items-center justify-between p-4 border-b">

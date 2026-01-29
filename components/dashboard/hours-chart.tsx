@@ -493,9 +493,6 @@ export function HoursChart() {
                   radius={[0, 0, 0, 0]}
                   style={{ cursor: period !== "day" ? "pointer" : "default" }}
                   onMouseEnter={(data: any, index: number) => {
-                    // #region agent log
-                    fetch('http://127.0.0.1:7242/ingest/0fda1414-4390-4855-9462-9c9a0cf71bf7',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'hours-chart.tsx:496',message:'onMouseEnter called',data:{hasData:!!data,hasPayload:!!(data?.payload),clientKey,index},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
-                    // #endregion
                     // En Recharts, el evento puede venir en diferentes formatos
                     let payload = data;
                     if (data && data.payload) {
@@ -517,9 +514,6 @@ export function HoursChart() {
                     setHoveredInfo(null);
                   }}
                   onClick={(data: any, index: number) => {
-                    // #region agent log
-                    fetch('http://127.0.0.1:7242/ingest/0fda1414-4390-4855-9462-9c9a0cf71bf7',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'hours-chart.tsx:520',message:'Bar onClick called',data:{hasData:!!data,hasPayload:!!(data?.payload),clientKey,index,period},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
-                    // #endregion
                     // Manejar click en la barra individual
                     let payload = data;
                     if (data && data.payload) {

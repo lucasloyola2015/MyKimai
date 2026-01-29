@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { SidebarState } from "@/shared/types/sidebar.types";
 
 const STORAGE_KEY = "sidebar-state";
@@ -24,18 +24,42 @@ export function useSidebar() {
     }, []);
 
     // Guardar estado en localStorage
-    const updateState = (newState: Partial<SidebarState>) => {
+    const updateState = useCallback((newState: Partial<SidebarState>) => {
         setState((prev) => {
             const updated = { ...prev, ...newState };
             localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
             return updated;
         });
-    };
+    }, []);
+
+    const toggle = useCallback(() => {
+        setState((prev) => {
+            const updated = { ...prev, isOpen: !prev.isOpen };
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
+            return updated;
+        });
+    }, []);
+
+    const collapse = useCallback(() => {
+        setState((prev) => {
+            const updated = { ...prev, isCollapsed: !prev.isCollapsed };
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
+            return updated;
+        });
+    }, []);
+
+    const close = useCallback(() => {
+        setState((prev) => {
+            const updated = { ...prev, isOpen: false };
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
+            return updated;
+        });
+    }, []);
 
     return {
         ...state,
-        toggle: () => updateState({ isOpen: !state.isOpen }),
-        collapse: () => updateState({ isCollapsed: !state.isCollapsed }),
-        close: () => updateState({ isOpen: false }),
+        toggle,
+        collapse,
+        close,
     };
 }

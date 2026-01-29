@@ -9,13 +9,11 @@ import {
 import type { Database } from "@/lib/types/database";
 import { format } from "date-fns";
 
-type Invoice = Database["public"]["Tables"]["invoices"]["Row"];
-type InvoiceItem = Database["public"]["Tables"]["invoice_items"]["Row"];
-type Client = Database["public"]["Tables"]["clients"]["Row"];
+import type { invoices, clients, invoice_items } from "@prisma/client";
 
-interface InvoiceWithDetails extends Invoice {
-  clients: Client;
-  invoice_items: InvoiceItem[];
+interface InvoiceWithDetails extends invoices {
+  clients: clients;
+  invoice_items: invoice_items[];
 }
 
 const styles = StyleSheet.create({
@@ -129,14 +127,14 @@ export function InvoicePDF({ invoice }: { invoice: InvoiceWithDetails }) {
             <View key={item.id} style={styles.tableRow}>
               <Text style={styles.colDescription}>{item.description}</Text>
               <Text style={styles.colQuantity}>
-                {item.quantity.toFixed(2)}{" "}
+                {Number(item.quantity).toFixed(2)}{" "}
                 {item.type === "time" ? "h" : "un"}
               </Text>
               <Text style={styles.colRate}>
-                {item.rate.toFixed(2)} {invoice.currency}
+                {Number(item.rate).toFixed(2)} {invoice.currency}
               </Text>
               <Text style={styles.colAmount}>
-                {item.amount.toFixed(2)} {invoice.currency}
+                {Number(item.amount).toFixed(2)} {invoice.currency}
               </Text>
             </View>
           ))}
@@ -146,21 +144,21 @@ export function InvoicePDF({ invoice }: { invoice: InvoiceWithDetails }) {
           <View style={styles.totalRow}>
             <Text>Subtotal:</Text>
             <Text>
-              {invoice.subtotal.toFixed(2)} {invoice.currency}
+              {Number(invoice.subtotal).toFixed(2)} {invoice.currency}
             </Text>
           </View>
-          {invoice.tax_rate && invoice.tax_rate > 0 && (
+          {invoice.tax_rate && Number(invoice.tax_rate) > 0 && (
             <View style={styles.totalRow}>
-              <Text>Impuesto ({invoice.tax_rate}%):</Text>
+              <Text>Impuesto ({Number(invoice.tax_rate)}%):</Text>
               <Text>
-                {invoice.tax_amount?.toFixed(2)} {invoice.currency}
+                {Number(invoice.tax_amount || 0).toFixed(2)} {invoice.currency}
               </Text>
             </View>
           )}
           <View style={styles.totalRow}>
             <Text style={styles.totalAmount}>Total:</Text>
             <Text style={styles.totalAmount}>
-              {invoice.total_amount.toFixed(2)} {invoice.currency}
+              {Number(invoice.total_amount).toFixed(2)} {invoice.currency}
             </Text>
           </View>
         </View>

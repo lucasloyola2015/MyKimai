@@ -16,7 +16,7 @@ import { Download } from "lucide-react";
 import { format } from "date-fns";
 import { getClients } from "@/lib/actions/clients";
 import { getTimeEntries } from "@/lib/actions/time-entries";
-import type { clients, time_entries } from "@/lib/generated/prisma";
+import type { clients, time_entries } from "@prisma/client";
 import { toast } from "@/hooks/use-toast";
 
 export default function ReportsPage() {

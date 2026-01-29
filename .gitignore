@@ -46,3 +46,7 @@ next-env.d.ts
 
 # Antigravity
 /.gemini
+
+/certs/
+*.key
+*.crt

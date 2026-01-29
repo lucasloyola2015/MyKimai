@@ -3,7 +3,7 @@
 import { prisma } from "@/lib/prisma/client";
 import { getAuthUser } from "@/lib/auth/server";
 import { revalidatePath } from "next/cache";
-import type { tasks } from "@/lib/generated/prisma";
+import type { tasks } from "@prisma/client";
 
 export type ActionResponse<T> =
     | { success: true; data: T }

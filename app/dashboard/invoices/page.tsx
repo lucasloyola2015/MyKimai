@@ -19,31 +19,40 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Plus, FileText, Download, Send, Check } from "lucide-react";
+import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
+import { Plus, FileText, CheckCircle2, AlertCircle, Clock, Banknote, Coffee, History } from "lucide-react";
 import { format } from "date-fns";
 import Link from "next/link";
-import { InvoicePDF } from "@/components/invoices/invoice-pdf";
 import { getClients } from "@/lib/actions/clients";
 import {
-    getInvoices,
-    getUnbilledTimeEntries,
-    createInvoiceFromTimeEntries,
-    updateInvoiceStatus,
-    getClientBillingSummary,
+  getInvoices,
+  getUnbilledTimeEntries,
+  createInvoiceFromTimeEntries,
+  updateInvoiceStatus,
+  getClientBillingSummary,
 } from "@/lib/actions/invoices";
-import type { invoices, clients, time_entries } from "@/lib/generated/prisma";
+import { recordPayment } from "@/lib/actions/payments";
+import type { invoices, clients, time_entries } from "@prisma/client";
 import { toast } from "@/hooks/use-toast";
+import { cn } from "@/lib/utils";
 
 interface InvoiceWithClient extends invoices {
   client: clients;
+  payments?: any[];
 }
 
 const INVOICE_STATUSES = [
-  { value: "draft", label: "Borrador", color: "bg-gray-100 text-gray-800" },
-  { value: "sent", label: "Enviada", color: "bg-blue-100 text-blue-800" },
-  { value: "paid", label: "Pagada", color: "bg-green-100 text-green-800" },
-  { value: "overdue", label: "Vencida", color: "bg-red-100 text-red-800" },
+  { value: "draft", label: "Borrador", color: "bg-gray-100 text-gray-800", icon: Clock },
+  { value: "sent", label: "Enviada", color: "bg-blue-100 text-blue-800", icon: Send },
+  { value: "partial", label: "Parcial", color: "bg-amber-100 text-amber-800", icon: History },
+  { value: "paid", label: "Pagada", color: "bg-emerald-100 text-emerald-800", icon: CheckCircle2 },
+  { value: "overdue", label: "Vencida", color: "bg-rose-100 text-rose-800", icon: AlertCircle },
 ];
+
+function Send({ className }: { className?: string }) {
+  return <Banknote className={className} />; // Placeholder icon
+}
 
 interface ClientSummary {
   clientId: string;
@@ -61,18 +70,21 @@ export default function InvoicesPage() {
   const [timeEntries, setTimeEntries] = useState<time_entries[]>([]);
   const [clientSummaries, setClientSummaries] = useState<ClientSummary[]>([]);
   const [loading, setLoading] = useState(true);
-  const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [isNewInvoiceOpen, setIsNewInvoiceOpen] = useState(false);
+  const [isPaymentOpen, setIsPaymentOpen] = useState(false);
+  const [selectedInvoice, setSelectedInvoice] = useState<InvoiceWithClient | null>(null);
 
-  const formatTime = (minutes: number): string => {
-    const hours = Math.floor(minutes / 60);
-    const mins = minutes % 60;
-    return `${hours}:${mins.toString().padStart(2, "0")}`;
-  };
+  const [paymentForm, setPaymentForm] = useState({
+    amount: "",
+    date: format(new Date(), "yyyy-MM-dd"),
+    method: "Transferencia",
+    notes: ""
+  });
 
   const [formData, setFormData] = useState({
     client_id: "",
     tax_rate: "0",
-    due_date: "",
+    due_date: format(new Date(Date.now() + 15 * 86400000), "yyyy-MM-dd"),
   });
 
   useEffect(() => {
@@ -81,20 +93,15 @@ export default function InvoicesPage() {
 
   const loadData = async () => {
     try {
-      // Load clients
-      const clientsData = await getClients();
+      const [clientsData, invoicesData, unbilledEntries, summaries] = await Promise.all([
+        getClients(),
+        getInvoices(),
+        getUnbilledTimeEntries(),
+        getClientBillingSummary()
+      ]);
       setClients(clientsData);
-
-      // Load invoices
-      const invoicesData = await getInvoices();
-      setInvoices(invoicesData);
-
-      // Load unbilled time entries
-      const unbilledEntries = await getUnbilledTimeEntries();
-      setTimeEntries(unbilledEntries);
-
-      // Get client billing summaries
-      const summaries = await getClientBillingSummary();
+      setInvoices(invoicesData as any);
+      setTimeEntries(unbilledEntries as any);
       setClientSummaries(summaries);
     } catch (error) {
       console.error("Error loading data:", error);
@@ -108,231 +115,163 @@ export default function InvoicesPage() {
     }
   };
 
-  const handleCreateInvoice = async () => {
-    if (!formData.client_id) {
-      toast({
-        title: "Error",
-        description: "Por favor selecciona un cliente",
-        variant: "destructive",
-      });
+  const handleCreateInvoice = async (clientId?: string) => {
+    const targetClientId = clientId || formData.client_id;
+    if (!targetClientId) {
+      toast({ title: "Error", description: "Selecciona un cliente", variant: "destructive" });
       return;
     }
 
     try {
-      const selectedEntries = timeEntries.filter(
-        (entry) => {
-          const task = (entry as any).task;
-          const project = task?.project;
-          const client = project?.client;
-          return client?.id === formData.client_id;
-        }
-      );
-
-      if (selectedEntries.length === 0) {
-        toast({
-          title: "Error",
-          description: "No hay períodos de trabajo sin facturar para este cliente",
-          variant: "destructive",
-        });
+      const clientEntries = timeEntries.filter((e: any) => e.task?.project?.client?.id === targetClientId);
+      if (clientEntries.length === 0) {
+        toast({ title: "Error", description: "No hay horas pendientes", variant: "destructive" });
         return;
       }
 
-      const timeEntryIds = selectedEntries.map((entry) => entry.id);
-      const taxRate = parseFloat(formData.tax_rate) || 0;
-      const dueDate = formData.due_date ? new Date(formData.due_date) : null;
-
       const result = await createInvoiceFromTimeEntries({
-        client_id: formData.client_id,
-        time_entry_ids: timeEntryIds,
-        tax_rate: taxRate,
-        due_date: dueDate,
+        client_id: targetClientId,
+        time_entry_ids: clientEntries.map(e => e.id),
+        tax_rate: parseFloat(formData.tax_rate) || 0,
+        due_date: formData.due_date ? new Date(formData.due_date) : null,
       });
 
-      if (!result.success) {
-        throw new Error(result.error);
-      }
-
-      toast({
-        title: "Éxito",
-        description: "Factura creada exitosamente",
-      });
-
-      setIsDialogOpen(false);
-      setFormData({ client_id: "", tax_rate: "0", due_date: "" });
+      if (!result.success) throw new Error(result.error);
+      toast({ title: "Éxito", description: "Factura creada correctamente" });
+      setIsNewInvoiceOpen(false);
       loadData();
-    } catch (error) {
-      console.error("Error creating invoice:", error);
-      toast({
-        title: "Error",
-        description: "Error al crear la factura",
-        variant: "destructive",
-      });
+    } catch (error: any) {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
     }
   };
 
-  const handleStatusChange = async (invoiceId: string, newStatus: string) => {
+  const handleRegisterPayment = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedInvoice) return;
+
     try {
-      const result = await updateInvoiceStatus(
-        invoiceId,
-        newStatus as "draft" | "sent" | "paid" | "overdue"
-      );
-
-      if (!result.success) {
-        throw new Error(result.error);
-      }
-
-      toast({
-        title: "Éxito",
-        description: "Estado de factura actualizado correctamente.",
+      const result = await recordPayment({
+        invoice_id: selectedInvoice.id,
+        amount: parseFloat(paymentForm.amount),
+        payment_date: new Date(paymentForm.date),
+        method: paymentForm.method,
+        notes: paymentForm.notes
       });
 
+      if (!result.success) throw new Error(result.error);
+      toast({ title: "Cobro registrado", description: "El pago se aplicó a la factura" });
+      setIsPaymentOpen(false);
       loadData();
-    } catch (error) {
-      console.error("Error updating invoice status:", error);
-      toast({
-        title: "Error",
-        description: "Error al actualizar el estado de la factura",
-        variant: "destructive",
-      });
+    } catch (error: any) {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
     }
   };
 
-  if (loading) {
-    return <div>Cargando...</div>;
-  }
+  if (loading) return <div className="p-8 text-center text-muted-foreground">Cargando módulo de facturación...</div>;
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
+    <div className="space-y-6 max-w-6xl mx-auto">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-bold">Facturas</h1>
-          <p className="text-muted-foreground">
-            Gestiona tus facturas y estados de pago
-          </p>
+          <h1 className="text-3xl font-extrabold tracking-tight">Facturación</h1>
+          <p className="text-muted-foreground">Control de horas trabajadas y gestión de cobros</p>
         </div>
-        <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-          <DialogTrigger asChild>
-            <Button disabled={clients.length === 0}>
-              <Plus className="mr-2 h-4 w-4" />
-              Nueva Factura
-            </Button>
-          </DialogTrigger>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Crear Nueva Factura</DialogTitle>
-              <DialogDescription>
-                Crea una factura desde períodos de trabajo sin facturar
-              </DialogDescription>
-            </DialogHeader>
-            <div className="grid gap-4 py-4">
-              <div className="grid gap-2">
-                <label className="text-sm font-medium">Cliente *</label>
-                <Select
-                  value={formData.client_id}
-                  onValueChange={(value) =>
-                    setFormData({ ...formData, client_id: value })
-                  }
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Selecciona un cliente" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {clients.map((client) => {
-                      const clientEntries = timeEntries.filter(
-                        (entry) => {
-                          const task = (entry as any).task;
-                          const project = task?.project;
-                          const entryClient = project?.client;
-                          return entryClient?.id === client.id;
-                        }
-                      );
-                      return (
-                        <SelectItem key={client.id} value={client.id}>
-                          {client.name} ({clientEntries.length} períodos)
-                        </SelectItem>
-                      );
-                    })}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="grid gap-2">
-                <label className="text-sm font-medium">Impuesto (%)</label>
-                <input
-                  type="number"
-                  step="0.01"
-                  value={formData.tax_rate}
-                  onChange={(e) =>
-                    setFormData({ ...formData, tax_rate: e.target.value })
-                  }
-                  className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                  placeholder="0"
-                />
-              </div>
-              <div className="grid gap-2">
-                <label className="text-sm font-medium">Fecha de Vencimiento</label>
-                <input
-                  type="date"
-                  value={formData.due_date}
-                  onChange={(e) =>
-                    setFormData({ ...formData, due_date: e.target.value })
-                  }
-                  className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                />
-              </div>
-            </div>
-            <DialogFooter>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => setIsDialogOpen(false)}
-              >
-                Cancelar
+        <div className="flex gap-2">
+          <Dialog open={isNewInvoiceOpen} onOpenChange={setIsNewInvoiceOpen}>
+            <DialogTrigger asChild>
+              <Button className="h-9">
+                <Plus className="mr-2 h-4 w-4" /> Facturar Selección
               </Button>
-              <Button onClick={handleCreateInvoice}>Crear Factura</Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
+            </DialogTrigger>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Nueva Factura</DialogTitle>
+                <DialogDescription>Selecciona un cliente para consolidar sus horas pendientes en una factura.</DialogDescription>
+              </DialogHeader>
+              <div className="space-y-4 py-4">
+                <div className="space-y-2">
+                  <Label>Cliente</Label>
+                  <Select value={formData.client_id} onValueChange={(v) => setFormData({ ...formData, client_id: v })}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Seleccionar cliente" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {clients.map(c => (
+                        <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>Tax (%)</Label>
+                    <Input type="number" value={formData.tax_rate} onChange={e => setFormData({ ...formData, tax_rate: e.target.value })} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Vencimiento</Label>
+                    <Input type="date" value={formData.due_date} onChange={e => setFormData({ ...formData, due_date: e.target.value })} />
+                  </div>
+                </div>
+              </div>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setIsNewInvoiceOpen(false)}>Cancelar</Button>
+                <Button onClick={() => handleCreateInvoice()}>Generar Factura</Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+        </div>
       </div>
 
-      {/* Tabla de resumen por cliente */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Resumen por Cliente</CardTitle>
+      {/* VISTA DE PENDIENTES (Compacta/Instrumental) */}
+      <Card className="border-2 shadow-sm">
+        <CardHeader className="bg-muted/30 pb-4">
+          <CardTitle className="text-sm font-bold flex items-center gap-2">
+            <Clock className="h-4 w-4 text-amber-500" />
+            TRABAJO PENDIENTE DE FACTURAR
+          </CardTitle>
         </CardHeader>
-        <CardContent>
+        <CardContent className="p-0">
           <div className="overflow-x-auto">
-            <table className="w-full border-collapse">
-              <thead>
-                <tr className="border-b">
-                  <th className="text-left p-2 font-medium">Cliente</th>
-                  <th className="text-right p-2 font-medium">Horas Sin Facturar</th>
-                  <th className="text-right p-2 font-medium">Monto Sin Facturar</th>
-                  <th className="text-right p-2 font-medium">Facturado No Pagado</th>
-                  <th className="text-right p-2 font-medium">Facturado y Pagado</th>
+            <table className="w-full text-xs">
+              <thead className="bg-muted/50 border-y">
+                <tr>
+                  <th className="text-left p-3 font-semibold uppercase tracking-wider">Cliente</th>
+                  <th className="text-right p-3 font-semibold uppercase tracking-wider">Horas</th>
+                  <th className="text-right p-3 font-semibold uppercase tracking-wider">Monto Est.</th>
+                  <th className="text-right p-3 font-semibold uppercase tracking-wider">Acción</th>
                 </tr>
               </thead>
-              <tbody>
-                {clientSummaries.map((summary) => (
-                  <tr key={summary.clientId} className="border-b hover:bg-muted/50">
-                    <td className="p-2 font-medium">{summary.clientName}</td>
-                    <td className="p-2 text-right">
-                      {formatTime(summary.unbilledHours)}h
+              <tbody className="divide-y">
+                {clientSummaries.filter(s => s.unbilledAmount > 0).map((summary) => (
+                  <tr key={summary.clientId} className="hover:bg-muted/20 transition-colors">
+                    <td className="p-3 font-medium">
+                      <div className="flex flex-col">
+                        <span>{summary.clientName}</span>
+                        <span className="text-[10px] text-muted-foreground uppercase">{summary.currency}</span>
+                      </div>
                     </td>
-                    <td className="p-2 text-right">
-                      {Number(summary.unbilledAmount).toFixed(2)} {summary.currency}
+                    <td className="p-3 text-right font-mono">
+                      {(summary.unbilledHours / 60).toFixed(2)}h
                     </td>
-                    <td className="p-2 text-right">
-                      {Number(summary.billedUnpaidAmount).toFixed(2)} {summary.currency}
+                    <td className="p-3 text-right font-bold text-amber-600">
+                      {Number(summary.unbilledAmount).toLocaleString()} {summary.currency}
                     </td>
-                    <td className="p-2 text-right">
-                      {Number(summary.billedPaidAmount).toFixed(2)} {summary.currency}
+                    <td className="p-3 text-right">
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-7 text-[10px] font-bold border hover:bg-amber-50 hover:text-amber-700"
+                        onClick={() => handleCreateInvoice(summary.clientId)}
+                      >
+                        FACTURAR TODO
+                      </Button>
                     </td>
                   </tr>
                 ))}
-                {clientSummaries.length === 0 && (
+                {clientSummaries.filter(s => s.unbilledAmount > 0).length === 0 && (
                   <tr>
-                    <td colSpan={5} className="p-4 text-center text-muted-foreground">
-                      No hay clientes registrados
+                    <td colSpan={4} className="p-8 text-center text-muted-foreground italic">
+                      Todos los trabajos han sido facturados.
                     </td>
                   </tr>
                 )}
@@ -342,82 +281,143 @@ export default function InvoicesPage() {
         </CardContent>
       </Card>
 
-      <div className="grid gap-4">
-        {invoices.map((invoice) => {
-          const statusInfo = INVOICE_STATUSES.find(
-            (s) => s.value === invoice.status
-          );
-          return (
-            <Card key={invoice.id}>
-              <CardHeader>
-                <div className="flex items-center justify-between">
-                  <div>
-                    <CardTitle className="flex items-center space-x-2">
-                      <span>{invoice.invoice_number}</span>
-                      <span
-                        className={`rounded-full px-2 py-1 text-xs ${statusInfo?.color}`}
-                      >
-                        {statusInfo?.label}
-                      </span>
-                    </CardTitle>
-                    <p className="text-sm text-muted-foreground mt-1">
-                      {invoice.client.name} -{" "}
-                      {format(new Date(invoice.issue_date), "dd/MM/yyyy")}
-                    </p>
+      {/* GESTION DE FACTURAS */}
+      <div className="grid gap-6">
+        <h2 className="text-lg font-bold flex items-center gap-2 mt-4">
+          <FileText className="h-5 w-5" />
+          GESTIÓN DE FACTURAS
+        </h2>
+        <div className="grid gap-3">
+          {invoices.map((invoice) => {
+            const status = INVOICE_STATUSES.find(s => s.value === invoice.status) || INVOICE_STATUSES[0];
+            const StatusIcon = status.icon;
+
+            return (
+              <Card key={invoice.id} className="overflow-hidden border-l-4" style={{ borderLeftColor: status.value === 'paid' ? '#10b981' : (status.value === 'partial' ? '#f59e0b' : '#ddd') }}>
+                <div className="p-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                  <div className="flex items-start gap-3">
+                    <div className={cn("p-2 rounded-lg", status.color.replace('text-', 'bg-opacity-10 text-'))}>
+                      <StatusIcon className="h-5 w-5" />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-bold text-base">{invoice.invoice_number}</span>
+                        <span className={cn("px-2 py-0.5 rounded text-[10px] font-bold uppercase", status.color)}>
+                          {status.label}
+                        </span>
+                      </div>
+                      <p className="text-sm text-foreground/80 font-medium">{invoice.client.name}</p>
+                      <p className="text-[10px] text-muted-foreground uppercase">Emitida: {format(new Date(invoice.issue_date), "dd/MM/yyyy")}</p>
+                    </div>
                   </div>
-                  <div className="flex items-center space-x-2">
-                    <span className="text-2xl font-bold">
-                      {Number(invoice.total_amount).toFixed(2)} {invoice.currency}
-                    </span>
+
+                  <div className="flex flex-col md:items-end">
+                    <span className="text-xl font-black">{Number(invoice.total_amount).toLocaleString()} {invoice.currency}</span>
+                    {invoice.due_date && (
+                      <span className="text-[10px] text-muted-foreground">Vence: {format(new Date(invoice.due_date), "dd/MM/yyyy")}</span>
+                    )}
                   </div>
-                </div>
-              </CardHeader>
-              <CardContent>
-                <div className="flex items-center justify-between">
-                  <div className="flex space-x-2">
-                    <Select
-                      value={invoice.status}
-                      onValueChange={(value) =>
-                        handleStatusChange(invoice.id, value)
-                      }
-                    >
-                      <SelectTrigger className="w-40">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {INVOICE_STATUSES.map((status) => (
-                          <SelectItem key={status.value} value={status.value}>
-                            {status.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <Link href={`/dashboard/invoices/${invoice.id}`}>
-                      <Button variant="outline">
-                        <FileText className="mr-2 h-4 w-4" />
-                        Ver Detalles
-                      </Button>
+
+                  <div className="flex items-center gap-2 border-t md:border-t-0 pt-3 md:pt-0">
+                    <Link href={`/dashboard/invoices/${invoice.id}`} passHref>
+                      <Button variant="outline" size="sm" className="h-8 text-xs font-bold">DETALLES</Button>
                     </Link>
+
+                    {invoice.status !== 'paid' && (
+                      <Button
+                        size="sm"
+                        className="h-8 text-xs font-bold bg-emerald-600 hover:bg-emerald-700"
+                        onClick={() => {
+                          setSelectedInvoice(invoice);
+                          setPaymentForm({
+                            ...paymentForm,
+                            amount: Number(invoice.total_amount).toString()
+                          });
+                          setIsPaymentOpen(true);
+                        }}
+                      >
+                        REGISTRAR PAGO
+                      </Button>
+                    )}
                   </div>
-                  {invoice.due_date && (
-                    <p className="text-sm text-muted-foreground">
-                      Vence: {format(new Date(invoice.due_date), "dd/MM/yyyy")}
-                    </p>
-                  )}
                 </div>
-              </CardContent>
-            </Card>
-          );
-        })}
+              </Card>
+            );
+          })}
+
+          {invoices.length === 0 && (
+            <div className="py-20 text-center border-2 border-dashed rounded-xl">
+              <Coffee className="h-10 w-10 mx-auto text-muted-foreground/30 mb-2" />
+              <p className="text-muted-foreground font-medium">No hay facturas emitidas aún.</p>
+            </div>
+          )}
+        </div>
       </div>
 
-      {invoices.length === 0 && (
-        <div className="text-center py-12">
-          <p className="text-muted-foreground">
-            No hay facturas creadas. Crea tu primera factura.
-          </p>
-        </div>
-      )}
+      {/* DIALOGO DE PAGO */}
+      <Dialog open={isPaymentOpen} onOpenChange={setIsPaymentOpen}>
+        <DialogContent className="sm:max-w-[400px]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Banknote className="h-5 w-5 text-emerald-600" />
+              Registrar Cobro
+            </DialogTitle>
+            <DialogDescription>
+              Aplica un pago a la factura <strong>{selectedInvoice?.invoice_number}</strong>.
+            </DialogDescription>
+          </DialogHeader>
+          <form onSubmit={handleRegisterPayment}>
+            <div className="space-y-4 py-4">
+              <div className="space-y-2">
+                <Label>Monto a Cobrar ({selectedInvoice?.currency})</Label>
+                <Input
+                  type="number"
+                  step="0.01"
+                  required
+                  value={paymentForm.amount}
+                  onChange={e => setPaymentForm({ ...paymentForm, amount: e.target.value })}
+                />
+                <p className="text-[10px] text-muted-foreground">Total factura: {Number(selectedInvoice?.total_amount).toLocaleString()}</p>
+              </div>
+              <div className="space-y-2">
+                <Label>Fecha de Pago</Label>
+                <Input
+                  type="date"
+                  required
+                  value={paymentForm.date}
+                  onChange={e => setPaymentForm({ ...paymentForm, date: e.target.value })}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Método</Label>
+                <Select value={paymentForm.method} onValueChange={v => setPaymentForm({ ...paymentForm, method: v })}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="Transferencia">Transferencia</SelectItem>
+                    <SelectItem value="Efectivo">Efectivo</SelectItem>
+                    <SelectItem value="Tarjeta">Tarjeta</SelectItem>
+                    <SelectItem value="Otro">Otro</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Notas</Label>
+                <Input
+                  placeholder="Opcional..."
+                  value={paymentForm.notes}
+                  onChange={e => setPaymentForm({ ...paymentForm, notes: e.target.value })}
+                />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setIsPaymentOpen(false)}>Cancelar</Button>
+              <Button type="submit" className="bg-emerald-600 hover:bg-emerald-700">Confirmar Cobro</Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

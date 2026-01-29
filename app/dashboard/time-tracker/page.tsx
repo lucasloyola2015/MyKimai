@@ -14,20 +14,21 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Play, Square, Clock } from "lucide-react";
+import { Play, Square, Clock, Pause } from "lucide-react";
 import { format, differenceInMinutes } from "date-fns";
 import { useActiveTimeEntry } from "@/contexts/active-time-entry-context";
 import { getClients } from "@/lib/actions/clients";
 import { getProjects } from "@/lib/actions/projects";
 import { getTaskWithRelations } from "@/lib/actions/tasks";
 import {
-    startTimeEntry,
-    stopTimeEntry,
-    updateTimeEntryDescription,
-    getRecentTimeEntries,
+  startTimeEntry,
+  stopTimeEntry,
+  updateTimeEntryDescription,
+  getRecentTimeEntries,
 } from "@/lib/actions/time-entries";
-import type { clients, projects, tasks, time_entries } from "@/lib/generated/prisma";
+import type { clients, projects, tasks, time_entries } from "@prisma/client";
 import { toast } from "@/hooks/use-toast";
+import { cn } from "@/lib/utils";
 
 interface TaskWithRelations extends tasks {
   project: projects & { client: clients };
@@ -46,11 +47,16 @@ export default function TimeTrackerPage() {
   const [recentEntries, setRecentEntries] = useState<time_entries[]>([]);
   const [loading, setLoading] = useState(true);
   const [preloaded, setPreloaded] = useState(false);
-  const { activeEntry, refreshActiveEntry } = useActiveTimeEntry();
+  const { activeEntry, refreshActiveEntry, pauseActiveEntry, resumeActiveEntry } = useActiveTimeEntry();
 
   // Determinar si hay una tarea activa
   const isTracking = activeEntry !== null;
   const startTime = activeEntry ? new Date(activeEntry.start_time) : null;
+
+  // Determinar si hay una pausa activa
+  const activeBreak = activeEntry?.breaks?.find(b => b.end_time === null);
+  const isPaused = !!activeBreak;
+  const [isPausing, setIsPausing] = useState(false);
 
   useEffect(() => {
     loadClients();
@@ -78,11 +84,11 @@ export default function TimeTrackerPage() {
         setSelectedProjectId(projectId);
         setSelectedTaskId(taskId);
         setDescription(""); // Sin descripción como pidió el usuario
-        
+
         // Cargar proyectos y tareas
         await loadProjects(clientId);
         await loadTasks(projectId);
-        
+
         setPreloaded(true);
       };
 
@@ -101,13 +107,13 @@ export default function TimeTrackerPage() {
           if (taskData) {
             const project = taskData.project;
             const client = project?.client;
-            
+
             if (client && project) {
               setSelectedClientId(client.id);
               setSelectedProjectId(project.id);
               setSelectedTaskId(activeEntry.task_id);
               setDescription(activeEntry.description || "");
-              
+
               // Cargar proyectos y tareas para los selects
               await loadProjects(client.id);
               await loadTasks(project.id);
@@ -266,22 +272,8 @@ export default function TimeTrackerPage() {
   const handleStop = async () => {
     if (!activeEntry) return;
 
-    const totalMinutes = calculateElapsedTime();
-    if (totalMinutes < 1) {
-      toast({
-        title: "Error",
-        description: "El tiempo debe ser al menos 1 minuto",
-        variant: "destructive",
-      });
-      return;
-    }
-
     try {
-      const result = await stopTimeEntry(activeEntry.id);
-
-      if (!result.success) {
-        throw new Error(result.error);
-      }
+      await stopTimeEntry(activeEntry.id);
 
       toast({
         title: "Éxito",
@@ -298,6 +290,31 @@ export default function TimeTrackerPage() {
         description: "Error al guardar el período de trabajo",
         variant: "destructive",
       });
+    }
+  };
+
+  const handlePauseToggle = async () => {
+    if (!activeEntry) return;
+
+    setIsPausing(true);
+    try {
+      if (isPaused) {
+        await resumeActiveEntry();
+        toast({
+          title: "Reanudado",
+          description: "Continuando registro de tiempo.",
+        });
+      } else {
+        await pauseActiveEntry();
+        toast({
+          title: "Pausado",
+          description: "El tiempo de pausa no se contará en el neto.",
+        });
+      }
+    } catch (error) {
+      console.error("Error toggling pause:", error);
+    } finally {
+      setIsPausing(false);
     }
   };
 
@@ -429,37 +446,73 @@ export default function TimeTrackerPage() {
               />
             </div>
 
-            <div className="flex items-center justify-center space-x-4 rounded-lg border bg-muted p-6">
-              <Clock className="h-8 w-8" />
+            <div className={cn(
+              "flex items-center justify-center space-x-4 rounded-lg border p-6 transition-colors duration-300",
+              isPaused ? "bg-amber-50 border-amber-200" : "bg-muted"
+            )}>
+              <Clock className={cn("h-8 w-8", isPaused && "text-amber-500 animate-pulse")} />
               <div className="text-center">
-                <div className="text-4xl font-bold">
+                <div className={cn(
+                  "text-4xl font-bold font-mono",
+                  isPaused && "text-amber-600"
+                )}>
                   {formatTime(elapsedMinutes)}
                 </div>
-                <div className="text-sm text-muted-foreground">
-                  {isTracking ? "En progreso" : "Detenido"}
+                <div className={cn(
+                  "text-sm font-medium",
+                  isPaused ? "text-amber-600 animate-pulse" : "text-muted-foreground"
+                )}>
+                  {isPaused ? "EN PAUSA" : (isTracking ? "En progreso" : "Detenido")}
                 </div>
               </div>
             </div>
 
-            <div className="flex space-x-2">
+            <div className="flex gap-2">
               {!isTracking ? (
                 <Button
                   onClick={handleStart}
-                  disabled={!selectedTaskId}
-                  className="flex-1"
+                  disabled={!selectedTaskId || loading}
+                  className="flex-1 font-bold h-11"
                 >
-                  <Play className="mr-2 h-4 w-4" />
-                  Iniciar
+                  <Play className="mr-2 h-5 w-5 fill-current" />
+                  INICIAR JORNADA
                 </Button>
               ) : (
-                <Button
-                  onClick={handleStop}
-                  variant="destructive"
-                  className="flex-1"
-                >
-                  <Square className="mr-2 h-4 w-4" />
-                  Finalizar
-                </Button>
+                <>
+                  <Button
+                    onClick={handleStop}
+                    variant="destructive"
+                    className="flex-1 font-bold h-11"
+                    disabled={isPausing}
+                  >
+                    <Square className="mr-2 h-5 w-5 fill-current" />
+                    FINALIZAR
+                  </Button>
+
+                  <Button
+                    onClick={handlePauseToggle}
+                    variant={isPaused ? "default" : "secondary"}
+                    className={cn(
+                      "flex-1 font-bold h-11 transition-all duration-300",
+                      isPaused
+                        ? "bg-amber-500 hover:bg-amber-600 text-white border-amber-600"
+                        : "bg-amber-50 border-amber-200 text-amber-700 hover:bg-amber-100"
+                    )}
+                    disabled={isPausing}
+                  >
+                    {isPaused ? (
+                      <>
+                        <Play className="mr-2 h-5 w-5 fill-current animate-pulse" />
+                        REANUDAR
+                      </>
+                    ) : (
+                      <>
+                        <Pause className="mr-2 h-5 w-5" />
+                        PAUSAR
+                      </>
+                    )}
+                  </Button>
+                </>
               )}
             </div>
           </CardContent>

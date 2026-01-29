@@ -2,7 +2,7 @@
 
 import { prisma } from "@/lib/prisma/client";
 import { getAuthUser } from "@/lib/auth/server";
-import type { tasks, projects, clients } from "@/lib/generated/prisma";
+import type { tasks, projects, clients } from "@prisma/client";
 
 export interface RateContext {
   task?: tasks | null;

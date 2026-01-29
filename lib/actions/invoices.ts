@@ -3,7 +3,7 @@
 import { prisma } from "@/lib/prisma/client";
 import { getAuthUser } from "@/lib/auth/server";
 import { revalidatePath } from "next/cache";
-import type { invoices, invoice_items, InvoiceStatus } from "@/lib/generated/prisma";
+import type { invoices, invoice_items, InvoiceStatus } from "@prisma/client";
 
 export type ActionResponse<T> =
     | { success: true; data: T }
@@ -76,11 +76,11 @@ export async function getInvoiceWithItems(id: string) {
 export async function getUnbilledTimeEntries(clientId?: string) {
     const user = await getAuthUser();
 
-    // Obtener todos los time entries facturables del usuario
-    const allEntries = await prisma.time_entries.findMany({
+    return await prisma.time_entries.findMany({
         where: {
             user_id: user.id,
             billable: true,
+            is_billed: false,
             ...(clientId && {
                 task: {
                     project: {
@@ -99,23 +99,11 @@ export async function getUnbilledTimeEntries(clientId?: string) {
                     },
                 },
             },
-            invoice_items: {
-                select: {
-                    id: true,
-                },
-            },
         },
         orderBy: {
             start_time: "desc",
         },
     });
-
-    // Filtrar solo los que no están facturados (no tienen invoice_items)
-    const unbilledEntries = allEntries.filter(
-        (entry) => entry.invoice_items.length === 0
-    );
-
-    return unbilledEntries;
 }
 
 /**
@@ -275,6 +263,16 @@ export async function createInvoiceFromTimeEntries(data: {
                 )
             );
 
+            // Marcar time entries como facturados
+            await tx.time_entries.updateMany({
+                where: {
+                    id: { in: data.time_entry_ids }
+                },
+                data: {
+                    is_billed: true
+                }
+            });
+
             return { invoice, invoiceItems };
         });
 
@@ -336,7 +334,7 @@ export async function updateInvoiceStatus(
 
         const invoice = await prisma.invoices.update({
             where: { id },
-            data: updateData,
+            data: updateData as any, // Cast to any to avoid enum sync issues if they haven't reloaded
             include: {
                 client: true,
             },
@@ -380,6 +378,7 @@ export async function getClientBillingSummary() {
         where: {
             user_id: user.id,
             billable: true,
+            is_billed: false,
         },
         include: {
             task: {
@@ -399,20 +398,14 @@ export async function getClientBillingSummary() {
         },
     });
 
-    // Obtener IDs de entries ya facturados
-    const billedEntryIds = new Set(
-        allEntries
-            .filter((entry) => entry.invoice_items.length > 0)
-            .map((entry) => entry.id)
-    );
+    const unbilledEntries = allEntries;
 
     // Calcular resumen por cliente
     const summaries = clients.map((client) => {
         // Entradas sin facturar de este cliente
-        const clientUnbilledEntries = allEntries.filter(
+        const clientUnbilledEntries = unbilledEntries.filter(
             (entry) =>
-                entry.task.project.client.id === client.id &&
-                !billedEntryIds.has(entry.id)
+                entry.task.project.client.id === client.id
         );
 
         const unbilledMinutes = clientUnbilledEntries.reduce(

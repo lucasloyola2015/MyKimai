@@ -32,7 +32,7 @@ import {
     updateTask,
     deleteTask,
 } from "@/lib/actions/tasks";
-import type { tasks, projects, clients } from "@/lib/generated/prisma";
+import type { tasks, projects, clients } from "@prisma/client";
 import { toast } from "@/hooks/use-toast";
 
 export default function TasksPage() {

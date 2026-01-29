@@ -1,4 +1,4 @@
-import type { tasks, projects, clients } from "@/lib/generated/prisma";
+import type { tasks, projects, clients } from "@prisma/client";
 
 export interface RateContext {
   task?: tasks | null;
