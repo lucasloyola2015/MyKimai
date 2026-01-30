@@ -76,12 +76,13 @@ model clients {
   tax_id        String?         @db.VarChar(50)
   business_name String?         @db.VarChar(255)
   tax_condition String?         @db.VarChar(100)
-  legal_address String?
-  client_users  client_users[]
-  users         auth_users      @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  hour_packages hour_packages[]
-  invoices      invoices[]
-  projects      projects[]
+  legal_address            String?
+  preferred_billing_method  billing_type_invoice @default(LEGAL)
+  client_users              client_users[]
+  users                     auth_users           @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  hour_packages             hour_packages[]
+  invoices                  invoices[]
+  projects                  projects[]
 
   @@index([email], map: "idx_clients_email")
   @@index([name], map: "idx_clients_name")
@@ -171,9 +172,10 @@ model time_entry_breaks {
 
 model invoices {
   id             String          @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
-  client_id      String          @db.Uuid
-  invoice_number String          @unique @db.VarChar(50)
-  status         invoice_status  @default(draft)
+  client_id      String               @db.Uuid
+  invoice_number String               @unique @db.VarChar(50)
+  status         invoice_status       @default(draft)
+  billing_type   billing_type_invoice @default(LEGAL)
   subtotal       Decimal         @default(0) @db.Decimal(10, 2)
   tax_rate       Decimal?        @default(0) @db.Decimal(5, 2)
   tax_amount     Decimal?        @default(0) @db.Decimal(10, 2)
@@ -656,6 +658,13 @@ enum invoice_status {
 enum invoice_item_type {
   time
   fixed
+
+  @@schema("public")
+}
+
+enum billing_type_invoice {
+  LEGAL
+  INTERNAL
 
   @@schema("public")
 }

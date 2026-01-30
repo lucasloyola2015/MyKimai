@@ -14,6 +14,14 @@ import { getClients } from "@/lib/actions/clients";
 import type { time_entries, clients } from "@prisma/client";
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from "@/components/ui/select";
+import { ShieldAlert, ShieldCheck } from "lucide-react";
 
 export default function PartialBillingPage() {
     const { clientId } = useParams();
@@ -25,6 +33,7 @@ export default function PartialBillingPage() {
     const [selectedIds, setSelectedIds] = useState<string[]>([]);
     const [taxRate, setTaxRate] = useState("0");
     const [dueDate, setDueDate] = useState(format(new Date(Date.now() + 15 * 86400000), "yyyy-MM-dd"));
+    const [billingType, setBillingType] = useState<string>("LEGAL");
 
     useEffect(() => {
         loadData();
@@ -38,7 +47,12 @@ export default function PartialBillingPage() {
             ]);
             setTimeEntries(entries);
             const currentClient = allClients.find(c => c.id === clientId);
-            if (currentClient) setClient(currentClient);
+            if (currentClient) {
+                setClient(currentClient);
+                if ((currentClient as any).preferred_billing_method) {
+                    setBillingType((currentClient as any).preferred_billing_method);
+                }
+            }
         } catch (error) {
             console.error("Error loading entries:", error);
             toast({ title: "Error", description: "No se pudieron cargar las horas pendientes.", variant: "destructive" });
@@ -90,6 +104,7 @@ export default function PartialBillingPage() {
                 time_entry_ids: selectedIds,
                 tax_rate: parseFloat(taxRate) || 0,
                 due_date: new Date(dueDate),
+                billing_type: billingType as any,
             });
 
             if (!result.success) throw new Error(result.error);
@@ -188,8 +203,38 @@ export default function PartialBillingPage() {
                                     <span className="text-muted-foreground">Subtotal:</span>
                                     <span className="font-bold">{summary.subtotal.toLocaleString()} {client?.currency}</span>
                                 </div>
-                                <hr className="border-dashed" />
                                 <div className="space-y-4 pt-2">
+                                    <div className="space-y-2">
+                                        <Label>Tipo de Comprobante</Label>
+                                        <Select value={billingType} onValueChange={setBillingType}>
+                                            <SelectTrigger className={cn(
+                                                "w-full h-12 font-bold",
+                                                billingType === 'LEGAL' ? "border-blue-500 bg-blue-50/50 text-blue-700" : "border-slate-500 bg-slate-50/50 text-slate-700"
+                                            )}>
+                                                <SelectValue />
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                                <SelectItem value="LEGAL">
+                                                    <div className="flex items-center gap-2">
+                                                        <ShieldCheck className="h-4 w-4 text-blue-600" />
+                                                        <span>Factura Electrónica (AFIP)</span>
+                                                    </div>
+                                                </SelectItem>
+                                                <SelectItem value="INTERNAL">
+                                                    <div className="flex items-center gap-2">
+                                                        <ShieldAlert className="h-4 w-4 text-slate-600" />
+                                                        <span>Comprobante Interno</span>
+                                                    </div>
+                                                </SelectItem>
+                                            </SelectContent>
+                                        </Select>
+                                        <p className="text-[10px] text-muted-foreground px-1 italic">
+                                            {billingType === 'LEGAL'
+                                                ? "⚠️ Este documento será fiscalizado por AFIP/ARCA."
+                                                : "ℹ️ Documento de uso administrativo interno (no fiscal)."}
+                                        </p>
+                                    </div>
+
                                     <div className="grid grid-cols-2 gap-4">
                                         <div className="space-y-2">
                                             <Label htmlFor="tax">Tax %</Label>

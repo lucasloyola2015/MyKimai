@@ -21,7 +21,7 @@ import {
 } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
-import { Plus, FileText, CheckCircle2, AlertCircle, Clock, Banknote, Coffee, History } from "lucide-react";
+import { Plus, FileText, CheckCircle2, AlertCircle, Clock, Banknote, Coffee, History, ShieldAlert, ShieldCheck } from "lucide-react";
 import { format } from "date-fns";
 import Link from "next/link";
 import { getClients } from "@/lib/actions/clients";
@@ -292,9 +292,13 @@ export default function InvoicesPage() {
           {invoices.map((invoice) => {
             const status = INVOICE_STATUSES.find(s => s.value === invoice.status) || INVOICE_STATUSES[0];
             const StatusIcon = status.icon;
+            const isInternal = invoice.billing_type === 'INTERNAL';
+            const borderLeftColor = isInternal
+              ? "#9333ea" // Purple for Internal
+              : (status.value === 'paid' ? '#10b981' : (status.value === 'partial' ? '#f59e0b' : '#ddd'));
 
             return (
-              <Card key={invoice.id} className="overflow-hidden border-l-4" style={{ borderLeftColor: status.value === 'paid' ? '#10b981' : (status.value === 'partial' ? '#f59e0b' : '#ddd') }}>
+              <Card key={invoice.id} className="overflow-hidden border-l-4" style={{ borderLeftColor }}>
                 <div className="p-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
                   <div className="flex items-start gap-3">
                     <div className={cn("p-2 rounded-lg", status.color.replace('text-', 'bg-opacity-10 text-'))}>
@@ -306,6 +310,16 @@ export default function InvoicesPage() {
                         <span className={cn("px-2 py-0.5 rounded text-[10px] font-bold uppercase", status.color)}>
                           {status.label}
                         </span>
+                        {invoice.billing_type === 'INTERNAL' && (
+                          <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-purple-100 text-purple-700 flex items-center gap-1">
+                            <ShieldAlert className="h-3 w-3" /> INTERNO
+                          </span>
+                        )}
+                        {invoice.billing_type === 'LEGAL' && (
+                          <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-blue-100 text-blue-700 flex items-center gap-1">
+                            <ShieldCheck className="h-3 w-3" /> LEGAL
+                          </span>
+                        )}
                       </div>
                       <p className="text-sm text-foreground/80 font-medium">{invoice.client.name}</p>
                       <p className="text-[10px] text-muted-foreground uppercase">Emitida: {format(new Date(invoice.issue_date), "dd/MM/yyyy")}</p>

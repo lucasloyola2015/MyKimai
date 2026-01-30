@@ -3,7 +3,7 @@
 import { prisma } from "@/lib/prisma/client";
 import { getAuthUser } from "@/lib/auth/server";
 import { revalidatePath } from "next/cache";
-import type { invoices, invoice_items, InvoiceStatus } from "@prisma/client";
+import type { invoices, invoice_items, InvoiceStatus, billing_type_invoice } from "@prisma/client";
 
 export type ActionResponse<T> =
     | { success: true; data: T }
@@ -134,15 +134,18 @@ export async function getBilledTimeEntryIds() {
 }
 
 /**
- * Genera el próximo número de factura
+ * Genera el próximo número de factura basado en el tipo
  */
-async function generateInvoiceNumber(): Promise<string> {
+async function generateInvoiceNumber(type: billing_type_invoice = "LEGAL"): Promise<string> {
     const year = new Date().getFullYear();
+    const prefix = type === "INTERNAL" ? "INT" : "INV";
+
     const lastInvoice = await prisma.invoices.findFirst({
         where: {
             invoice_number: {
-                startsWith: `INV-${year}-`,
+                startsWith: `${prefix}-${year}-`,
             },
+            billing_type: type,
         },
         orderBy: {
             invoice_number: "desc",
@@ -150,12 +153,12 @@ async function generateInvoiceNumber(): Promise<string> {
     });
 
     if (!lastInvoice) {
-        return `INV-${year}-001`;
+        return `${prefix}-${year}-001`;
     }
 
     const lastNumber = parseInt(lastInvoice.invoice_number.split("-")[2] || "0");
     const nextNumber = (lastNumber + 1).toString().padStart(3, "0");
-    return `INV-${year}-${nextNumber}`;
+    return `${prefix}-${year}-${nextNumber}`;
 }
 
 /**
@@ -167,6 +170,7 @@ export async function createInvoiceFromTimeEntries(data: {
     tax_rate?: number;
     due_date?: Date | null;
     notes?: string | null;
+    billing_type?: billing_type_invoice;
 }): Promise<ActionResponse<invoices>> {
     const user = await getAuthUser();
 
@@ -223,8 +227,9 @@ export async function createInvoiceFromTimeEntries(data: {
     try {
         // Crear factura e items en una transacción
         const result = await prisma.$transaction(async (tx) => {
-            // Generar número de factura
-            const invoiceNumber = await generateInvoiceNumber();
+            // Generar número de factura según tipo
+            const billingType = data.billing_type || "LEGAL";
+            const invoiceNumber = await generateInvoiceNumber(billingType);
 
             // Crear factura
             const invoice = await tx.invoices.create({
@@ -232,6 +237,7 @@ export async function createInvoiceFromTimeEntries(data: {
                     client_id: data.client_id,
                     invoice_number: invoiceNumber,
                     status: "draft",
+                    billing_type: billingType,
                     subtotal,
                     tax_rate: taxRate,
                     tax_amount: taxAmount,
