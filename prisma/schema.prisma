@@ -74,6 +74,9 @@ model clients {
   created_at    DateTime        @default(now()) @db.Timestamptz(6)
   updated_at    DateTime        @default(now()) @db.Timestamptz(6)
   tax_id        String?         @db.VarChar(50)
+  business_name String?         @db.VarChar(255)
+  tax_condition String?         @db.VarChar(100)
+  legal_address String?
   client_users  client_users[]
   users         auth_users      @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
   hour_packages hour_packages[]
@@ -139,7 +142,9 @@ model time_entries {
   created_at       DateTime            @default(now()) @db.Timestamptz(6)
   updated_at       DateTime            @default(now()) @db.Timestamptz(6)
   is_billed        Boolean             @default(false)
+  invoice_id       String?             @db.Uuid
   invoice_items    invoice_items[]
+  invoice          invoices?           @relation(fields: [invoice_id], references: [id], onDelete: SetNull, onUpdate: NoAction)
   task             tasks               @relation(fields: [task_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
   users            auth_users          @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
   breaks           time_entry_breaks[]
@@ -187,6 +192,7 @@ model invoices {
   punto_venta    Int?
   cbte_nro       Int?
   invoice_items  invoice_items[]
+  time_entries   time_entries[]
   client         clients         @relation(fields: [client_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
   payments       payments[]
 

@@ -257,14 +257,15 @@ export default function InvoicesPage() {
                       {Number(summary.unbilledAmount).toLocaleString()} {summary.currency}
                     </td>
                     <td className="p-3 text-right">
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="h-7 text-[10px] font-bold border hover:bg-amber-50 hover:text-amber-700"
-                        onClick={() => handleCreateInvoice(summary.clientId)}
-                      >
-                        FACTURAR TODO
-                      </Button>
+                      <Link href={`/dashboard/billing/select/${summary.clientId}`}>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-7 text-[10px] font-bold border hover:bg-amber-50 hover:text-amber-700 uppercase"
+                        >
+                          Facturar
+                        </Button>
+                      </Link>
                     </td>
                   </tr>
                 ))}
