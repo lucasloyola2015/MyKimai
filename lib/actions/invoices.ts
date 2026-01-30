@@ -283,7 +283,8 @@ export async function createInvoiceFromTimeEntries(data: {
             success: true,
             data: result.invoice,
         };
-    } catch (error) {
+    } catch (error: any) {
+        console.error("DEBUG INVOICE CREATION ERROR:", error);
         return {
             success: false,
             error:

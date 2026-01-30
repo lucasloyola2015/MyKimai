@@ -5,6 +5,8 @@ const globalForPrisma = globalThis as unknown as {
     prisma: PrismaClient | undefined;
 };
 
+import { Pool } from "pg";
+
 function createPrisma() {
     const connectionString = process.env.DATABASE_URL;
 
@@ -13,7 +15,15 @@ function createPrisma() {
     }
 
     try {
-        const adapter = new PrismaPg({ connectionString });
+        // Configuramos el pool de pg explícitamente para manejar el SSL de Supabase/Vercel
+        const pool = new Pool({
+            connectionString,
+            ssl: process.env.NODE_ENV === "production"
+                ? { rejectUnauthorized: false }
+                : undefined,
+        });
+
+        const adapter = new PrismaPg(pool);
 
         const client = new PrismaClient({
             adapter,
@@ -22,6 +32,7 @@ function createPrisma() {
 
         return client;
     } catch (error) {
+        console.error("DEBUG PRISMA CLIENT CREATION ERROR:", error);
         throw error;
     }
 }

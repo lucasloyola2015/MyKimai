@@ -89,7 +89,12 @@ export async function generateFiscalInvoice(invoiceId: string) {
         };
 
     } catch (error: any) {
-        console.error("[AFIP ERROR]", error);
+        console.error("DEBUG AFIP ACTION ERROR:", error);
+        console.error("Error details:", {
+            message: error.message,
+            stack: error.stack,
+            response: error.response?.data
+        });
 
         const errorMessage = error.message || "Error desconocido en el WS de AFIP";
 
