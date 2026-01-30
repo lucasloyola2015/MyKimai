@@ -1,6 +1,11 @@
 
 import Afip from '@afipsdk/afip.js';
 
+if (typeof window !== 'undefined') {
+    throw new Error('El SDK de AFIP no debe cargarse en el cliente.');
+}
+
+
 /**
  * Service to manage AFIP SDK initialization and authentication.
  * Certificates are read from Base64 environment variables to support Serverless environments like Vercel.
