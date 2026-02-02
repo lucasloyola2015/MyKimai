@@ -12,6 +12,7 @@ import { format } from "date-fns";
 import { getUnbilledTimeEntries, createInvoiceFromTimeEntries } from "@/lib/actions/invoices";
 import { getClients } from "@/lib/actions/clients";
 import type { time_entries, clients } from "@prisma/client";
+import { getUsdExchangeRate } from "@/lib/actions/exchange";
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import {
@@ -35,6 +36,8 @@ export default function PartialBillingPage() {
     const [dueDate, setDueDate] = useState(format(new Date(Date.now() + 15 * 86400000), "yyyy-MM-dd"));
     const [billingType, setBillingType] = useState<string>("LEGAL");
     const [billingCurrency, setBillingCurrency] = useState<"ARS" | "USD">("ARS");
+    const [exchangeStrategy, setExchangeStrategy] = useState<"CURRENT" | "HISTORICAL">("CURRENT");
+    const [currentRate, setCurrentRate] = useState<number>(0);
 
     useEffect(() => {
         loadData();
@@ -54,6 +57,10 @@ export default function PartialBillingPage() {
                     setBillingType((currentClient as any).preferred_billing_method);
                 }
             }
+
+            // Cargar tasa actual para cálculos
+            const rate = await getUsdExchangeRate();
+            setCurrentRate(rate);
         } catch (error) {
             console.error("Error loading entries:", error);
             toast({ title: "Error", description: "No se pudieron cargar las horas pendientes.", variant: "destructive" });
@@ -72,12 +79,18 @@ export default function PartialBillingPage() {
         let subtotal = 0;
 
         if (billingCurrency === "ARS") {
-            // Calcular usando exchange rate guardado en cada entry
-            subtotal = selectedEntries.reduce((sum, e) => {
-                const amountUsd = Number(e.amount || 0);
-                const rate = Number(e.usd_exchange_rate || 1050);
-                return sum + (amountUsd * rate);
-            }, 0);
+            if (exchangeStrategy === "CURRENT") {
+                // Cálculo adaptativo: Horas Netas Totales * Tarifa USD * TC Hoy
+                const totalUsd = selectedEntries.reduce((sum, e) => sum + Number(e.amount || 0), 0);
+                subtotal = totalUsd * (currentRate || 1050);
+            } else {
+                // Cálculo histórico: Suma de pesificaciones diarias
+                subtotal = selectedEntries.reduce((sum, e) => {
+                    const amountUsd = Number(e.amount || 0);
+                    const rate = Number(e.usd_exchange_rate || 1050);
+                    return sum + (amountUsd * rate);
+                }, 0);
+            }
         } else {
             // Suma simple de USD
             subtotal = selectedEntries.reduce((sum, e) => sum + Number(e.amount || 0), 0);
@@ -90,7 +103,7 @@ export default function PartialBillingPage() {
             tax,
             total: subtotal + tax
         };
-    }, [selectedEntries, taxRate, billingCurrency]);
+    }, [selectedEntries, taxRate, billingCurrency, exchangeStrategy, currentRate]);
 
     const handleToggleAll = () => {
         if (selectedIds.length === timeEntries.length) {
@@ -120,6 +133,8 @@ export default function PartialBillingPage() {
                 tax_rate: parseFloat(taxRate) || 0,
                 due_date: new Date(dueDate),
                 billing_type: billingType as any,
+                currency: billingCurrency,
+                exchange_strategy: exchangeStrategy,
             });
 
             if (!result.success) throw new Error(result.error);
@@ -182,13 +197,17 @@ export default function PartialBillingPage() {
                                                 <div className="flex flex-col items-end">
                                                     <span className="font-mono text-sm font-bold whitespace-nowrap">
                                                         {billingCurrency === "ARS"
-                                                            ? (Number(entry.amount || 0) * Number(entry.usd_exchange_rate || 1050)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                                                            ? (exchangeStrategy === "CURRENT"
+                                                                ? Number(entry.amount || 0) * (currentRate || 1050)
+                                                                : Number(entry.amount || 0) * Number(entry.usd_exchange_rate || 1050)
+                                                            ).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
                                                             : Number(entry.amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
                                                         } {billingCurrency}
                                                     </span>
-                                                    {billingCurrency === "ARS" && entry.usd_exchange_rate && (
+                                                    {billingCurrency === "ARS" && (
                                                         <span className="text-[9px] text-muted-foreground font-mono">
-                                                            USD {Number(entry.amount).toFixed(2)} @ {Number(entry.usd_exchange_rate).toFixed(0)}
+                                                            USD {Number(entry.amount).toFixed(2)} @ {exchangeStrategy === "CURRENT" ? (currentRate || 1050).toFixed(0) : Number(entry.usd_exchange_rate || 1050).toFixed(0)}
+                                                            {exchangeStrategy === "CURRENT" ? " (Hoy)" : ""}
                                                         </span>
                                                     )}
                                                 </div>
@@ -253,6 +272,40 @@ export default function PartialBillingPage() {
                                                 : "Se factura el monto bruto en USD sin conversión."}
                                         </p>
                                     </div>
+
+                                    {billingCurrency === "ARS" && (
+                                        <div className="space-y-2 p-3 bg-muted/40 rounded-lg border border-border/50">
+                                            <Label className="text-[10px] uppercase tracking-wider font-bold opacity-70">Estrategia de Cambio</Label>
+                                            <div className="space-y-2 mt-2">
+                                                <div
+                                                    className={cn(
+                                                        "flex items-center gap-2 p-2 rounded border cursor-pointer transition-all",
+                                                        exchangeStrategy === "CURRENT" ? "bg-primary/10 border-primary/30" : "bg-background border-transparent"
+                                                    )}
+                                                    onClick={() => setExchangeStrategy("CURRENT")}
+                                                >
+                                                    <div className={cn("h-3 w-3 rounded-full border", exchangeStrategy === "CURRENT" ? "bg-primary border-primary" : "border-muted-foreground")} />
+                                                    <div className="flex flex-col">
+                                                        <span className="text-xs font-bold">Cotización de Hoy (Inflación)</span>
+                                                        <span className="text-[9px] opacity-60 italic">Suma horas netas y aplica TC actual</span>
+                                                    </div>
+                                                </div>
+                                                <div
+                                                    className={cn(
+                                                        "flex items-center gap-2 p-2 rounded border cursor-pointer transition-all",
+                                                        exchangeStrategy === "HISTORICAL" ? "bg-primary/10 border-primary/30" : "bg-background border-transparent"
+                                                    )}
+                                                    onClick={() => setExchangeStrategy("HISTORICAL")}
+                                                >
+                                                    <div className={cn("h-3 w-3 rounded-full border", exchangeStrategy === "HISTORICAL" ? "bg-primary border-primary" : "border-muted-foreground")} />
+                                                    <div className="flex flex-col">
+                                                        <span className="text-xs font-bold">Cotización Histórica (Deflación)</span>
+                                                        <span className="text-[9px] opacity-60 italic">Pesificación diaria jornada por jornada</span>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    )}
 
                                     <div className="space-y-2">
                                         <Label>Tipo de Comprobante</Label>

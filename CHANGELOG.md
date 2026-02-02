@@ -5,7 +5,9 @@
 *   **Regla de Ingeniería**: Implementación estricta de `Horas Facturables = (Fin - Inicio) - Pausas`.
 *   **Backend**: Refactorización de `lib/actions/time-entries.ts` con cálculo de alta precisión y recalibración dinámica en cada consulta.
 *   **Bimonetariedad**: Integración de facturación en ARS/USD. Los registros capturan el Dólar Oficial del día trabajado (dolarapi.com) para pesificaciones históricas precisas.
-*   **UI Billing**: Nuevo selector de moneda en la confección de facturas con desglose de conversión en tiempo real.
+*   **Conversión Adaptativa**: El sistema ahora permite elegir entre "Cotización Actual" (ideal para inflación, aplica el TC de hoy a todas las horas netas) o "Cotización Histórica" (ideal para deflación o estabilidad, usa el TC persistido de cada jornada).
+*   **Unidad de Medida**: Consolidación de la **Hora** como unidad de medida inmutable para liquidaciones; el monto monetario es una capa de cálculo dinámica basada en estrategias.
+*   **UI Billing**: Nuevo selector de moneda y estrategia en la confección de facturas con desglose técnico detallado.
 
 ## [2026-01-30] - Sesión de Estabilización
 

@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma/client";
 import { getAuthUser } from "@/lib/auth/server";
 import { revalidatePath } from "next/cache";
 import type { invoices, invoice_items, InvoiceStatus, billing_type_invoice } from "@prisma/client";
+import { getUsdExchangeRate } from "./exchange";
 
 export type ActionResponse<T> =
     | { success: true; data: T }
@@ -171,6 +172,8 @@ export async function createInvoiceFromTimeEntries(data: {
     due_date?: Date | null;
     notes?: string | null;
     billing_type?: billing_type_invoice;
+    currency?: string;
+    exchange_strategy?: "CURRENT" | "HISTORICAL";
 }): Promise<ActionResponse<invoices>> {
     const user = await getAuthUser();
 
@@ -215,11 +218,31 @@ export async function createInvoiceFromTimeEntries(data: {
         };
     }
 
-    // Calcular totales
-    const subtotal = timeEntries.reduce(
-        (sum, entry) => sum + Number(entry.amount || 0),
-        0
-    );
+    // Calcular totales basados en moneda y estrategia
+    const billingCurrency = data.currency || client.currency;
+    const strategy = data.exchange_strategy || "CURRENT";
+
+    let subtotal = 0;
+    let currentExchangeRate = 0;
+
+    if (billingCurrency === "ARS") {
+        if (strategy === "CURRENT") {
+            currentExchangeRate = await getUsdExchangeRate();
+            const totalUsd = timeEntries.reduce((sum, e) => sum + Number(e.amount || 0), 0);
+            subtotal = totalUsd * currentExchangeRate;
+        } else {
+            // Histórico: suma de pesificaciones individuales
+            subtotal = timeEntries.reduce((sum, e) => {
+                const amountUsd = Number(e.amount || 0);
+                const rate = Number(e.usd_exchange_rate || 1050);
+                return sum + (amountUsd * rate);
+            }, 0);
+        }
+    } else {
+        // USD o moneda base: suma directa
+        subtotal = timeEntries.reduce((sum, e) => sum + Number(e.amount || 0), 0);
+    }
+
     const taxRate = data.tax_rate || 0;
     const taxAmount = subtotal * (taxRate / 100);
     const totalAmount = subtotal + taxAmount;
@@ -242,9 +265,9 @@ export async function createInvoiceFromTimeEntries(data: {
                     tax_rate: taxRate,
                     tax_amount: taxAmount,
                     total_amount: totalAmount,
-                    currency: client.currency,
+                    currency: billingCurrency,
                     due_date: data.due_date || null,
-                    notes: data.notes || null,
+                    notes: data.notes || (strategy === "CURRENT" && billingCurrency === "ARS" ? `TC: ${currentExchangeRate} (ARS/USD)` : data.notes),
                 },
                 include: {
                     client: true,
