@@ -1,0 +1,16 @@
+﻿[dotenv@17.2.3] injecting env (0) from .env -- tip: ÔÜÖ´©Å  enable debug logging with { debug: true }
+Trigger Definition: [
+  {
+    "def": "CREATE TRIGGER calculate_time_entry_duration_trigger BEFORE INSERT OR UPDATE ON public.time_entries FOR EACH ROW EXECUTE FUNCTION calculate_time_entry_duration()"
+  }
+]
+Function Definition: [
+  {
+    "routine_definition": "\r\nBEGIN\r\n    IF NEW.end_time IS NOT NULL AND NEW.start_time IS NOT NULL THEN\r\n        NEW.duration_minutes := EXTRACT(EPOCH FROM (NEW.end_time - NEW.start_time)) / 60;\r\n        \r\n        -- Calcular amount si rate_applied est├í definido\r\n        IF NEW.rate_applied IS NOT NULL AND NEW.duration_minutes > 0 THEN\r\n            NEW.amount := (NEW.duration_minutes / 60.0) * NEW.rate_applied;\r\n        END IF;\r\n    END IF;\r\n    RETURN NEW;\r\nEND;\r\n"
+  }
+]
+prisma:error 
+Invalid `prisma.$executeRawUnsafe()` invocation:
+
+
+Raw query failed. Code: `42703`. Message: `record "new" has no field "updated_at"`

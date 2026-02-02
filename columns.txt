@@ -1,0 +1,15 @@
+﻿[dotenv@17.2.3] injecting env (0) from .env -- tip: ­ƒæÑ sync secrets across teammates & machines: https://dotenvx.com/ops
+ACTUAL COLUMNS: [
+  'amount',            'billable',
+  'created_at',        'description',
+  'duration_minutes',  'end_time',
+  'id',                'invoice_id',
+  'is_billed',         'rate_applied',
+  'start_time',        'task_id',
+  'usd_exchange_rate', 'user_id'
+]
+prisma:error 
+Invalid `prisma.$executeRawUnsafe()` invocation:
+
+
+Raw query failed. Code: `42703`. Message: `column "updated_at" of relation "time_entries" does not exist`

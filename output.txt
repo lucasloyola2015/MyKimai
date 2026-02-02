@@ -1,0 +1,11 @@
+﻿[dotenv@17.2.3] injecting env (0) from .env -- tip: ­ƒöÉ prevent building .env in docker: https://dotenvx.com/prebuild
+[34m­ƒÜÇ Iniciando normalizaci├│n de cotizaciones hist├│ricas...[0m
+prisma:error 
+Invalid `prisma.time_entries.findMany()` invocation in
+C:\Users\loyol\Documents\MyKimai\scripts\fix-historical-rates.ts:24:51
+
+  21 });
+  22 
+  23 // 2. Obtener todas las TimeEntry
+ÔåÆ 24 const entries = await prisma.time_entries.findMany(
+Error opening a TLS connection: self-signed certificate in certificate chain
