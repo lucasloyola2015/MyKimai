@@ -1,21 +1,14 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { createClientComponentClient } from "@/lib/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Download } from "lucide-react";
-import type { Database } from "@/lib/types/database";
+import { Download, FileText, AlertCircle } from "lucide-react";
 import { format } from "date-fns";
 import { InvoicePDF } from "@/components/invoices/invoice-pdf";
 import { PDFDownloadLink } from "@react-pdf/renderer";
-
-type Invoice = Database["public"]["Tables"]["invoices"]["Row"];
-type Client = Database["public"]["Tables"]["clients"]["Row"];
-
-interface InvoiceWithClient extends Invoice {
-  clients: Client;
-}
+import { getInvoices } from "@/lib/actions/invoices";
+import { Skeleton } from "@/components/ui/skeleton";
 
 const INVOICE_STATUSES = [
   { value: "draft", label: "Borrador", color: "bg-gray-100 text-gray-800" },
@@ -25,9 +18,9 @@ const INVOICE_STATUSES = [
 ];
 
 export default function ClientInvoicesPage() {
-  const [invoices, setInvoices] = useState<InvoiceWithClient[]>([]);
+  const [invoices, setInvoices] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const supabase = createClientComponentClient();
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     loadInvoices();
@@ -35,42 +28,59 @@ export default function ClientInvoicesPage() {
 
   const loadInvoices = async () => {
     try {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-
-      if (!user) return;
-
-      // Get client user relationship
-      const { data: clientUser } = await supabase
-        .from("client_users")
-        .select("client_id")
-        .eq("user_id", user.id)
-        .single();
-
-      if (!clientUser) {
-        setLoading(false);
-        return;
-      }
-
-      // Get invoices for this client
-      const { data: invoicesData, error: invoicesError } = await supabase
-        .from("invoices")
-        .select("*, clients(*)")
-        .eq("client_id", clientUser.client_id)
-        .order("created_at", { ascending: false });
-
-      if (invoicesError) throw invoicesError;
-      setInvoices((invoicesData as any) || []);
-    } catch (error) {
-      console.error("Error loading invoices:", error);
+      setLoading(true);
+      const data = await getInvoices();
+      setInvoices(data || []);
+    } catch (err) {
+      console.error("Error loading invoices:", err);
+      setError("No se pudieron cargar las facturas. Por favor, intenta de nuevo más tarde.");
     } finally {
       setLoading(false);
     }
   };
 
   if (loading) {
-    return <div>Cargando...</div>;
+    return (
+      <div className="space-y-6">
+        <div>
+          <Skeleton className="h-10 w-48 mb-2" />
+          <Skeleton className="h-5 w-64" />
+        </div>
+        <div className="grid gap-4">
+          {[1, 2, 3].map((i) => (
+            <Card key={i}>
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <div className="space-y-2">
+                    <Skeleton className="h-6 w-32" />
+                    <Skeleton className="h-4 w-24" />
+                  </div>
+                  <div className="flex items-center space-x-4">
+                    <Skeleton className="h-8 w-24" />
+                    <Skeleton className="h-10 w-32" />
+                  </div>
+                </div>
+              </CardHeader>
+            </Card>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="flex flex-col items-center justify-center py-20 text-center">
+        <AlertCircle className="h-12 w-12 text-destructive mb-4" />
+        <h2 className="text-2xl font-bold">Error de vinculación</h2>
+        <p className="text-muted-foreground mt-2 max-w-md">
+          {error}
+        </p>
+        <Button onClick={loadInvoices} variant="outline" className="mt-6">
+          Reintentar
+        </Button>
+      </div>
+    );
   }
 
   return (
@@ -88,25 +98,26 @@ export default function ClientInvoicesPage() {
             (s) => s.value === invoice.status
           );
           return (
-            <Card key={invoice.id}>
+            <Card key={invoice.id} className="hover:shadow-md transition-shadow">
               <CardHeader>
-                <div className="flex items-center justify-between">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                   <div>
                     <CardTitle className="flex items-center space-x-2">
+                      <FileText className="h-5 w-5 text-primary/70" />
                       <span>{invoice.invoice_number}</span>
                       <span
-                        className={`rounded-full px-2 py-1 text-xs ${statusInfo?.color}`}
+                        className={`rounded-full px-2 py-0.5 text-[10px] uppercase font-bold ${statusInfo?.color}`}
                       >
                         {statusInfo?.label}
                       </span>
                     </CardTitle>
                     <p className="text-sm text-muted-foreground mt-1">
-                      {format(new Date(invoice.issue_date), "dd/MM/yyyy")}
+                      Emitida: {format(new Date(invoice.issue_date), "dd/MM/yyyy")}
                     </p>
                   </div>
-                  <div className="flex items-center space-x-4">
-                    <span className="text-2xl font-bold">
-                      {invoice.total_amount.toFixed(2)} {invoice.currency}
+                  <div className="flex items-center justify-between sm:justify-end space-x-4">
+                    <span className="text-xl font-bold">
+                      {invoice.currency} {Number(invoice.total_amount).toLocaleString()}
                     </span>
                     {invoice && (
                       <PDFDownloadLink
@@ -114,7 +125,7 @@ export default function ClientInvoicesPage() {
                         fileName={`${invoice.invoice_number}.pdf`}
                         className="inline-block"
                       >
-                        <Button variant="outline">
+                        <Button variant="outline" size="sm">
                           <Download className="mr-2 h-4 w-4" />
                           Descargar
                         </Button>
@@ -124,9 +135,9 @@ export default function ClientInvoicesPage() {
                 </div>
               </CardHeader>
               {invoice.due_date && (
-                <CardContent>
-                  <p className="text-sm text-muted-foreground">
-                    Vence: {format(new Date(invoice.due_date), "dd/MM/yyyy")}
+                <CardContent className="pt-0">
+                  <p className="text-xs text-muted-foreground">
+                    Vencimiento: {format(new Date(invoice.due_date), "dd/MM/yyyy")}
                   </p>
                 </CardContent>
               )}
@@ -136,8 +147,12 @@ export default function ClientInvoicesPage() {
       </div>
 
       {invoices.length === 0 && (
-        <div className="text-center py-12">
-          <p className="text-muted-foreground">No hay facturas disponibles.</p>
+        <div className="text-center py-20 border-2 border-dashed rounded-xl">
+          <FileText className="h-12 w-12 text-muted-foreground mx-auto mb-4 opacity-20" />
+          <h2 className="text-xl font-semibold">No hay registros para mostrar</h2>
+          <p className="text-muted-foreground mt-1">
+            Aún no se han generado facturas para tu cuenta.
+          </p>
         </div>
       )}
     </div>

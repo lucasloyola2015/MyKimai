@@ -1,7 +1,7 @@
 "use server";
 
 import { prisma } from "@/lib/prisma/client";
-import { getAuthUser } from "@/lib/auth/server";
+import { getAuthUser, getClientContext } from "@/lib/auth/server";
 import { revalidatePath } from "next/cache";
 import type { invoices, invoice_items, InvoiceStatus, billing_type_invoice } from "@prisma/client";
 import { getUsdExchangeRate } from "./exchange";
@@ -15,13 +15,19 @@ export type ActionResponse<T> =
  */
 export async function getInvoices() {
     const user = await getAuthUser();
+    const clientContext = await getClientContext();
+
+    const where: any = {};
+    if (clientContext) {
+        where.client_id = clientContext.clientId;
+    } else {
+        where.client = {
+            user_id: user.id,
+        };
+    }
 
     const invoices = await prisma.invoices.findMany({
-        where: {
-            client: {
-                user_id: user.id,
-            },
-        },
+        where,
         include: {
             client: true,
         },
@@ -38,14 +44,19 @@ export async function getInvoices() {
  */
 export async function getInvoiceWithItems(id: string) {
     const user = await getAuthUser();
+    const clientContext = await getClientContext();
+
+    const where: any = { id };
+    if (clientContext) {
+        where.client_id = clientContext.clientId;
+    } else {
+        where.client = {
+            user_id: user.id,
+        };
+    }
 
     const invoice = await prisma.invoices.findFirst({
-        where: {
-            id,
-            client: {
-                user_id: user.id,
-            },
-        },
+        where,
         include: {
             client: true,
             invoice_items: {

@@ -33,6 +33,7 @@ import {
   deleteTimeEntryBreak,
   previewConsolidation,
   executeConsolidation,
+  recalculateTimeEntryRate,
   type ConsolidationPreview
 } from "@/lib/actions/time-entries";
 import { format, differenceInMinutes } from "date-fns";
@@ -59,6 +60,7 @@ export default function Page() {
     end_date: "",
     end_time: "",
   });
+  const [recalculatingIds, setRecalculatingIds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     loadData();
@@ -150,6 +152,32 @@ export default function Page() {
         title: "Error",
         description: error instanceof Error ? error.message : "Error al eliminar la entrada",
         variant: "destructive",
+      });
+    }
+  };
+
+  const handleRecalculateRate = async (id: string) => {
+    setRecalculatingIds(prev => new Set(prev).add(id));
+    try {
+      const result = await recalculateTimeEntryRate(id);
+      if (!result.success) throw new Error(result.error);
+
+      toast({
+        title: "Tarifa Recalculada",
+        description: "El precio de la jornada se ha actualizado con la configuración vigente.",
+      });
+      await loadEntries();
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: error instanceof Error ? error.message : "No se pudo recalcular la tarifa",
+        variant: "destructive",
+      });
+    } finally {
+      setRecalculatingIds(prev => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
       });
     }
   };
@@ -459,90 +487,102 @@ export default function Page() {
                   <div
                     key={entry.id}
                     className={cn(
-                      "rounded-lg border p-4 text-sm transition-all",
-                      !entry.end_time ? "border-primary/50 bg-primary/5 shadow-sm" : ""
+                      "group relative rounded-xl border bg-white p-3 transition-all hover:border-primary/30 hover:shadow-sm",
+                      !entry.end_time ? "border-primary/40 bg-primary/5" : "border-slate-200"
                     )}
                   >
-                    <div className="flex items-start justify-between mb-2">
-                      <div className="flex-1">
-                        <p className="font-medium">
-                          {task?.name || "Tarea eliminada"}
-                        </p>
-                        <p className="text-muted-foreground">
-                          {client?.name} - {project?.name}
-                        </p>
-                        {!entry.end_time && (
-                          <div className="flex items-center gap-2 mt-1">
-                            {activeBreak ? (
-                              <span className="inline-flex items-center rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700 border border-amber-200">
-                                <span className="mr-1 h-1 w-1 rounded-full bg-amber-500 animate-pulse" />
-                                PAUSADO
-                              </span>
-                            ) : (
-                              <span className="inline-flex items-center rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700 border border-emerald-200">
-                                <span className="mr-1 h-1 w-1 rounded-full bg-emerald-500 animate-pulse" />
-                                EN CURSO
-                              </span>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-2 ml-4 text-right">
-                        <div className="flex flex-col items-end shrink-0">
-                          <div className="flex items-center gap-1.5 font-mono text-xs md:text-sm bg-muted/30 px-2 py-1 rounded-md border border-border/50">
-                            <span className="text-muted-foreground" title="Jornada Bruta">
-                              {(differenceInMinutes(entry.end_time || new Date(), entry.start_time) / 60).toFixed(2)} h
-                            </span>
-                            <span className="text-muted-foreground/30">-</span>
-                            <span className="text-orange-500 font-medium" title="Pausas">
-                              {((differenceInMinutes(entry.end_time || new Date(), entry.start_time) - (entry.duration_minutes || 0)) / 60).toFixed(2)} h
-                            </span>
-                            <span className="text-muted-foreground/30">=</span>
-                            <span className="text-blue-600 font-bold" title="Total Facturable">
-                              {((entry.duration_minutes || 0) / 60).toFixed(2)} h
-                            </span>
-                          </div>
-                          {entry.amount && (
-                            <div className="text-[10px] font-bold text-muted-foreground/70 mt-1 mr-1 uppercase tracking-widest">
-                              {Number(entry.amount).toFixed(2)} {project?.currency || ""}
-                            </div>
+                    <div className="flex items-center justify-between gap-4">
+                      {/* LADO IZQUIERDO: Task & Client */}
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-0.5">
+                          <h3 className="font-bold text-slate-900 truncate uppercase tracking-tight text-sm">
+                            {task?.name || "Tarea eliminada"}
+                          </h3>
+                          {!entry.end_time && (
+                            <span className="flex h-2 w-2 rounded-full bg-emerald-500 animate-pulse shrink-0" title="En curso" />
                           )}
                         </div>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => handleEdit(entry)}
-                          className="h-8 w-8"
-                        >
-                          <Pencil className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => handleDelete(entry.id)}
-                          className="h-8 w-8 text-destructive hover:text-destructive"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
+                        <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest truncate">
+                          {client?.name} <span className="mx-1 text-slate-300 font-normal">|</span> {project?.name}
+                        </p>
+                      </div>
+
+                      {/* CENTRO: Desglose Compacto (Cálculo) */}
+                      <div className="hidden sm:flex items-center bg-slate-50 border border-slate-100 rounded-lg px-2 py-1 gap-3">
+                        <div className="text-center">
+                          <p className="text-[6px] font-black text-slate-400 uppercase tracking-tighter leading-none mb-0.5">Bruto</p>
+                          <p className="text-[10px] font-mono font-medium text-slate-500 leading-none">
+                            {(differenceInMinutes(entry.end_time || new Date(), entry.start_time) / 60).toFixed(2)}h
+                          </p>
+                        </div>
+                        <div className="text-slate-300 text-[10px] font-light">-</div>
+                        <div className="text-center">
+                          <p className="text-[6px] font-black text-orange-400 uppercase tracking-tighter leading-none mb-0.5">Pausas</p>
+                          <p className="text-[10px] font-mono font-bold text-orange-600 leading-none">
+                            {((differenceInMinutes(entry.end_time || new Date(), entry.start_time) - (entry.duration_minutes || 0)) / 60).toFixed(2)}h
+                          </p>
+                        </div>
+                        <div className="text-slate-300 text-[10px] font-light">=</div>
+                        <div className="text-center min-w-[35px]">
+                          <p className="text-[6px] font-black text-blue-400 uppercase tracking-tighter leading-none mb-0.5">Neto</p>
+                          <p className="text-[11px] font-mono font-black text-blue-700 leading-none">
+                            {((entry.duration_minutes || 0) / 60).toFixed(2)}h
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* LADO DERECHO: Inversión y Acciones */}
+                      <div className="flex items-center gap-2 shrink-0">
+                        <div className="mr-2 text-right hidden md:block">
+                          <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest leading-none mb-0.5">Inversión</p>
+                          <p className="text-sm font-black text-slate-800 leading-none">
+                            {recalculatingIds.has(entry.id) ? (
+                              <span className="animate-pulse text-blue-600">??.??</span>
+                            ) : (
+                              Number(entry.amount || 0).toFixed(2)
+                            )} <span className="text-[9px] font-medium opacity-40">{project?.currency}</span>
+                          </p>
+                        </div>
+                        <div className="flex items-center bg-slate-50 border border-slate-200 rounded-md overflow-hidden">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => handleEdit(entry)}
+                            className="h-8 w-8 rounded-none hover:bg-white text-slate-400 hover:text-primary transition-colors border-r"
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => handleRecalculateRate(entry.id)}
+                            className="h-8 w-8 rounded-none hover:bg-white text-slate-400 hover:text-blue-600 transition-colors border-r"
+                            disabled={entry.is_billed}
+                          >
+                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" className="bi bi-currency-exchange" viewBox="0 0 16 16">
+                              <path d="M0 5a5 5 0 0 0 4.027 4.905 6.5 6.5 0 0 1 .544-2.073C3.695 7.536 3.132 6.864 3 5.91h-.5v-.426h.466V5.05q-.001-.07.004-.135H2.5v-.427h.511C3.236 3.24 4.213 2.5 5.681 2.5c.316 0 .59.031.819.085v.733a3.5 3.5 0 0 0-.815-.082c-.919 0-1.538.466-1.734 1.252h1.917v.427h-1.98q-.004.07-.003.147v.422h1.983v.427H3.93c.118.602.468 1.03 1.005 1.229a6.5 6.5 0 0 1 4.97-3.113A5.002 5.002 0 0 0 0 5m16 5.5a5.5 5.5 0 1 1-11 0 5.5 5.5 0 0 1 11 0m-7.75 1.322c.069.835.746 1.485 1.964 1.562V14h.54v-.62c1.259-.086 1.996-.74 1.996-1.69 0-.865-.563-1.31-1.57-1.54l-.426-.1V8.374c.54.06.884.347.966.745h.948c-.07-.804-.779-1.433-1.914-1.502V7h-.54v.629c-1.076.103-1.808.732-1.808 1.622 0 .787.544 1.288 1.45 1.493l.358.085v1.78c-.554-.08-.92-.376-1.003-.787zm1.96-1.895c-.532-.12-.82-.364-.82-.732 0-.41.311-.719.824-.809v1.54h-.005zm.622 1.044c.645.145.943.38.943.796 0 .474-.37.8-1.02.86v-1.674z" />
+                            </svg>
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => handleDelete(entry.id)}
+                            className="h-8 w-8 rounded-none hover:bg-white text-slate-400 hover:text-destructive transition-colors"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        </div>
                       </div>
                     </div>
-                    {entry.description && (
-                      <p className="text-muted-foreground">{entry.description}</p>
-                    )}
-                    <p className="text-xs text-muted-foreground mt-2">
-                      {format(new Date(entry.start_time), "dd/MM/yyyy HH:mm")}
-                      {entry.end_time ? (
-                        ` - ${format(new Date(entry.end_time), "HH:mm")}`
-                      ) : (
-                        <span className="ml-1 text-primary italic">(En progreso...)</span>
-                      )}
-                    </p>
 
-                    <DayTimeline
-                      startTime={new Date(entry.start_time)}
-                      endTime={entry.end_time ? new Date(entry.end_time) : null}
-                      breaks={(entry as any).breaks}
-                    />
+                    {/* LÍNEA DE TIEMPO (Solo se muestra el componente) */}
+                    <div className="mt-2">
+                      <DayTimeline
+                        startTime={new Date(entry.start_time)}
+                        endTime={entry.end_time ? new Date(entry.end_time) : null}
+                        breaks={(entry as any).breaks}
+                      />
+                    </div>
                   </div>
                 );
               })}

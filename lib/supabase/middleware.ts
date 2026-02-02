@@ -5,18 +5,6 @@ import {
   getAuthCookieOptions,
 } from "@/lib/auth/remember-session";
 
-/**
- * Helper para agregar timeout a una promesa
- */
-function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
-  return Promise.race([
-    promise,
-    new Promise<T>((_, reject) =>
-      setTimeout(() => reject(new Error("Middleware timeout")), timeoutMs)
-    ),
-  ]);
-}
-
 export async function updateSession(request: NextRequest) {
   let supabaseResponse = NextResponse.next({
     request,
@@ -54,14 +42,9 @@ export async function updateSession(request: NextRequest) {
     }
   );
 
-  try {
-    // Timeout de 2 segundos para evitar bloqueos en el middleware
-    await withTimeout(supabase.auth.getUser(), 2000);
-  } catch (error) {
-    // Si hay timeout o error, continuar con la respuesta sin bloquear
-    console.error("Middleware auth check timeout or error:", error);
-    // Continuar con la respuesta para que la página se pueda renderizar
-  }
+  // Verificamos el usuario para refrescar la sesión si es necesario.
+  // No usamos timeout manual aquí para evitar AbortError: signal is aborted
+  await supabase.auth.getUser();
 
   return supabaseResponse;
 }

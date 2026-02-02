@@ -12,6 +12,7 @@ export interface NavStats {
     pendingInvoices: number;
     activeTimeEntry: boolean;
     todayHours: number;
+    role?: "ADMIN" | "CLIENT";
 }
 
 export interface SidebarState {

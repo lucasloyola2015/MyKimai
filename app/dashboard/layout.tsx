@@ -6,6 +6,8 @@ import { PageErrorBoundary } from "@/components/layout/PageErrorBoundary";
 import { ChildrenDebugWrapper } from "@/components/layout/ChildrenDebugWrapper";
 import { ActiveTimeEntryProvider } from "@/contexts/active-time-entry-context";
 import { getNavStats } from "@/lib/actions/stats";
+import { getClientContext } from "@/lib/auth/server";
+import { redirect } from "next/navigation";
 import type { NavStats } from "@/shared/types/sidebar.types";
 
 // export const dynamic = "force-dynamic"; // Comentado temporalmente para debug
@@ -49,6 +51,11 @@ export default async function DashboardLayout({
 }: {
   children: React.ReactNode;
 }) {
+  const clientContext = await getClientContext();
+  if (clientContext) {
+    redirect("/client-portal");
+  }
+
   return (
     <ProtectedRoute>
       <ActiveTimeEntryProvider>

@@ -5,6 +5,8 @@ import { getAuthUser } from "@/lib/auth/server";
 import { revalidatePath } from "next/cache";
 import type { clients } from "@prisma/client";
 
+import { createAdminClient } from "@/lib/supabase/admin";
+
 export type ActionResponse<T> =
     | { success: true; data: T }
     | { success: false; error: string };
@@ -162,4 +164,106 @@ export async function deleteClient(id: string) {
     return {
         success: true,
     };
+}
+
+/**
+ * Activa o desactiva el acceso web para un cliente
+ */
+export async function toggleClientWebAccess(
+    clientId: string,
+    enabled: boolean,
+    password?: string
+): Promise<ActionResponse<clients>> {
+    const user = await getAuthUser();
+
+    // 1. Verificar que el cliente pertenece al usuario admin
+    const client = await prisma.clients.findFirst({
+        where: {
+            id: clientId,
+            user_id: user.id,
+        },
+    });
+
+    if (!client) {
+        return { success: false, error: "Cliente no encontrado." };
+    }
+
+    try {
+        if (enabled) {
+            if (!client.email) {
+                return { success: false, error: "El cliente debe tener un email para habilitar el acceso web." };
+            }
+            if (!password) {
+                return { success: false, error: "Se requiere una contraseña para activar el acceso." };
+            }
+
+            const admin = createAdminClient();
+            let portalUserId = client.portal_user_id;
+
+            // 2. Crear o actualizar usuario en Supabase Auth
+            if (!portalUserId) {
+                const { data: authUser, error: authError } = await admin.auth.admin.createUser({
+                    email: client.email,
+                    password: password,
+                    email_confirm: true,
+                    user_metadata: {
+                        role: "CLIENT",
+                        client_id: client.id,
+                        client_name: client.name,
+                    },
+                    app_metadata: {
+                        role: "CLIENT",
+                    }
+                });
+
+                if (authError) {
+                    return { success: false, error: `Error en Supabase Auth: ${authError.message}` };
+                }
+                portalUserId = authUser.user.id;
+            } else {
+                // Actualizar contraseña si se proporciona
+                const { error: updateError } = await admin.auth.admin.updateUserById(portalUserId, {
+                    password: password,
+                    user_metadata: {
+                        role: "CLIENT",
+                        client_id: client.id,
+                    },
+                    app_metadata: {
+                        role: "CLIENT",
+                    }
+                });
+                if (updateError) {
+                    return { success: false, error: `Error actualizando auth: ${updateError.message}` };
+                }
+            }
+
+            // 3. Actualizar el registro del cliente
+            const updatedClient = await prisma.clients.update({
+                where: { id: clientId },
+                data: {
+                    web_access_enabled: true,
+                    portal_user_id: portalUserId,
+                },
+            });
+
+            revalidatePath("/dashboard/clients");
+            return { success: true, data: updatedClient };
+        } else {
+            // Desactivar acceso
+            const updatedClient = await prisma.clients.update({
+                where: { id: clientId },
+                data: {
+                    web_access_enabled: false,
+                },
+            });
+
+            revalidatePath("/dashboard/clients");
+            return { success: true, data: updatedClient };
+        }
+    } catch (error) {
+        return {
+            success: false,
+            error: error instanceof Error ? error.message : "Error al procesar el acceso web",
+        };
+    }
 }

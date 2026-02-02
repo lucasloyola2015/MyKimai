@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { createServerComponentClient } from "@/lib/supabase/server";
+import { getClientContext } from "@/lib/auth/server";
 
 export default async function Home() {
   try {
@@ -9,6 +10,10 @@ export default async function Home() {
     } = await supabase.auth.getUser();
 
     if (user) {
+      const clientContext = await getClientContext();
+      if (clientContext) {
+        redirect("/client-portal");
+      }
       redirect("/dashboard");
     } else {
       redirect("/login");

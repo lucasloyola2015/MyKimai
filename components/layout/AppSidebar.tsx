@@ -108,22 +108,43 @@ export function AppSidebar({ stats }: AppSidebarProps) {
 
                 {/* Navigation */}
                 <nav className="flex-1 overflow-y-auto p-3 space-y-1 sidebar-scroll">
-                    {navItems.map((item) => {
-                        const isActive = pathname === item.href;
-                        const badgeValue = item.badge ? stats[item.badge] : undefined;
+                    {navItems
+                        .filter(item => {
+                            if (stats.role === "CLIENT") {
+                                // Ocultar Clientes y Time Tracker para clientes
+                                if (item.label === "Clientes" || item.label === "Time Tracker") return false;
+                            }
+                            return true;
+                        })
+                        .map((item) => {
+                            const isActive = pathname === item.href;
+                            const badgeValue = item.badge ? stats[item.badge] : undefined;
 
-                        return (
+                            return (
+                                <SidebarNavItem
+                                    key={item.href}
+                                    href={item.href}
+                                    label={item.label}
+                                    icon={item.icon}
+                                    badge={badgeValue}
+                                    isCollapsed={isCollapsed}
+                                    isActive={isActive}
+                                />
+                            );
+                        })}
+
+                    {/* Link directo al Portal si es cliente */}
+                    {stats.role === "CLIENT" && (
+                        <div className="pt-4 mt-4 border-t">
                             <SidebarNavItem
-                                key={item.href}
-                                href={item.href}
-                                label={item.label}
-                                icon={item.icon}
-                                badge={badgeValue}
+                                href="/client-portal"
+                                label="Ir al Portal"
+                                icon={LayoutDashboard}
                                 isCollapsed={isCollapsed}
-                                isActive={isActive}
+                                isActive={pathname === "/client-portal"}
                             />
-                        );
-                    })}
+                        </div>
+                    )}
                 </nav>
 
                 {/* Footer con toggle */}

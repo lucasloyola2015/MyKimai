@@ -41,3 +41,27 @@ export function calculateNetDurationMinutes(
   const netMs = Math.max(0, grossMs - breaksMs);
   return Math.round(netMs / 60000);
 }
+
+/**
+ * Unifica el cálculo de duración y monto para un entry.
+ * Usado tanto en el admin como en el portal para garantizar consistencia.
+ */
+export function computeEntryTotals(entry: {
+  start_time: Date;
+  end_time: Date | null;
+  breaks?: { start_time: Date; end_time: Date | null }[];
+  rate_applied: any;
+}) {
+  const netMinutes = calculateNetDurationMinutes(
+    entry.start_time,
+    entry.end_time,
+    entry.breaks || []
+  );
+  const rate = Number(entry.rate_applied || 0);
+  const amount = Number(((netMinutes / 60) * rate).toFixed(2));
+
+  return {
+    duration_minutes: netMinutes,
+    amount: amount
+  };
+}

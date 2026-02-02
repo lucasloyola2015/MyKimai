@@ -1,5 +1,21 @@
 # CHANGELOG - MyKimai
 
+## [2026-02-02] - Implementación de Acceso Externo (Portal de Clientes)
+### Módulo: Gestión de Identidades y Portal
+*   **Seguridad y Auth**: Integración con **Supabase Auth** para permitir el acceso externo a clientes. Los administradores pueden habilitar el acceso y definir una contraseña manual.
+*   **Esquema de Base de Datos**: Extensión de la tabla `clients` con `web_access_enabled` (Boolean) y `portal_user_id` (vínculo directo con `auth.users`).
+*   **Flujo de Activación**: Acción de servidor `toggleClientWebAccess` que automatiza la creación del usuario en Supabase Auth con los metadatos adecuados (`role: CLIENT`).
+*   **UI Admin**: Inclusión de Card de 'Acceso Web' en la gestión de clientes con toggle y gestión de password.
+*   **Portal de Cliente**: Dashboard simplificado y profesional para clientes (`/client-portal`) que permite visualizar:
+    *   Resumen de horas trabajadas (mes actual vs anterior).
+    *   Estado de facturación y facturas pendientes.
+    *   Tipo de cambio USD oficial aplicado en tiempo real.
+*   **Aislamiento de Datos (RLS)**: Definición de políticas de Row Level Security para asegurar que un cliente solo pueda leer sus propios proyectos, tareas, facturas y registros de tiempo.
+*   **Corrección de Hidratación de Datos**: Resolución del bug que mostraba vistas vacías para clientes mediante la vinculación dinámica de `auth.uid()` con el esquema relacional a través de `getClientContext()`.
+*   **Redirección Automática**: Clientes con rol activo son redirigidos automáticamente al `/client-portal` desde la raíz y desde cualquier ruta del `/dashboard`.
+*   **Seguridad de UI**: Filtrado dinámico de la barra lateral para ocultar los módulos de "Clientes" y "Time Tracker" cuando un cliente accede al dashboard.
+*   **Estado de UI Profesional**: Implementación de Skeletons y manejo avanzado de estados vacíos y errores de vinculación en el portal.
+
 ## [2026-02-02] - Corrección de Lógica de Cálculo
 ### Módulo: Gestión de Tiempo
 *   **Regla de Ingeniería**: Implementación estricta de `Horas Facturables = (Fin - Inicio) - Pausas`.

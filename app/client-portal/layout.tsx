@@ -1,17 +1,22 @@
 import { ClientPortalNav } from "@/components/client-portal/nav";
-import { ClientProtectedRoute } from "@/components/client-portal/protected-route";
+import { getClientContext } from "@/lib/auth/server";
+import { redirect } from "next/navigation";
 
-export default function ClientPortalLayout({
+export default async function ClientPortalLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
+  const context = await getClientContext();
+
+  if (!context) {
+    redirect("/login");
+  }
+
   return (
-    <ClientProtectedRoute>
-      <div className="min-h-screen bg-background">
-        <ClientPortalNav />
-        <main className="container mx-auto py-6">{children}</main>
-      </div>
-    </ClientProtectedRoute>
+    <div className="min-h-screen bg-background">
+      <ClientPortalNav />
+      <main className="container mx-auto py-6">{children}</main>
+    </div>
   );
 }

@@ -1,53 +1,51 @@
 "use server";
 
 import { prisma } from "@/lib/prisma/client";
-import { getAuthUser } from "@/lib/auth/server";
+import { getAuthUser, getClientContext } from "@/lib/auth/server";
 import { startOfDay, endOfDay } from "date-fns";
-
-/**
- * Helper para agregar timeout a una promesa
- */
-function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
-    return Promise.race([
-        promise,
-        new Promise<T>((_, reject) =>
-            setTimeout(() => reject(new Error("Operation timed out")), timeoutMs)
-        ),
-    ]);
-}
 
 /**
  * Obtiene estadísticas para el sidebar/navegación
  * Migrado de Supabase a Prisma
- * Con timeout de 5 segundos para evitar bloqueos
  */
 export async function getNavStats() {
     try {
-        // Timeout de 5 segundos para evitar que se cuelgue indefinidamente
-        const statsPromise = (async () => {
-            const user = await getAuthUser();
+        const user = await getAuthUser();
+        const clientContext = await getClientContext();
+        const role: "ADMIN" | "CLIENT" = clientContext ? "CLIENT" : "ADMIN";
 
-            // Queries en paralelo para mejor performance
-            // Usando $queryRaw temporalmente para evitar problemas con ENUMs hasta que las columnas se alteren
-            const [activeProjectsCountResult, pendingInvoicesCountResult, activeEntry, todayEntries] =
-                await Promise.all([
-                    // Proyectos activos del usuario - usando queryRaw para evitar problema con ENUMs
-                    prisma.$queryRaw<Array<{ count: bigint }>>`
-                        SELECT COUNT(*)::int as count
-                        FROM projects p
-                        INNER JOIN clients c ON p.client_id = c.id
-                        WHERE c.user_id = ${user.id}::uuid
-                        AND p.status::text = 'active'
-                    `,
+        // Si es cliente, las stats son diferentes o nulas para el dashboard principal
+        if (clientContext) {
+            return {
+                activeProjects: 0,
+                pendingInvoices: 0,
+                activeTimeEntry: false,
+                todayHours: 0,
+                role: "CLIENT" as const,
+            };
+        }
+
+        // Queries en paralelo para mejor performance
+        // Usando $queryRaw temporalmente para evitar problemas con ENUMs hasta que las columnas se alteren
+        const [activeProjectsCountResult, pendingInvoicesCountResult, activeEntry, todayEntries] =
+            await Promise.all([
+                // Proyectos activos del usuario - usando queryRaw para evitar problema con ENUMs
+                prisma.$queryRaw<Array<{ count: bigint }>>`
+                    SELECT COUNT(*)::int as count
+                    FROM projects p
+                    INNER JOIN clients c ON p.client_id = c.id
+                    WHERE c.user_id = ${user.id}::uuid
+                    AND p.status::text = 'active'
+                `,
 
                 // Facturas pendientes (draft + sent) - usando queryRaw para evitar problema con ENUMs
                 prisma.$queryRaw<Array<{ count: bigint }>>`
-                    SELECT COUNT(*)::int as count
-                    FROM invoices i
-                    INNER JOIN clients c ON i.client_id = c.id
-                    WHERE c.user_id = ${user.id}::uuid
-                    AND i.status::text IN ('draft', 'sent')
-                `,
+                SELECT COUNT(*)::int as count
+                FROM invoices i
+                INNER JOIN clients c ON i.client_id = c.id
+                WHERE c.user_id = ${user.id}::uuid
+                AND i.status::text IN ('draft', 'sent')
+            `,
 
                 // Timer activo (time entry sin end_time)
                 prisma.time_entries.findFirst({
@@ -85,24 +83,22 @@ export async function getNavStats() {
             0
         );
 
-            return {
-                activeProjects: activeProjectsCount,
-                pendingInvoices: pendingInvoicesCount,
-                activeTimeEntry: !!activeEntry,
-                todayHours: todayMinutes,
-            };
-        })();
-
-        // Aplicar timeout de 5 segundos
-        return await withTimeout(statsPromise, 5000);
+        return {
+            activeProjects: activeProjectsCount,
+            pendingInvoices: pendingInvoicesCount,
+            activeTimeEntry: !!activeEntry,
+            todayHours: todayMinutes,
+            role: "ADMIN" as const,
+        };
     } catch (error) {
         console.error("Error in getNavStats:", error);
-        // Retornar valores por defecto en caso de error o timeout
+        // Retornar valores por defecto en caso de error
         return {
             activeProjects: 0,
             pendingInvoices: 0,
             activeTimeEntry: false,
             todayHours: 0,
+            role: "ADMIN" as const,
         };
     }
 }

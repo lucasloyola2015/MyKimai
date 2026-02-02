@@ -4,9 +4,10 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { createClientComponentClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
-import { FolderKanban, FileText, LogOut } from "lucide-react";
+import { FolderKanban, FileText, LogOut, LayoutDashboard } from "lucide-react";
 
 const navItems = [
+  { href: "/client-portal", label: "Resumen", icon: LayoutDashboard },
   { href: "/client-portal/projects", label: "Proyectos", icon: FolderKanban },
   { href: "/client-portal/invoices", label: "Facturas", icon: FileText },
 ];
@@ -26,7 +27,7 @@ export function ClientPortalNav() {
     <nav className="border-b bg-card">
       <div className="container mx-auto flex h-16 items-center justify-between px-4">
         <div className="flex items-center space-x-8">
-          <Link href="/client-portal/projects" className="text-xl font-bold">
+          <Link href="/client-portal" className="text-xl font-bold">
             Portal de Cliente
           </Link>
           <div className="flex space-x-1">

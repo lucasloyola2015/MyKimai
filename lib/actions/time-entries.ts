@@ -1,11 +1,11 @@
 "use server";
 
 import { prisma } from "@/lib/prisma/client";
-import { getAuthUser } from "@/lib/auth/server";
+import { getAuthUser, getClientContext } from "@/lib/auth/server";
 import { revalidatePath } from "next/cache";
 import { differenceInMinutes, format } from "date-fns";
 import type { time_entries } from "@prisma/client";
-import { calculateNetDurationMinutes } from "@/lib/utils";
+import { calculateNetDurationMinutes, computeEntryTotals } from "@/lib/utils";
 import { getUsdExchangeRate } from "./exchange";
 
 export type ActionResponse<T> =
@@ -69,14 +69,10 @@ export async function getRecentTimeEntries(limit: number = 10) {
     });
 
     return entries.map(entry => {
-        const duration = entry.end_time
-            ? calculateNetDurationMinutes(entry.start_time, entry.end_time, (entry as any).breaks || [])
-            : 0;
-        const rate = Number(entry.rate_applied || 0);
+        const totals = computeEntryTotals(entry as any);
         return {
             ...entry,
-            duration_minutes: duration,
-            amount: Number(((duration / 60) * rate).toFixed(2))
+            ...totals
         } as any;
     });
 }
@@ -131,12 +127,16 @@ async function calculateRate(taskId: string): Promise<number> {
 
     if (!task) return 0;
 
-    // Cascada de tarifas
-    if (task.rate) return Number(task.rate);
-    if (task.project.rate) return Number(task.project.rate);
-    if (task.project.client.default_rate) return Number(task.project.client.default_rate);
+    // Cascada de tarifas: Tarea -> Proyecto -> Cliente
+    // Si una tarifa es null o 0, pasamos a la siguiente en la jerarquía.
+    const taskRate = task.rate ? Number(task.rate) : 0;
+    if (taskRate > 0) return taskRate;
 
-    return 0;
+    const projectRate = task.project.rate ? Number(task.project.rate) : 0;
+    if (projectRate > 0) return projectRate;
+
+    const clientRate = task.project.client.default_rate ? Number(task.project.client.default_rate) : 0;
+    return clientRate;
 }
 
 /**
@@ -403,10 +403,19 @@ export async function getTimeEntries(filters?: {
     onlyCompleted?: boolean; // Solo entradas con end_time
 }) {
     const user = await getAuthUser();
+    const clientContext = await getClientContext();
 
-    const where: any = {
-        user_id: user.id,
-    };
+    const where: any = {};
+
+    if (clientContext) {
+        where.task = {
+            project: {
+                client_id: clientContext.clientId,
+            },
+        };
+    } else {
+        where.user_id = user.id;
+    }
 
     if (filters?.onlyCompleted) {
         where.end_time = {
@@ -988,5 +997,77 @@ export async function executeConsolidation() {
 
     revalidatePath("/dashboard/my-hours");
     return results;
+}
+
+/**
+ * Recalcula la tarifa y el monto de un time entry basado en la configuración actual
+ * de la tarea/proyecto/cliente.
+ */
+export async function recalculateTimeEntryRate(entryId: string): Promise<ActionResponse<time_entries>> {
+    const user = await getAuthUser();
+
+    try {
+        // 1. Obtener el entry con sus relaciones
+        const entry = await prisma.time_entries.findUnique({
+            where: { id: entryId },
+            include: {
+                task: true,
+                breaks: true
+            }
+        });
+
+        if (!entry) return { success: false, error: "Entrada no encontrada" };
+        if (entry.user_id !== user.id) return { success: false, error: "No autorizado" };
+        if (entry.is_billed) return { success: false, error: "No se puede recalcular una entrada ya facturada" };
+
+        // 2. Calcular la nueva tarifa usando la lógica de cascada existente
+        const newRate = await calculateRate(entry.task_id);
+
+        // 3. Recalcular la duración neta y el monto
+        // Si el entry está en curso (end_time null), usamos 'now' para el cálculo visual,
+        // pero solo actualizamos duration_minutes si el entry ya terminó.
+        let amount: any = entry.amount;
+        let durationMinutes = entry.duration_minutes;
+
+        const effectiveEndTime = entry.end_time || new Date();
+        const netDuration = calculateNetDurationMinutes(entry.start_time, effectiveEndTime, entry.breaks);
+
+        // Calculamos el monto basado en la duración neta (esté terminada o no)
+        amount = Number(((netDuration / 60) * newRate).toFixed(2));
+
+        // Solo actualizamos la persistencia de duration_minutes si la entrada ya cerró
+        if (entry.end_time) {
+            durationMinutes = netDuration;
+        }
+
+        // 4. Actualizar en DB
+        const updatedEntry = await prisma.time_entries.update({
+            where: { id: entryId },
+            data: {
+                rate_applied: newRate as any,
+                amount: amount as any,
+                duration_minutes: durationMinutes
+            },
+            include: {
+                task: {
+                    include: {
+                        project: {
+                            include: {
+                                client: true,
+                            },
+                        },
+                    },
+                },
+            }
+        });
+
+        revalidatePath("/dashboard/my-hours");
+        revalidatePath("/dashboard/time-tracker");
+
+        return { success: true, data: updatedEntry };
+    } catch (error) {
+        console.error("Error recalculating rate:", error);
+        return { success: false, error: "Error al recalcular la tarifa" };
+    }
 }
 

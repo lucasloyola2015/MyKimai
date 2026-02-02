@@ -1,59 +1,39 @@
 import { createServerComponentClient } from "@/lib/supabase/server";
 import { User } from "@supabase/supabase-js";
+import { prisma } from "@/lib/prisma/client";
+import { cache } from "react";
 
 /**
- * Helper para agregar timeout a una promesa
+ * Helper para obtener el usuario autenticado en Server Actions con cache
+ * Esto evita múltiples llamadas a Supabase Auth en el mismo request
  */
-function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
-    return Promise.race([
-        promise,
-        new Promise<T>((_, reject) =>
-            setTimeout(() => reject(new Error("Authentication timeout")), timeoutMs)
-        ),
-    ]);
-}
+export const getAuthUser = cache(async (): Promise<User> => {
+    const supabase = await createServerComponentClient();
 
-/**
- * Helper para obtener el usuario autenticado en Server Actions
- * @throws Error si no hay usuario autenticado o si hay timeout
- */
-export async function getAuthUser(): Promise<User> {
-    try {
-        const supabase = await createServerComponentClient();
-        
-        // Timeout de 3 segundos para evitar bloqueos
-        const getUserPromise = supabase.auth.getUser();
-        const {
-            data: { user },
-            error,
-        } = await withTimeout(getUserPromise, 3000);
+    // Obtenemos el usuario. No usamos timeout custom aquí para evitar AbortErrors
+    // Supabase ya maneja sus propios tiempos de espera y reintentos.
+    const {
+        data: { user },
+        error,
+    } = await supabase.auth.getUser();
 
-        if (error || !user) {
-            throw new Error("Unauthorized");
-        }
-
-        return user;
-    } catch (error) {
-        // Si es un timeout, lanzar error más descriptivo
-        if (error instanceof Error && error.message === "Authentication timeout") {
-            console.error("Authentication timeout - possible connection issue");
-            throw new Error("Authentication timeout");
-        }
-        throw error;
+    if (error || !user) {
+        throw new Error("Unauthorized");
     }
-}
+
+    return user;
+});
 
 /**
- * Helper para obtener el usuario autenticado (nullable)
- * Útil cuando la autenticación es opcional
+ * Helper para obtener el usuario autenticado (nullable) con cache
  */
-export async function getAuthUserOrNull(): Promise<User | null> {
+export const getAuthUserOrNull = cache(async (): Promise<User | null> => {
     try {
         return await getAuthUser();
     } catch {
         return null;
     }
-}
+});
 
 /**
  * Helper para verificar si el usuario tiene acceso a un cliente
@@ -71,3 +51,37 @@ export async function verifyClientAccess(clientId: string): Promise<boolean> {
 
     return !!data;
 }
+
+/**
+ * Obtiene el contexto del cliente si el usuario autenticado es un cliente
+ * Envuelto en cache() para evitar consultas repetitivas a la DB
+ */
+export const getClientContext = cache(async (): Promise<{ clientId: string; role: string; name: string } | null> => {
+    const user = await getAuthUserOrNull();
+    if (!user) return null;
+
+    // 1. Verificar si el usuario está vinculado directamente como portal_user_id (Prioridad)
+    const client = await prisma.clients.findFirst({
+        where: { portal_user_id: user.id },
+        select: { id: true, name: true }
+    });
+
+    if (client) {
+        console.log(`[AUTH] User ${user.id} matched client ${client.id} (direct portal_user_id)`);
+        return { clientId: client.id, role: "CLIENT", name: client.name };
+    }
+
+    // 2. Verificar si está vinculado a través de client_users (accesos compartidos)
+    const clientUser = await prisma.client_users.findFirst({
+        where: { user_id: user.id },
+        include: { client: { select: { name: true } } }
+    });
+
+    if (clientUser) {
+        console.log(`[AUTH] User ${user.id} matched client ${clientUser.client_id} (client_users link)`);
+        return { clientId: clientUser.client_id, role: "CLIENT", name: clientUser.client.name };
+    }
+
+    console.log(`[AUTH] User ${user.id} is NOT a portal client.`);
+    return null;
+});

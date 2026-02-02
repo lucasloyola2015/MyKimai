@@ -22,15 +22,18 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Plus, Pencil, Trash2 } from "lucide-react";
+import { Plus, Pencil, Trash2, Globe, ShieldCheck } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import {
   getClients,
   createClient,
   updateClient,
   deleteClient,
+  toggleClientWebAccess,
 } from "@/lib/actions/clients";
 import type { clients } from "@prisma/client";
+import { Separator } from "@/components/ui/separator";
+import { Checkbox } from "@/components/ui/checkbox";
 
 const CURRENCIES = [
   { value: "USD", label: "USD - Dólar Estadounidense" },
@@ -58,6 +61,8 @@ export default function ClientsPage() {
     currency: "USD",
     default_rate: "",
     notes: "",
+    web_access_enabled: false,
+    portal_password: "",
   });
 
   useEffect(() => {
@@ -106,6 +111,23 @@ export default function ClientsPage() {
             });
             return;
           }
+
+          // Si el estado de acceso web cambió o se puso password, llamar a la acción específica
+          if (formData.web_access_enabled !== editingClient.web_access_enabled || (formData.web_access_enabled && formData.portal_password)) {
+            const accessResult = await toggleClientWebAccess(
+              editingClient.id,
+              formData.web_access_enabled,
+              formData.portal_password || undefined
+            );
+            if (!accessResult.success) {
+              toast({
+                title: "Advertencia",
+                description: `El cliente se guardó pero hubo un error con el acceso web: ${accessResult.error}`,
+                variant: "destructive",
+              });
+            }
+          }
+
           toast({
             title: "Cliente actualizado",
             description: "El cliente se actualizó correctamente.",
@@ -120,6 +142,16 @@ export default function ClientsPage() {
             });
             return;
           }
+
+          // Si es un cliente nuevo y se habilitó el acceso web
+          if (formData.web_access_enabled && formData.portal_password) {
+            await toggleClientWebAccess(
+              result.data.id,
+              true,
+              formData.portal_password
+            );
+          }
+
           toast({
             title: "Cliente creado",
             description: "El cliente se creó correctamente.",
@@ -149,6 +181,8 @@ export default function ClientsPage() {
       currency: client.currency,
       default_rate: client.default_rate?.toString() || "",
       notes: client.notes || "",
+      web_access_enabled: client.web_access_enabled,
+      portal_password: "",
     });
     setIsDialogOpen(true);
   };
@@ -191,6 +225,8 @@ export default function ClientsPage() {
       currency: "USD",
       default_rate: "",
       notes: "",
+      web_access_enabled: false,
+      portal_password: "",
     });
     setEditingClient(null);
   };
@@ -227,7 +263,7 @@ export default function ClientsPage() {
               Nuevo Cliente
             </Button>
           </DialogTrigger>
-          <DialogContent className="max-w-2xl">
+          <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>
                 {editingClient ? "Editar Cliente" : "Nuevo Cliente"}
@@ -337,6 +373,62 @@ export default function ClientsPage() {
                     disabled={isPending}
                   />
                 </div>
+
+                <div className="pt-4">
+                  <Separator className="mb-4" />
+                  <Card className="border-primary/20 bg-primary/5">
+                    <CardHeader className="py-3 px-4">
+                      <CardTitle className="text-sm font-medium flex items-center gap-2 text-primary">
+                        <Globe className="h-4 w-4" />
+                        Acceso Web al Sistema
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="py-0 px-4 pb-4 space-y-4">
+                      <div className="flex items-center space-x-2">
+                        <Checkbox
+                          id="web_access_enabled"
+                          checked={formData.web_access_enabled}
+                          onCheckedChange={(checked) =>
+                            setFormData({ ...formData, web_access_enabled: checked === true })
+                          }
+                          disabled={isPending}
+                        />
+                        <Label
+                          htmlFor="web_access_enabled"
+                          className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
+                        >
+                          Habilitar acceso web al Sistema
+                        </Label>
+                      </div>
+
+                      {formData.web_access_enabled && (
+                        <div className="grid gap-2 animate-in fade-in slide-in-from-top-1 duration-200">
+                          <Label htmlFor="portal_password">
+                            {editingClient?.portal_user_id ? "Nueva Contraseña (dejar vacío para no cambiar)" : "Contraseña Manual *"}
+                          </Label>
+                          <div className="relative">
+                            <ShieldCheck className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                            <Input
+                              id="portal_password"
+                              type="password"
+                              className="pl-9"
+                              value={formData.portal_password}
+                              onChange={(e) =>
+                                setFormData({ ...formData, portal_password: e.target.value })
+                              }
+                              placeholder="••••••••"
+                              required={!editingClient?.portal_user_id}
+                              disabled={isPending}
+                            />
+                          </div>
+                          <p className="text-[10px] text-muted-foreground italic">
+                            El cliente usará su email ({formData.email || "no definido"}) y esta contraseña para ingresar.
+                          </p>
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+                </div>
               </div>
               <DialogFooter>
                 <Button
@@ -410,6 +502,15 @@ export default function ClientsPage() {
                     {client.currency}/h
                   </p>
                 )}
+                <div className="pt-2">
+                  <div className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-medium border ${client.web_access_enabled
+                      ? "bg-green-500/10 text-green-500 border-green-500/20"
+                      : "bg-muted text-muted-foreground border-border"
+                    }`}>
+                    <Globe className="h-3 w-3" />
+                    {client.web_access_enabled ? "Portal Activo" : "Sin Acceso Web"}
+                  </div>
+                </div>
               </div>
             </CardContent>
           </Card>
