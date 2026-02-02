@@ -10,6 +10,8 @@
 *   **Reparación Estructural**: Restauración de la columna `updated_at` en `time_entries` para corregir la ejecución de triggers de base de datos en Supabase.
 *   **Unidad de Medida**: Consolidación de la **Hora** como unidad de medida inmutable para liquidaciones; el monto monetario es una capa de cálculo dinámica basada en estrategias.
 *   **UI Billing**: Nuevo selector de moneda y estrategia en la confección de facturas con desglose técnico detallado.
+*   **Estrategia de Infraestructura**: Definición de escalabilidad mediante subdominios bajo un dominio raíz delegado en Cloudflare.
+    *   *Acción*: Despliegue de **MedicalAI** en un subdominio dedicado para segregar entornos de ingeniería y salud.
 
 ## [2026-01-30] - Sesión de Estabilización
 

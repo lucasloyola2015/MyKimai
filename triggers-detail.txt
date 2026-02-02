@@ -1,0 +1,66 @@
+﻿[dotenv@17.2.3] injecting env (0) from .env -- tip: ÔÜÖ´©Å  override existing env vars with { override: true }
+Attempting to add missing updated_at column...
+Column updated_at created (if not existed).
+FINAL COLUMNS: [
+  'amount',           'billable',
+  'created_at',       'description',
+  'duration_minutes', 'end_time',
+  'id',               'invoice_id',
+  'is_billed',        'rate_applied',
+  'start_time',       'task_id',
+  'updated_at',       'usd_exchange_rate',
+  'user_id'
+]
+All time_entries Triggers: [
+  {
+    "trigger_name": "RI_ConstraintTrigger_a_17682",
+    "def": "CREATE CONSTRAINT TRIGGER \"RI_ConstraintTrigger_a_17682\" AFTER DELETE ON public.time_entries FROM invoice_items NOT DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION \"RI_FKey_setnull_del\"()"
+  },
+  {
+    "trigger_name": "RI_ConstraintTrigger_a_17683",
+    "def": "CREATE CONSTRAINT TRIGGER \"RI_ConstraintTrigger_a_17683\" AFTER UPDATE ON public.time_entries FROM invoice_items NOT DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION \"RI_FKey_noaction_upd\"()"
+  },
+  {
+    "trigger_name": "RI_ConstraintTrigger_a_20082",
+    "def": "CREATE CONSTRAINT TRIGGER \"RI_ConstraintTrigger_a_20082\" AFTER DELETE ON public.time_entries FROM time_entry_breaks NOT DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION \"RI_FKey_cascade_del\"()"
+  },
+  {
+    "trigger_name": "RI_ConstraintTrigger_a_20083",
+    "def": "CREATE CONSTRAINT TRIGGER \"RI_ConstraintTrigger_a_20083\" AFTER UPDATE ON public.time_entries FROM time_entry_breaks NOT DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION \"RI_FKey_cascade_upd\"()"
+  },
+  {
+    "trigger_name": "RI_ConstraintTrigger_c_17593",
+    "def": "CREATE CONSTRAINT TRIGGER \"RI_ConstraintTrigger_c_17593\" AFTER INSERT ON public.time_entries FROM auth.users NOT DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION \"RI_FKey_check_ins\"()"
+  },
+  {
+    "trigger_name": "RI_ConstraintTrigger_c_17594",
+    "def": "CREATE CONSTRAINT TRIGGER \"RI_ConstraintTrigger_c_17594\" AFTER UPDATE ON public.time_entries FROM auth.users NOT DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION \"RI_FKey_check_upd\"()"
+  },
+  {
+    "trigger_name": "RI_ConstraintTrigger_c_17598",
+    "def": "CREATE CONSTRAINT TRIGGER \"RI_ConstraintTrigger_c_17598\" AFTER INSERT ON public.time_entries FROM tasks NOT DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION \"RI_FKey_check_ins\"()"
+  },
+  {
+    "trigger_name": "RI_ConstraintTrigger_c_17599",
+    "def": "CREATE CONSTRAINT TRIGGER \"RI_ConstraintTrigger_c_17599\" AFTER UPDATE ON public.time_entries FROM tasks NOT DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION \"RI_FKey_check_upd\"()"
+  },
+  {
+    "trigger_name": "RI_ConstraintTrigger_c_21216",
+    "def": "CREATE CONSTRAINT TRIGGER \"RI_ConstraintTrigger_c_21216\" AFTER INSERT ON public.time_entries FROM invoices NOT DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION \"RI_FKey_check_ins\"()"
+  },
+  {
+    "trigger_name": "RI_ConstraintTrigger_c_21217",
+    "def": "CREATE CONSTRAINT TRIGGER \"RI_ConstraintTrigger_c_21217\" AFTER UPDATE ON public.time_entries FROM invoices NOT DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION \"RI_FKey_check_upd\"()"
+  },
+  {
+    "trigger_name": "calculate_time_entry_duration_trigger",
+    "def": "CREATE TRIGGER calculate_time_entry_duration_trigger BEFORE INSERT OR UPDATE ON public.time_entries FOR EACH ROW EXECUTE FUNCTION calculate_time_entry_duration()"
+  },
+  {
+    "trigger_name": "update_time_entries_updated_at",
+    "def": "CREATE TRIGGER update_time_entries_updated_at BEFORE UPDATE ON public.time_entries FOR EACH ROW EXECUTE FUNCTION update_updated_at_column()"
+  }
+]
+Update test result with updated_at (Raw SQL): 1
+Attempting Prisma update for ID: 120858d4-a9fb-455f-a314-0cf17bc85674
+Prisma update successful: 1100

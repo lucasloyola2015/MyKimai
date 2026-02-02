@@ -18,12 +18,12 @@ async function main() {
     `);
         console.log("FINAL COLUMNS:", finalCols.map((c: any) => c.column_name).sort());
 
-        const cols: any = await prisma.$queryRawUnsafe(`
-      SELECT column_name 
-      FROM information_schema.columns 
-      WHERE table_name = 'time_entries' AND table_schema = 'public';
+        const allTimeEntryTriggers: any = await prisma.$queryRawUnsafe(`
+      SELECT tgname as trigger_name, pg_get_triggerdef(oid) as def 
+      FROM pg_trigger 
+      WHERE tgrelid = 'public.time_entries'::regclass
     `);
-        console.log("ACTUAL COLUMNS:", cols.map((c: any) => c.column_name).sort());
+        console.log("All time_entries Triggers:", JSON.stringify(allTimeEntryTriggers, null, 2));
 
         const testUpdate = await prisma.$executeRawUnsafe(
             `UPDATE public.time_entries 

@@ -137,11 +137,12 @@ export async function getBilledTimeEntryIds() {
 /**
  * Genera el próximo número de factura basado en el tipo
  */
-async function generateInvoiceNumber(type: billing_type_invoice = "LEGAL"): Promise<string> {
+async function generateInvoiceNumber(type: billing_type_invoice = "LEGAL", tx?: any): Promise<string> {
     const year = new Date().getFullYear();
     const prefix = type === "INTERNAL" ? "INT" : "INV";
+    const client = tx || prisma;
 
-    const lastInvoice = await prisma.invoices.findFirst({
+    const lastInvoice = await client.invoices.findFirst({
         where: {
             invoice_number: {
                 startsWith: `${prefix}-${year}-`,
@@ -252,7 +253,13 @@ export async function createInvoiceFromTimeEntries(data: {
         const result = await prisma.$transaction(async (tx) => {
             // Generar número de factura según tipo
             const billingType = data.billing_type || "LEGAL";
-            const invoiceNumber = await generateInvoiceNumber(billingType);
+            const invoiceNumber = await generateInvoiceNumber(billingType, tx);
+
+            // Notas: Evitar undefined
+            let invoiceNotes = data.notes || null;
+            if (!invoiceNotes && strategy === "CURRENT" && billingCurrency === "ARS") {
+                invoiceNotes = `TC: ${currentExchangeRate} (ARS/USD)`;
+            }
 
             // Crear factura
             const invoice = await tx.invoices.create({
@@ -266,16 +273,13 @@ export async function createInvoiceFromTimeEntries(data: {
                     tax_amount: taxAmount,
                     total_amount: totalAmount,
                     currency: billingCurrency,
-                    due_date: data.due_date || null,
-                    notes: data.notes || (strategy === "CURRENT" && billingCurrency === "ARS" ? `TC: ${currentExchangeRate} (ARS/USD)` : data.notes),
-                },
-                include: {
-                    client: true,
+                    due_date: data.due_date ? new Date(data.due_date) : null,
+                    notes: invoiceNotes,
                 },
             });
 
             // Crear items de factura
-            const invoiceItems = await Promise.all(
+            await Promise.all(
                 timeEntries.map((entry) =>
                     tx.invoice_items.create({
                         data: {
@@ -302,7 +306,7 @@ export async function createInvoiceFromTimeEntries(data: {
                 }
             });
 
-            return { invoice, invoiceItems };
+            return invoice;
         });
 
         revalidatePath("/dashboard/invoices");
@@ -310,7 +314,7 @@ export async function createInvoiceFromTimeEntries(data: {
 
         return {
             success: true,
-            data: result.invoice,
+            data: result,
         };
     } catch (error: any) {
         console.error("DEBUG INVOICE CREATION ERROR:", error);
@@ -319,7 +323,7 @@ export async function createInvoiceFromTimeEntries(data: {
             error:
                 error instanceof Error
                     ? error.message
-                    : "Error al crear la factura",
+                    : "Error desconocido al crear la factura.",
         };
     }
 }

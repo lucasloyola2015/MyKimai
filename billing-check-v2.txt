@@ -1,0 +1,98 @@
+﻿[dotenv@17.2.3] injecting env (0) from .env -- tip: ­ƒôí add observability to secrets: https://dotenvx.com/ops
+Checking invoices table...
+Invoices columns: [
+  'afip_error',   'billing_type',
+  'cae',          'cae_due_date',
+  'cbte_nro',     'cbte_tipo',
+  'client_id',    'created_at',
+  'currency',     'due_date',
+  'id',           'invoice_number',
+  'issue_date',   'notes',
+  'paid_at',      'punto_venta',
+  'status',       'subtotal',
+  'tax_amount',   'tax_rate',
+  'total_amount', 'updated_at'
+]
+
+Checking trigger definitions for invoices...
+Invoice Trigger Defs: [
+  {
+    "tgname": "RI_ConstraintTrigger_a_17677",
+    "def": "CREATE CONSTRAINT TRIGGER \"RI_ConstraintTrigger_a_17677\" AFTER DELETE ON public.invoices FROM invoice_items NOT DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION \"RI_FKey_cascade_del\"()"
+  },
+  {
+    "tgname": "RI_ConstraintTrigger_a_17678",
+    "def": "CREATE CONSTRAINT TRIGGER \"RI_ConstraintTrigger_a_17678\" AFTER UPDATE ON public.invoices FROM invoice_items NOT DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION \"RI_FKey_noaction_upd\"()"
+  },
+  {
+    "tgname": "RI_ConstraintTrigger_a_20102",
+    "def": "CREATE CONSTRAINT TRIGGER \"RI_ConstraintTrigger_a_20102\" AFTER DELETE ON public.invoices FROM payments NOT DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION \"RI_FKey_cascade_del\"()"
+  },
+  {
+    "tgname": "RI_ConstraintTrigger_a_20103",
+    "def": "CREATE CONSTRAINT TRIGGER \"RI_ConstraintTrigger_a_20103\" AFTER UPDATE ON public.invoices FROM payments NOT DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION \"RI_FKey_cascade_upd\"()"
+  },
+  {
+    "tgname": "RI_ConstraintTrigger_a_21214",
+    "def": "CREATE CONSTRAINT TRIGGER \"RI_ConstraintTrigger_a_21214\" AFTER DELETE ON public.invoices FROM time_entries NOT DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION \"RI_FKey_setnull_del\"()"
+  },
+  {
+    "tgname": "RI_ConstraintTrigger_a_21215",
+    "def": "CREATE CONSTRAINT TRIGGER \"RI_ConstraintTrigger_a_21215\" AFTER UPDATE ON public.invoices FROM time_entries NOT DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION \"RI_FKey_noaction_upd\"()"
+  },
+  {
+    "tgname": "RI_ConstraintTrigger_c_17658",
+    "def": "CREATE CONSTRAINT TRIGGER \"RI_ConstraintTrigger_c_17658\" AFTER INSERT ON public.invoices FROM clients NOT DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION \"RI_FKey_check_ins\"()"
+  },
+  {
+    "tgname": "RI_ConstraintTrigger_c_17659",
+    "def": "CREATE CONSTRAINT TRIGGER \"RI_ConstraintTrigger_c_17659\" AFTER UPDATE ON public.invoices FROM clients NOT DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION \"RI_FKey_check_upd\"()"
+  },
+  {
+    "tgname": "generate_invoice_number_trigger",
+    "def": "CREATE TRIGGER generate_invoice_number_trigger BEFORE INSERT ON public.invoices FOR EACH ROW WHEN (((new.invoice_number IS NULL) OR ((new.invoice_number)::text = ''::text))) EXECUTE FUNCTION generate_invoice_number()"
+  },
+  {
+    "tgname": "update_invoices_updated_at",
+    "def": "CREATE TRIGGER update_invoices_updated_at BEFORE UPDATE ON public.invoices FOR EACH ROW EXECUTE FUNCTION update_updated_at_column()"
+  }
+]
+Functions: [
+  {
+    "routine_name": "generate_invoice_number",
+    "routine_definition": "\r\nDECLARE\r\n    year_prefix VARCHAR(4);\r\n    last_number INTEGER;\r\n    new_number VARCHAR(50);\r\nBEGIN\r\n    year_prefix := TO_CHAR(NEW.issue_date, 'YYYY');\r\n    \r\n    -- Buscar el ├║ltimo n├║mero de factura del a├▒o\r\n    SELECT COALESCE(MAX(CAST(SUBSTRING(invoice_number FROM '[0-9]+$') AS INTEGER)), 0)\r\n    INTO last_number\r\n    FROM invoices\r\n    WHERE invoice_number LIKE 'INV-' || year_prefix || '-%';\r\n    \r\n    -- Generar nuevo n├║mero\r\n    new_number := 'INV-' || year_prefix || '-' || LPAD((last_number + 1)::TEXT, 6, '0');\r\n    \r\n    NEW.invoice_number := new_number;\r\n    RETURN NEW;\r\nEND;\r\n"
+  },
+  {
+    "routine_name": "update_updated_at_column",
+    "routine_definition": "\r\nBEGIN\r\n    NEW.updated_at = NOW();\r\n    RETURN NEW;\r\nEND;\r\n"
+  },
+  {
+    "routine_name": "update_updated_at_column",
+    "routine_definition": null
+  }
+]
+
+Checking invoice_items table...
+Invoice items columns: [
+  'amount',
+  'created_at',
+  'description',
+  'id',
+  'invoice_id',
+  'quantity',
+  'rate',
+  'time_entry_id',
+  'type'
+]
+
+Checking triggers for both...
+Triggers: [
+  {
+    "trigger_name": "generate_invoice_number_trigger",
+    "event_object_table": "invoices"
+  },
+  {
+    "trigger_name": "update_invoices_updated_at",
+    "event_object_table": "invoices"
+  }
+]

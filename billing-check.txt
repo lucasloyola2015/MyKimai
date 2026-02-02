@@ -1,0 +1,40 @@
+﻿[dotenv@17.2.3] injecting env (0) from .env -- tip: ­ƒæÑ sync secrets across teammates & machines: https://dotenvx.com/ops
+Checking invoices table...
+Invoices columns: [
+  'afip_error',   'billing_type',
+  'cae',          'cae_due_date',
+  'cbte_nro',     'cbte_tipo',
+  'client_id',    'created_at',
+  'currency',     'due_date',
+  'id',           'invoice_number',
+  'issue_date',   'notes',
+  'paid_at',      'punto_venta',
+  'status',       'subtotal',
+  'tax_amount',   'tax_rate',
+  'total_amount', 'updated_at'
+]
+
+Checking invoice_items table...
+Invoice items columns: [
+  'amount',
+  'created_at',
+  'description',
+  'id',
+  'invoice_id',
+  'quantity',
+  'rate',
+  'time_entry_id',
+  'type'
+]
+
+Checking triggers for both...
+Triggers: [
+  {
+    "trigger_name": "generate_invoice_number_trigger",
+    "event_object_table": "invoices"
+  },
+  {
+    "trigger_name": "update_invoices_updated_at",
+    "event_object_table": "invoices"
+  }
+]

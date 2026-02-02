@@ -1,0 +1,9 @@
+﻿[dotenv@17.2.3] injecting env (0) from .env -- tip: ­ƒöÉ prevent building .env in docker: https://dotenvx.com/prebuild
+Starting reproduction...
+Found 1 entries
+Inside transaction...
+Generated invoice number: INT-2026-001
+Invoice created with ID: c1f70abd-95f0-4158-aca0-6334acdd5a23
+Invoice items created
+Time entries marked as billed
+SUCCESS! c1f70abd-95f0-4158-aca0-6334acdd5a23

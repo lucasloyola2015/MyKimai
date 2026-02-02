@@ -143,6 +143,7 @@ model time_entries {
   created_at       DateTime            @default(now()) @db.Timestamptz(6)
   usd_exchange_rate Decimal?            @db.Decimal(10, 2)
   is_billed        Boolean             @default(false)
+  updated_at       DateTime            @default(now()) @db.Timestamptz(6)
   invoice_id       String?             @db.Uuid
   invoice_items    invoice_items[]
   invoice          invoices?           @relation(fields: [invoice_id], references: [id], onDelete: SetNull, onUpdate: NoAction)
