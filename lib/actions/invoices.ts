@@ -280,20 +280,31 @@ export async function createInvoiceFromTimeEntries(data: {
 
             // Crear items de factura
             await Promise.all(
-                timeEntries.map((entry) =>
-                    tx.invoice_items.create({
+                timeEntries.map((entry) => {
+                    let itemAmount = Number(entry.amount || 0);
+                    let itemRate = Number(entry.rate_applied || 0);
+
+                    // Si la factura es en ARS, convertir los montos de cada item
+                    if (billingCurrency === "ARS") {
+                        const rate = strategy === "CURRENT"
+                            ? currentExchangeRate
+                            : Number(entry.usd_exchange_rate || 1050);
+                        itemAmount = itemAmount * rate;
+                        itemRate = itemRate * rate;
+                    }
+
+                    return tx.invoice_items.create({
                         data: {
                             invoice_id: invoice.id,
                             time_entry_id: entry.id,
-                            description:
-                                entry.description || entry.task.name || "Trabajo",
+                            description: entry.description || entry.task.name || "Trabajo",
                             quantity: (entry.duration_minutes || 0) / 60,
-                            rate: Number(entry.rate_applied || 0),
-                            amount: Number(entry.amount || 0),
+                            rate: itemRate,
+                            amount: itemAmount,
                             type: "time",
                         },
-                    })
-                )
+                    });
+                })
             );
 
             // Marcar time entries como facturados
@@ -324,6 +335,82 @@ export async function createInvoiceFromTimeEntries(data: {
                 error instanceof Error
                     ? error.message
                     : "Error desconocido al crear la factura.",
+        };
+    }
+}
+
+/**
+ * Elimina una factura interna y libera las horas asociadas
+ */
+export async function deleteInvoice(id: string): Promise<ActionResponse<void>> {
+    const user = await getAuthUser();
+
+    // 1. Obtener la factura y validar que pertenece al usuario
+    const invoice = await prisma.invoices.findFirst({
+        where: {
+            id,
+            client: {
+                user_id: user.id,
+            },
+        },
+        include: {
+            invoice_items: {
+                where: {
+                    type: "time",
+                    time_entry_id: { not: null }
+                }
+            }
+        }
+    });
+
+    if (!invoice) {
+        return { success: false, error: "Factura no encontrada." };
+    }
+
+    // 2. Restricción de Seguridad: Inmutable si es LEGAL o tiene CAE
+    if (invoice.billing_type === "LEGAL" || invoice.cae) {
+        return {
+            success: false,
+            error: "No se puede eliminar una factura legal o fiscalizada por AFIP. Debe anularse mediante Nota de Crédito."
+        };
+    }
+
+    try {
+        await prisma.$transaction(async (tx) => {
+            // A. Obtener los IDs de time_entries vinculados
+            const timeEntryIds = invoice.invoice_items
+                .map(item => item.time_entry_id)
+                .filter((id): id is string => id !== null);
+
+            // B. Liberar las TimeEntries
+            if (timeEntryIds.length > 0) {
+                await tx.time_entries.updateMany({
+                    where: {
+                        id: { in: timeEntryIds }
+                    },
+                    data: {
+                        is_billed: false,
+                        invoice_id: null
+                    }
+                });
+            }
+
+            // C. Eliminar la factura (items se borran por cascade en DB)
+            await tx.invoices.delete({
+                where: { id }
+            });
+        });
+
+        revalidatePath("/dashboard/invoices");
+        revalidatePath("/dashboard");
+        revalidatePath(`/dashboard/billing/select/${invoice.client_id}`);
+
+        return { success: true, data: undefined as any };
+    } catch (error: any) {
+        console.error("DELETE INVOICE ERROR:", error);
+        return {
+            success: false,
+            error: error instanceof Error ? error.message : "Error al eliminar la factura."
         };
     }
 }

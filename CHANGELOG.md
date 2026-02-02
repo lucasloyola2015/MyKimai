@@ -12,6 +12,9 @@
 *   **UI Billing**: Nuevo selector de moneda y estrategia en la confección de facturas con desglose técnico detallado.
 *   **Estrategia de Infraestructura**: Definición de escalabilidad mediante subdominios bajo un dominio raíz delegado en Cloudflare.
     *   *Acción*: Despliegue de **MedicalAI** en un subdominio dedicado para segregar entornos de ingeniería y salud.
+*   **Sistema de Rollback**: Implementación de reversión para Facturas Internas.
+    *   *Lógica*: Las facturas legales con CAE son inmutables; las internas pueden eliminarse liberando automáticamente las `TimeEntries` vinculadas para una nueva facturación.
+    *   *Seguridad*: Operaciones atómicas mediante transacciones de Prisma para evitar orfandad de datos.
 
 ## [2026-01-30] - Sesión de Estabilización
 

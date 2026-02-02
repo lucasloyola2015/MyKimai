@@ -115,17 +115,27 @@ export default function InvoiceDetailPage() {
                       <tr>
                         <th className="text-left p-2 border-r">Descripción</th>
                         <th className="text-right p-2 border-r">Cant.</th>
-                        <th className="text-right p-2">Subtotal</th>
+                        <th className="text-right p-2">Subtotal ({invoice.currency})</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y">
-                      {invoice.invoice_items.map((item: any) => (
-                        <tr key={item.id} className="hover:bg-muted/30">
-                          <td className="p-2 border-r font-medium">{item.description}</td>
-                          <td className="p-2 border-r text-right font-mono">{Number(item.quantity).toFixed(2)}h</td>
-                          <td className="p-2 text-right font-mono font-bold">{Number(item.amount).toLocaleString()} {invoice.currency}</td>
-                        </tr>
-                      ))}
+                      {invoice.invoice_items.map((item: any) => {
+                        const entryDate = item.time_entry?.start_time ? format(new Date(item.time_entry.start_time), "dd/MM/yy") : null;
+                        return (
+                          <tr key={item.id} className="hover:bg-muted/30">
+                            <td className="p-2 border-r font-medium">
+                              {entryDate && <span className="text-muted-foreground mr-1">({entryDate}) -</span>}
+                              {item.description}
+                            </td>
+                            <td className="p-2 border-r text-right font-mono">{Number(item.quantity).toFixed(2)}h</td>
+                            <td className="p-2 text-right font-mono font-bold leading-none">
+                              <div className="flex flex-col">
+                                <span>{Math.round(Number(item.amount)).toLocaleString()}</span>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -135,17 +145,17 @@ export default function InvoiceDetailPage() {
                 <div className="w-64 space-y-2 text-sm">
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">Subtotal:</span>
-                    <span className="font-mono">{Number(invoice.subtotal).toLocaleString()}</span>
+                    <span className="font-mono">{Math.round(Number(invoice.subtotal)).toLocaleString()} {invoice.currency}</span>
                   </div>
                   {Number(invoice.tax_amount) > 0 && (
                     <div className="flex justify-between text-rose-600">
                       <span className="text-muted-foreground">Impuestos ({Number(invoice.tax_rate)}%):</span>
-                      <span className="font-mono">+{Number(invoice.tax_amount).toLocaleString()}</span>
+                      <span className="font-mono">+{Math.round(Number(invoice.tax_amount)).toLocaleString()} {invoice.currency}</span>
                     </div>
                   )}
                   <div className="flex justify-between border-t pt-2 text-lg font-black bg-muted/10 p-2 rounded">
                     <span>TOTAL:</span>
-                    <span>{Number(invoice.total_amount).toLocaleString()} {invoice.currency}</span>
+                    <span>{Math.round(Number(invoice.total_amount)).toLocaleString()} {invoice.currency}</span>
                   </div>
                 </div>
               </div>
@@ -189,11 +199,11 @@ export default function InvoiceDetailPage() {
               <div className="space-y-2">
                 <div className="flex justify-between text-xs font-bold">
                   <span>Cobrado:</span>
-                  <span className="text-emerald-600">{totalPaid.toLocaleString()}</span>
+                  <span className="text-emerald-600">{Math.round(totalPaid).toLocaleString()}</span>
                 </div>
                 <div className="flex justify-between text-xs font-bold">
                   <span>Pendiente:</span>
-                  <span className="text-amber-600">{remaining.toLocaleString()}</span>
+                  <span className="text-amber-600">{Math.round(remaining).toLocaleString()}</span>
                 </div>
                 <div className="w-full bg-muted h-2 rounded-full overflow-hidden">
                   <div
@@ -212,7 +222,7 @@ export default function InvoiceDetailPage() {
                         <p className="font-bold">{format(new Date(p.payment_date), "dd/MM/yyyy")}</p>
                         <p className="text-[10px] text-muted-foreground">{p.method}</p>
                       </div>
-                      <span className="font-black">+{Number(p.amount).toLocaleString()}</span>
+                      <span className="font-black">+{Math.round(Number(p.amount)).toLocaleString()}</span>
                     </div>
                   ))}
                   {(!invoice.payments || invoice.payments.length === 0) && (

@@ -21,7 +21,7 @@ import {
 } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
-import { Plus, FileText, CheckCircle2, AlertCircle, Clock, Banknote, Coffee, History, ShieldAlert, ShieldCheck } from "lucide-react";
+import { Plus, FileText, CheckCircle2, AlertCircle, Clock, Banknote, Coffee, History, ShieldAlert, ShieldCheck, Trash2 } from "lucide-react";
 import { format } from "date-fns";
 import Link from "next/link";
 import { getClients } from "@/lib/actions/clients";
@@ -31,6 +31,7 @@ import {
   createInvoiceFromTimeEntries,
   updateInvoiceStatus,
   getClientBillingSummary,
+  deleteInvoice,
 } from "@/lib/actions/invoices";
 import { recordPayment } from "@/lib/actions/payments";
 import type { invoices, clients, time_entries } from "@prisma/client";
@@ -73,6 +74,8 @@ export default function InvoicesPage() {
   const [isNewInvoiceOpen, setIsNewInvoiceOpen] = useState(false);
   const [isPaymentOpen, setIsPaymentOpen] = useState(false);
   const [selectedInvoice, setSelectedInvoice] = useState<InvoiceWithClient | null>(null);
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const [paymentForm, setPaymentForm] = useState({
     amount: "",
@@ -164,6 +167,31 @@ export default function InvoicesPage() {
       loadData();
     } catch (error: any) {
       toast({ title: "Error", description: error.message, variant: "destructive" });
+    }
+  };
+
+  const handleDeleteInvoice = async () => {
+    if (!selectedInvoice) return;
+
+    setIsDeleting(true);
+    try {
+      const result = await deleteInvoice(selectedInvoice.id);
+      if (!result.success) throw new Error(result.error);
+
+      toast({
+        title: "Factura eliminada",
+        description: "Las horas vinculadas han vuelto al estado pendiente."
+      });
+      setIsDeleteDialogOpen(false);
+      loadData();
+    } catch (error: any) {
+      toast({
+        title: "Error al borrar",
+        description: error.message,
+        variant: "destructive"
+      });
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -354,6 +382,20 @@ export default function InvoicesPage() {
                         REGISTRAR PAGO
                       </Button>
                     )}
+
+                    {invoice.billing_type === 'INTERNAL' && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-8 w-8 p-0 text-slate-400 hover:text-red-600 hover:bg-red-50"
+                        onClick={() => {
+                          setSelectedInvoice(invoice);
+                          setIsDeleteDialogOpen(true);
+                        }}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    )}
                   </div>
                 </div>
               </Card>
@@ -431,6 +473,42 @@ export default function InvoicesPage() {
               <Button type="submit" className="bg-emerald-600 hover:bg-emerald-700">Confirmar Cobro</Button>
             </DialogFooter>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* DIALOGO DE ELIMINACIÓN (Rollback) */}
+      <Dialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
+        <DialogContent className="sm:max-w-[400px]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-red-600">
+              <ShieldAlert className="h-5 w-5" />
+              ¿Eliminar Comprobante?
+            </DialogTitle>
+            <DialogDescription className="pt-2">
+              Esta acción eliminará la factura <strong>{selectedInvoice?.invoice_number}</strong>.
+              <br /><br />
+              <span className="font-bold text-foreground">
+                ⚠️ Las horas vinculadas volverán a estar disponibles para una nueva facturación.
+              </span>
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="mt-4">
+            <Button
+              variant="outline"
+              onClick={() => setIsDeleteDialogOpen(false)}
+              disabled={isDeleting}
+            >
+              Cancelar
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={handleDeleteInvoice}
+              disabled={isDeleting}
+              className="font-bold"
+            >
+              {isDeleting ? "Eliminando..." : "Confirmar Eliminación"}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>
