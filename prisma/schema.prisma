@@ -141,7 +141,7 @@ model time_entries {
   rate_applied     Decimal?            @db.Decimal(10, 2)
   amount           Decimal?            @db.Decimal(10, 2)
   created_at       DateTime            @default(now()) @db.Timestamptz(6)
-  updated_at       DateTime            @default(now()) @db.Timestamptz(6)
+  usd_exchange_rate Decimal?            @db.Decimal(10, 2)
   is_billed        Boolean             @default(false)
   invoice_id       String?             @db.Uuid
   invoice_items    invoice_items[]

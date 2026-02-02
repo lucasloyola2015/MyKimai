@@ -35,9 +35,9 @@ import {
   executeConsolidation,
   type ConsolidationPreview
 } from "@/lib/actions/time-entries";
-import { format } from "date-fns";
+import { format, differenceInMinutes } from "date-fns";
 import { toast } from "@/hooks/use-toast";
-import { cn } from "@/lib/utils";
+import { cn, calculateNetDurationMinutes } from "@/lib/utils";
 import type { clients, projects, time_entries } from "@prisma/client";
 import { DayTimeline } from "@/components/dashboard/DayTimeline";
 
@@ -488,15 +488,24 @@ export default function Page() {
                         )}
                       </div>
                       <div className="flex items-center gap-2 ml-4 text-right">
-                        <div>
-                          <p className="font-medium">
-                            {((entry.duration_minutes || 0) / 60).toFixed(2)}h
-                          </p>
+                        <div className="flex flex-col items-end shrink-0">
+                          <div className="flex items-center gap-1.5 font-mono text-xs md:text-sm bg-muted/30 px-2 py-1 rounded-md border border-border/50">
+                            <span className="text-muted-foreground" title="Jornada Bruta">
+                              {(differenceInMinutes(entry.end_time || new Date(), entry.start_time) / 60).toFixed(2)} h
+                            </span>
+                            <span className="text-muted-foreground/30">-</span>
+                            <span className="text-orange-500 font-medium" title="Pausas">
+                              {((differenceInMinutes(entry.end_time || new Date(), entry.start_time) - (entry.duration_minutes || 0)) / 60).toFixed(2)} h
+                            </span>
+                            <span className="text-muted-foreground/30">=</span>
+                            <span className="text-blue-600 font-bold" title="Total Facturable">
+                              {((entry.duration_minutes || 0) / 60).toFixed(2)} h
+                            </span>
+                          </div>
                           {entry.amount && (
-                            <p className="text-muted-foreground">
-                              {Number(entry.amount).toFixed(2)}{" "}
-                              {project?.currency || ""}
-                            </p>
+                            <div className="text-[10px] font-bold text-muted-foreground/70 mt-1 mr-1 uppercase tracking-widest">
+                              {Number(entry.amount).toFixed(2)} {project?.currency || ""}
+                            </div>
                           )}
                         </div>
                         <Button

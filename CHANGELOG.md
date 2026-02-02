@@ -1,5 +1,12 @@
 # CHANGELOG - MyKimai
 
+## [2026-02-02] - Corrección de Lógica de Cálculo
+### Módulo: Gestión de Tiempo
+*   **Regla de Ingeniería**: Implementación estricta de `Horas Facturables = (Fin - Inicio) - Pausas`.
+*   **Backend**: Refactorización de `lib/actions/time-entries.ts` con cálculo de alta precisión y recalibración dinámica en cada consulta.
+*   **Bimonetariedad**: Integración de facturación en ARS/USD. Los registros capturan el Dólar Oficial del día trabajado (dolarapi.com) para pesificaciones históricas precisas.
+*   **UI Billing**: Nuevo selector de moneda en la confección de facturas con desglose de conversión en tiempo real.
+
 ## [2026-01-30] - Sesión de Estabilización
 
 ### Módulo: Infraestructura y Despliegue

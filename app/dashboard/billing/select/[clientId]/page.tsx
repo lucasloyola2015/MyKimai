@@ -34,6 +34,7 @@ export default function PartialBillingPage() {
     const [taxRate, setTaxRate] = useState("0");
     const [dueDate, setDueDate] = useState(format(new Date(Date.now() + 15 * 86400000), "yyyy-MM-dd"));
     const [billingType, setBillingType] = useState<string>("LEGAL");
+    const [billingCurrency, setBillingCurrency] = useState<"ARS" | "USD">("ARS");
 
     useEffect(() => {
         loadData();
@@ -67,7 +68,21 @@ export default function PartialBillingPage() {
 
     const summary = useMemo(() => {
         const totalMinutes = selectedEntries.reduce((sum, e) => sum + (e.duration_minutes || 0), 0);
-        const subtotal = selectedEntries.reduce((sum, e) => sum + Number(e.amount || 0), 0);
+
+        let subtotal = 0;
+
+        if (billingCurrency === "ARS") {
+            // Calcular usando exchange rate guardado en cada entry
+            subtotal = selectedEntries.reduce((sum, e) => {
+                const amountUsd = Number(e.amount || 0);
+                const rate = Number(e.usd_exchange_rate || 1050);
+                return sum + (amountUsd * rate);
+            }, 0);
+        } else {
+            // Suma simple de USD
+            subtotal = selectedEntries.reduce((sum, e) => sum + Number(e.amount || 0), 0);
+        }
+
         const tax = subtotal * (parseFloat(taxRate) / 100 || 0);
         return {
             hours: (totalMinutes / 60).toFixed(2),
@@ -75,7 +90,7 @@ export default function PartialBillingPage() {
             tax,
             total: subtotal + tax
         };
-    }, [selectedEntries, taxRate]);
+    }, [selectedEntries, taxRate, billingCurrency]);
 
     const handleToggleAll = () => {
         if (selectedIds.length === timeEntries.length) {
@@ -156,13 +171,27 @@ export default function PartialBillingPage() {
                                         )}
                                         onClick={() => handleToggleEntry(entry.id)}
                                     >
-                                        <Checkbox checked={selectedIds.includes(entry.id)} onCheckedChange={() => handleToggleEntry(entry.id)} />
+                                        <Checkbox
+                                            checked={selectedIds.includes(entry.id)}
+                                            onCheckedChange={() => handleToggleEntry(entry.id)}
+                                            onClick={(e) => e.stopPropagation()}
+                                        />
                                         <div className="flex-1 min-w-0">
                                             <div className="flex justify-between items-start gap-2">
                                                 <p className="font-semibold text-sm truncate">{entry.description || entry.task.name}</p>
-                                                <span className="font-mono text-sm font-bold whitespace-nowrap">
-                                                    {Number(entry.amount).toLocaleString()} {client?.currency}
-                                                </span>
+                                                <div className="flex flex-col items-end">
+                                                    <span className="font-mono text-sm font-bold whitespace-nowrap">
+                                                        {billingCurrency === "ARS"
+                                                            ? (Number(entry.amount || 0) * Number(entry.usd_exchange_rate || 1050)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                                                            : Number(entry.amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                                                        } {billingCurrency}
+                                                    </span>
+                                                    {billingCurrency === "ARS" && entry.usd_exchange_rate && (
+                                                        <span className="text-[9px] text-muted-foreground font-mono">
+                                                            USD {Number(entry.amount).toFixed(2)} @ {Number(entry.usd_exchange_rate).toFixed(0)}
+                                                        </span>
+                                                    )}
+                                                </div>
                                             </div>
                                             <div className="flex items-center gap-3 text-xs text-muted-foreground mt-1">
                                                 <span className="flex items-center gap-1"><Clock className="h-3 w-3" /> {(entry.duration_minutes / 60).toFixed(1)}h</span>
@@ -201,9 +230,30 @@ export default function PartialBillingPage() {
                                 </div>
                                 <div className="flex justify-between text-sm">
                                     <span className="text-muted-foreground">Subtotal:</span>
-                                    <span className="font-bold">{summary.subtotal.toLocaleString()} {client?.currency}</span>
+                                    <span className="font-bold">{summary.subtotal.toLocaleString()} {billingCurrency}</span>
                                 </div>
                                 <div className="space-y-4 pt-2">
+                                    <div className="space-y-2">
+                                        <Label>Moneda del Comprobante</Label>
+                                        <Select
+                                            value={billingCurrency}
+                                            onValueChange={(v: "ARS" | "USD") => setBillingCurrency(v)}
+                                        >
+                                            <SelectTrigger className="w-full h-10 font-bold border-primary/20">
+                                                <SelectValue />
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                                <SelectItem value="ARS">ARS - Pesos Argentinos</SelectItem>
+                                                <SelectItem value="USD">USD - Dólares Estadounidenses</SelectItem>
+                                            </SelectContent>
+                                        </Select>
+                                        <p className="text-[10px] text-muted-foreground px-1 italic">
+                                            {billingCurrency === "ARS"
+                                                ? "Las jornadas se pesifican según el tipo de cambio oficial de cada fecha."
+                                                : "Se factura el monto bruto en USD sin conversión."}
+                                        </p>
+                                    </div>
+
                                     <div className="space-y-2">
                                         <Label>Tipo de Comprobante</Label>
                                         <Select value={billingType} onValueChange={setBillingType}>
@@ -250,9 +300,9 @@ export default function PartialBillingPage() {
 
                             <div className="bg-black text-white p-4 rounded-xl space-y-1">
                                 <p className="text-[10px] uppercase tracking-widest font-bold opacity-60">Total a Facturar</p>
-                                <div className="flex items-baseline justify-between">
-                                    <span className="text-3xl font-black">{summary.total.toLocaleString()}</span>
-                                    <span className="text-xs font-bold">{client?.currency}</span>
+                                <div className="flex items-baseline justify-between transition-all duration-300">
+                                    <span className="text-3xl font-black">{summary.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                                    <span className="text-xs font-bold">{billingCurrency}</span>
                                 </div>
                             </div>
                         </CardContent>

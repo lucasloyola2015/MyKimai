@@ -45,6 +45,7 @@ Este protocolo es de cumplimiento obligatorio para todas las tareas de ingenier�
 *   **Validación**: Verificar que el remoto esté configurado y usar las credenciales de Git de Windows.
 *   **Entorno**: Asegurar que las variables locales coincidan con las de Vercel (especialmente `DATABASE_URL`).
 *   **Push**: Solo se realiza el push si el build local del paso 4 fue exitoso (zero errors).
+*   **Bimonetariedad Check**: Verificar que el cálculo `(H-P)*Rate*USD_Exchange` sea consistente en el backend antes de liberar a producción.
 
 ---
 

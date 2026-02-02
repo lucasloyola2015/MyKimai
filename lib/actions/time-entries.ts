@@ -5,10 +5,13 @@ import { getAuthUser } from "@/lib/auth/server";
 import { revalidatePath } from "next/cache";
 import { differenceInMinutes, format } from "date-fns";
 import type { time_entries } from "@prisma/client";
+import { calculateNetDurationMinutes } from "@/lib/utils";
+import { getUsdExchangeRate } from "./exchange";
 
 export type ActionResponse<T> =
     | { success: true; data: T }
     | { success: false; error: string };
+
 
 /**
  * Obtiene el time entry activo del usuario (si existe)
@@ -65,7 +68,17 @@ export async function getRecentTimeEntries(limit: number = 10) {
         take: limit,
     });
 
-    return entries;
+    return entries.map(entry => {
+        const duration = entry.end_time
+            ? calculateNetDurationMinutes(entry.start_time, entry.end_time, (entry as any).breaks || [])
+            : 0;
+        const rate = Number(entry.rate_applied || 0);
+        return {
+            ...entry,
+            duration_minutes: duration,
+            amount: Number(((duration / 60) * rate).toFixed(2))
+        } as any;
+    });
 }
 
 /**
@@ -243,6 +256,7 @@ export async function stopTimeEntry(
 
     // Calcular duración y monto
     const endTime = new Date();
+    const exchangeRate = await getUsdExchangeRate();
 
     // Obtener los breaks para restar
     const entryWithBreaks = await prisma.time_entries.findUnique({
@@ -262,12 +276,11 @@ export async function stopTimeEntry(
     }
 
     const grossMinutes = differenceInMinutes(endTime, entry.start_time);
-    const breakMinutes = entryWithBreaks?.breaks.reduce((acc, b) => {
-        const bEnd = b.end_time || endTime;
-        return acc + differenceInMinutes(bEnd, b.start_time);
-    }, 0) || 0;
-
-    const durationMinutes = Math.max(0, grossMinutes - breakMinutes);
+    const durationMinutes = calculateNetDurationMinutes(
+        entry.start_time,
+        endTime,
+        entryWithBreaks?.breaks || []
+    );
     const rate = Number(entry.rate_applied || 0);
     const amount = Number(((durationMinutes / 60) * rate).toFixed(2));
 
@@ -279,6 +292,7 @@ export async function stopTimeEntry(
                 end_time: endTime,
                 duration_minutes: Math.round(durationMinutes),
                 amount: amount,
+                usd_exchange_rate: exchangeRate,
             },
             include: {
                 task: {
@@ -450,7 +464,17 @@ export async function getTimeEntries(filters?: {
         },
     });
 
-    return entries;
+    return entries.map(entry => {
+        const duration = entry.end_time
+            ? calculateNetDurationMinutes(entry.start_time, entry.end_time, entry.breaks)
+            : 0;
+        const rate = Number(entry.rate_applied || 0);
+        return {
+            ...entry,
+            duration_minutes: duration,
+            amount: Number(((duration / 60) * rate).toFixed(2))
+        } as any;
+    });
 }
 
 /**
@@ -502,15 +526,7 @@ export async function updateTimeEntry(
                 where: { time_entry_id: entryId },
             });
 
-            const grossDuration = differenceInMinutes(endTime, startTime);
-            const totalBreakMinutes = breaks.reduce((acc, b) => {
-                if (b.start_time && b.end_time) {
-                    return acc + differenceInMinutes(b.end_time, b.start_time);
-                }
-                return acc;
-            }, 0);
-
-            const netDuration = Math.max(0, grossDuration - totalBreakMinutes);
+            const netDuration = calculateNetDurationMinutes(startTime, endTime, breaks);
             updateData.duration_minutes = netDuration;
 
             // Recalcular monto si hay tarifa
@@ -518,7 +534,13 @@ export async function updateTimeEntry(
                 ? (data.rate_applied || 0)
                 : Number(entry.rate_applied || 0);
 
-            updateData.amount = (netDuration / 60) * rate;
+            updateData.amount = Number(((netDuration / 60) * rate).toFixed(2));
+
+            // Capturar exchange rate si no lo tiene (para registros viejos o manuales)
+            if (!entry.usd_exchange_rate) {
+                const exchangeRate = await getUsdExchangeRate();
+                (updateData as any).usd_exchange_rate = exchangeRate;
+            }
         }
     }
 
@@ -664,22 +686,17 @@ async function recalculateEntry(entryId: string) {
 
     if (!entry || !entry.end_time) return;
 
-    const grossDuration = differenceInMinutes(entry.end_time, entry.start_time);
-    const totalBreakMinutes = entry.breaks.reduce((acc, b) => {
-        if (b.start_time && b.end_time) {
-            return acc + differenceInMinutes(b.end_time, b.start_time);
-        }
-        return acc;
-    }, 0);
-
-    const netDuration = Math.max(0, grossDuration - totalBreakMinutes);
+    const netDuration = calculateNetDurationMinutes(entry.start_time, entry.end_time, entry.breaks);
     const rate = Number(entry.rate_applied || 0);
+
+    const exchangeRate = entry.usd_exchange_rate || await getUsdExchangeRate();
 
     await prisma.time_entries.update({
         where: { id: entryId },
         data: {
             duration_minutes: netDuration,
-            amount: (netDuration / 60) * rate
+            amount: Number(((netDuration / 60) * rate).toFixed(2)),
+            usd_exchange_rate: exchangeRate
         }
     });
 
@@ -912,13 +929,14 @@ export async function executeConsolidation() {
             }
 
             const totalMinutes = differenceInMinutes(last.end_time!, first.start_time);
-            const totalBreakMinutes = [...allBreaks, ...newBreaksData].reduce((acc, b: any) => {
-                return acc + differenceInMinutes(b.end_time!, b.start_time);
-            }, 0);
-            const netDuration = Math.max(0, totalMinutes - totalBreakMinutes);
+            const netDuration = calculateNetDurationMinutes(
+                first.start_time,
+                last.end_time!,
+                [...allBreaks, ...newBreaksData]
+            );
 
             const rate = Number(first.rate_applied || 0);
-            const amount = (netDuration / 60) * rate;
+            const amount = Number(((netDuration / 60) * rate).toFixed(2));
 
             const masterEntry = await (tx.time_entries as any).create({
                 data: {
