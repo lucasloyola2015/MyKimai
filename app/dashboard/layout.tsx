@@ -10,7 +10,7 @@ import { getClientContext } from "@/lib/auth/server";
 import { redirect } from "next/navigation";
 import type { NavStats } from "@/shared/types/sidebar.types";
 
-// export const dynamic = "force-dynamic"; // Comentado temporalmente para debug
+export const dynamic = "force-dynamic";
 
 // Componente para cargar las stats con Suspense
 async function SidebarWithStats() {

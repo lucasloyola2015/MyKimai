@@ -2,6 +2,8 @@ import { redirect } from "next/navigation";
 import { createServerComponentClient } from "@/lib/supabase/server";
 import { getClientContext } from "@/lib/auth/server";
 
+export const dynamic = "force-dynamic";
+
 export default async function Home() {
   try {
     const supabase = await createServerComponentClient();
