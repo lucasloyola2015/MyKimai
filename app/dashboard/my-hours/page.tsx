@@ -61,6 +61,8 @@ export default function Page() {
     end_time: "",
   });
   const [recalculatingIds, setRecalculatingIds] = useState<Set<string>>(new Set());
+  /** Estado controlado por descanso: start/end en "HH:mm" para envío atómico (ambos siempre al servidor) */
+  const [breakFormValues, setBreakFormValues] = useState<Record<string, { start: string; end: string }>>({});
 
   useEffect(() => {
     loadData();
@@ -131,6 +133,14 @@ export default function Page() {
       end_date: format(endDate, "yyyy-MM-dd"),
       end_time: entry.end_time ? format(endDate, "HH:mm") : "",
     });
+    const breakValues: Record<string, { start: string; end: string }> = {};
+    (entry.breaks || []).forEach((b: any) => {
+      breakValues[b.id] = {
+        start: format(new Date(b.start_time), "HH:mm"),
+        end: b.end_time ? format(new Date(b.end_time), "HH:mm") : "",
+      };
+    });
+    setBreakFormValues(breakValues);
     setIsDialogOpen(true);
   };
 
@@ -222,26 +232,42 @@ export default function Page() {
   const handleAddBreak = async () => {
     if (!editingEntry) return;
     const now = new Date();
-    // Hora por defecto: hace 5 minutos hasta ahora
     const start = new Date(now.getTime() - 5 * 60000);
     const result = await addTimeEntryBreak(editingEntry.id, start, now);
     if (result.success) {
-      loadEntries();
-      // Recargar el editingEntry localmente para ver la nueva pausa
-      const updatedEntries = await getTimeEntries();
+      await loadEntries();
+      const updatedEntries = await getTimeEntries({ clientId: selectedClient || undefined, projectId: selectedProject || undefined });
       const updated = updatedEntries.find((e: any) => e.id === editingEntry.id);
-      if (updated) setEditingEntry(updated);
+      if (updated) {
+        setEditingEntry(updated);
+        setBreakFormValues((prev) => {
+          const next = { ...prev };
+          (updated.breaks || []).forEach((br: any) => {
+            if (!(br.id in next))
+              next[br.id] = {
+                start: format(new Date(br.start_time), "HH:mm"),
+                end: br.end_time ? format(new Date(br.end_time), "HH:mm") : "",
+              };
+          });
+          return next;
+        });
+      }
     }
   };
 
   const handleUpdateBreak = async (breakId: string, startTimeStr: string, endTimeStr: string) => {
     if (!editingEntry) return;
-    const dateStr = formData.start_date; // Usamos la misma fecha que el entry por defecto
+    const dateStr = formData.start_date;
     const start = new Date(`${dateStr}T${startTimeStr}`);
     const end = endTimeStr ? new Date(`${dateStr}T${endTimeStr}`) : null;
 
-    await updateTimeEntryBreak(breakId, start, end);
-    loadEntries();
+    const result = await updateTimeEntryBreak(breakId, start, end);
+    if (result.success) {
+      await loadEntries();
+      const updatedEntries = await getTimeEntries({ clientId: selectedClient || undefined, projectId: selectedProject || undefined });
+      const updated = updatedEntries.find((e: any) => e.id === editingEntry.id);
+      if (updated) setEditingEntry(updated);
+    }
   };
 
   const handleDeleteBreak = async (breakId: string) => {
@@ -305,6 +331,7 @@ export default function Page() {
       end_date: "",
       end_time: "",
     });
+    setBreakFormValues({});
     setEditingEntry(null);
   };
 
@@ -702,34 +729,56 @@ export default function Page() {
 
                 <div className="space-y-2">
                   {editingEntry?.breaks?.length > 0 ? (
-                    editingEntry.breaks.map((b: any) => (
-                      <div key={b.id} className="flex items-center gap-2 bg-muted/50 p-2 rounded-md">
-                        <Input
-                          type="time"
-                          defaultValue={format(new Date(b.start_time), "HH:mm")}
-                          className="h-8 text-xs"
-                          onBlur={(e) => handleUpdateBreak(b.id, e.target.value, format(new Date(b.end_time || b.start_time), "HH:mm"))}
-                        />
-                        <span className="text-muted-foreground text-xs">→</span>
-                        <Input
-                          type="time"
-                          defaultValue={b.end_time ? format(new Date(b.end_time), "HH:mm") : ""}
-                          className="h-8 text-xs"
-                          placeholder="En curso"
-                          disabled={!b.end_time}
-                          onBlur={(e) => handleUpdateBreak(b.id, format(new Date(b.start_time), "HH:mm"), e.target.value)}
-                        />
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8 text-destructive"
-                          onClick={() => handleDeleteBreak(b.id)}
-                        >
-                          <X className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    ))
+                    editingEntry.breaks.map((b: any) => {
+                      const breakVal = breakFormValues[b.id] ?? {
+                        start: format(new Date(b.start_time), "HH:mm"),
+                        end: b.end_time ? format(new Date(b.end_time), "HH:mm") : "",
+                      };
+                      return (
+                        <div key={b.id} className="flex items-center gap-2 bg-muted/50 p-2 rounded-md">
+                          <Input
+                            type="time"
+                            value={breakVal.start}
+                            className="h-8 text-xs"
+                            onChange={(e) =>
+                              setBreakFormValues((prev) => ({
+                                ...prev,
+                                [b.id]: { ...(prev[b.id] ?? breakVal), start: e.target.value },
+                              }))
+                            }
+                            onBlur={(e) =>
+                              handleUpdateBreak(b.id, e.target.value, breakFormValues[b.id]?.end ?? breakVal.end)
+                            }
+                          />
+                          <span className="text-muted-foreground text-xs">→</span>
+                          <Input
+                            type="time"
+                            value={breakVal.end}
+                            className="h-8 text-xs"
+                            placeholder="En curso"
+                            disabled={!b.end_time}
+                            onChange={(e) =>
+                              setBreakFormValues((prev) => ({
+                                ...prev,
+                                [b.id]: { ...(prev[b.id] ?? breakVal), end: e.target.value },
+                              }))
+                            }
+                            onBlur={(e) =>
+                              handleUpdateBreak(b.id, breakFormValues[b.id]?.start ?? breakVal.start, e.target.value)
+                            }
+                          />
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 text-destructive"
+                            onClick={() => handleDeleteBreak(b.id)}
+                          >
+                            <X className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      );
+                    })
                   ) : (
                     <p className="text-xs text-muted-foreground text-center py-2 italic">
                       No hay pausas registradas en esta sesión.

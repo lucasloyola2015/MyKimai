@@ -737,7 +737,9 @@ export async function addTimeEntryBreak(
 }
 
 /**
- * Actualiza una pausa existente
+ * Actualiza una pausa existente.
+ * Actualización atómica: siempre se envían start_time y end_time explícitamente
+ * para evitar que un "diff" o condicional filtre la fecha inicial y rompa el cálculo de horas netas.
  */
 export async function updateTimeEntryBreak(
     breakId: string,
@@ -755,9 +757,14 @@ export async function updateTimeEntryBreak(
             return { success: false, error: "No autorizado" };
         }
 
+        const updatePayload = {
+            start_time: startTime,
+            end_time: endTime,
+        };
+
         const updatedBreak = await prisma.time_entry_breaks.update({
             where: { id: breakId },
-            data: { start_time: startTime, end_time: endTime }
+            data: updatePayload,
         });
 
         await recalculateEntry(breakNode.time_entry_id);

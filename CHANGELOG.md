@@ -1,5 +1,11 @@
 # CHANGELOG - MyKimai
 
+## [2026-02-02] - Bugfix: Sincronización de timestamps en descansos
+### Módulo: Gestión de Tiempo (Mis Horas)
+*   **Bugfix**: Sincronización de timestamps en la edición de descansos para garantizar cálculos de horas netas precisos.
+*   **Backend (@architect)**: La Server Action `updateTimeEntryBreak` envía siempre de forma explícita `start_time` y `end_time` a Prisma (actualización atómica), sin lógica de diff que pudiera filtrar la fecha inicial.
+*   **UI (@designer)**: Formulario de edición de pausas con estado controlado por descanso (`breakFormValues`); los campos de hora inicio/fin están vinculados bidireccionalmente al estado y en cada `onBlur` se envían ambos valores al servidor, evitando que al modificar un campo se pierda el valor del otro.
+
 ## [2026-02-02] - Implementación de Acceso Externo (Portal de Clientes)
 ### Módulo: Gestión de Identidades y Portal
 *   **Seguridad y Auth**: Integración con **Supabase Auth** para permitir el acceso externo a clientes. Los administradores pueden habilitar el acceso y definir una contraseña manual.
