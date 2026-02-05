@@ -153,13 +153,13 @@ export function AppSidebar({ stats }: AppSidebarProps) {
                 </div>
             </aside>
 
-            {/* Mobile menu button - Fixed top-left */}
+            {/* Mobile menu button - Fixed top-left, área táctil 44px */}
             <Button
                 variant="ghost"
-                size="sm"
+                size="icon"
                 className={cn(
-                    "fixed top-4 left-4 z-30 md:hidden touch-target",
-                    "bg-card border shadow-sm"
+                    "fixed top-3 left-3 z-30 md:hidden min-h-[44px] min-w-[44px]",
+                    "bg-card border shadow-sm touch-manipulation"
                 )}
                 onClick={toggle}
                 aria-label="Abrir menú"

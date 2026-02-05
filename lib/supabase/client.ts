@@ -14,7 +14,7 @@ function createRememberAwareCookies() {
       const all = parse(document.cookie || "");
       return all[key] ?? null;
     },
-    set(key: string, value: string, _opts?: { path?: string; sameSite?: "lax"; maxAge?: number }) {
+    set(key: string, value: string, _opts?: { path?: string; sameSite?: "lax"; maxAge?: number; secure?: boolean }) {
       if (typeof document === "undefined") return;
       const remember = getRememberFromCookieString(document.cookie || "");
       const opts = getAuthCookieOptions(remember);
@@ -39,6 +39,10 @@ export function createClientComponentClient() {
   const cookies = createRememberAwareCookies();
 
   return createBrowserClient(url, key, {
+    auth: {
+      persistSession: true,
+      autoRefreshToken: true,
+    },
     cookies: {
       get: (name: string) => cookies.get(name),
       set: (name: string, value: string, options?: object) => cookies.set(name, value, options as any),

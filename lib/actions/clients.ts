@@ -83,7 +83,10 @@ export async function createClient(data: {
 }
 
 /**
- * Actualiza un cliente existente
+ * Actualiza un cliente existente.
+ * Sincronización atómica con Supabase Auth: si el cliente tiene portal_user_id,
+ * primero se actualiza Auth (email y/o contraseña); solo si Auth tiene éxito
+ * se persisten los cambios en la base de datos local.
  */
 export async function updateClient(
     id: string,
@@ -95,11 +98,12 @@ export async function updateClient(
         currency?: string;
         default_rate?: number | null;
         notes?: string | null;
+        /** Nueva contraseña para el portal; solo aplica si el cliente tiene acceso web (portal_user_id). Se sincroniza con Supabase Auth. */
+        newPassword?: string;
     }
 ): Promise<ActionResponse<clients>> {
     const user = await getAuthUser();
 
-    // Verificar que el cliente pertenece al usuario
     const existing = await prisma.clients.findFirst({
         where: {
             id,
@@ -114,10 +118,45 @@ export async function updateClient(
         };
     }
 
+    const emailChanged = data.email !== undefined && data.email !== existing.email;
+    const passwordProvided = Boolean(data.newPassword?.trim());
+    const hasPortalUser = Boolean(existing.portal_user_id);
+
+    // Si el cliente tiene usuario en Supabase Auth, actualizar Auth primero (atómico)
+    if (hasPortalUser && (emailChanged || passwordProvided)) {
+        try {
+            const admin = createAdminClient();
+            const authPayload: { email?: string; password?: string; email_confirm?: boolean } = {};
+            if (emailChanged && data.email) {
+                authPayload.email = data.email;
+                authPayload.email_confirm = true;
+            }
+            if (passwordProvided && data.newPassword) {
+                authPayload.password = data.newPassword;
+            }
+            const { error: authError } = await admin.auth.admin.updateUserById(
+                existing.portal_user_id!,
+                authPayload
+            );
+            if (authError) {
+                return {
+                    success: false,
+                    error: `No se pudo actualizar el acceso del cliente en Auth: ${authError.message}. Los datos no se guardaron.`,
+                };
+            }
+        } catch (err) {
+            return {
+                success: false,
+                error: err instanceof Error ? err.message : "Error al sincronizar con el proveedor de identidad. Los datos no se guardaron.",
+            };
+        }
+    }
+
     try {
+        const { newPassword: _, ...dbData } = data;
         const client = await prisma.clients.update({
             where: { id },
-            data,
+            data: dbData,
         });
 
         revalidatePath("/dashboard/clients");
@@ -197,47 +236,53 @@ export async function toggleClientWebAccess(
                 return { success: false, error: "Se requiere una contraseña para activar el acceso." };
             }
 
+            // Service Role Key obligatoria para admin.auth.admin (createUser/updateUserById)
             const admin = createAdminClient();
             let portalUserId = client.portal_user_id;
 
-            // 2. Crear o actualizar usuario en Supabase Auth
-            if (!portalUserId) {
-                const { data: authUser, error: authError } = await admin.auth.admin.createUser({
-                    email: client.email,
-                    password: password,
-                    email_confirm: true,
-                    user_metadata: {
-                        role: "CLIENT",
-                        client_id: client.id,
-                        client_name: client.name,
-                    },
-                    app_metadata: {
-                        role: "CLIENT",
-                    }
-                });
+            try {
+                if (!portalUserId) {
+                    const { data: authUser, error: authError } = await admin.auth.admin.createUser({
+                        email: client.email,
+                        password: password,
+                        email_confirm: true,
+                        user_metadata: {
+                            role: "CLIENT",
+                            client_id: client.id,
+                            client_name: client.name,
+                        },
+                        app_metadata: {
+                            role: "CLIENT",
+                        }
+                    });
 
-                if (authError) {
-                    return { success: false, error: `Error en Supabase Auth: ${authError.message}` };
-                }
-                portalUserId = authUser.user.id;
-            } else {
-                // Actualizar contraseña si se proporciona
-                const { error: updateError } = await admin.auth.admin.updateUserById(portalUserId, {
-                    password: password,
-                    user_metadata: {
-                        role: "CLIENT",
-                        client_id: client.id,
-                    },
-                    app_metadata: {
-                        role: "CLIENT",
+                    if (authError) {
+                        return { success: false, error: `Error en Supabase Auth: ${authError.message}. No se modificó la base de datos.` };
                     }
-                });
-                if (updateError) {
-                    return { success: false, error: `Error actualizando auth: ${updateError.message}` };
+                    portalUserId = authUser.user.id;
+                } else {
+                    const { error: updateError } = await admin.auth.admin.updateUserById(portalUserId, {
+                        password: password,
+                        user_metadata: {
+                            role: "CLIENT",
+                            client_id: client.id,
+                        },
+                        app_metadata: {
+                            role: "CLIENT",
+                        }
+                    });
+                    if (updateError) {
+                        return { success: false, error: `Error actualizando Auth: ${updateError.message}. No se modificó la base de datos.` };
+                    }
                 }
+            } catch (authErr) {
+                return {
+                    success: false,
+                    error: authErr instanceof Error ? authErr.message : "Error al sincronizar con el proveedor de identidad. No se modificó la base de datos.",
+                };
             }
 
-            // 3. Actualizar el registro del cliente
+            // Solo tras éxito en Auth: actualizar el registro del cliente
             const updatedClient = await prisma.clients.update({
                 where: { id: clientId },
                 data: {

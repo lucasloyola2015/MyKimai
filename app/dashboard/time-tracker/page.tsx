@@ -16,6 +16,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Play, Square, Clock, Pause } from "lucide-react";
 import { format, differenceInMinutes } from "date-fns";
+import { formatDateTime24 } from "@/lib/date-format";
 import { useActiveTimeEntry } from "@/contexts/active-time-entry-context";
 import { getClients } from "@/lib/actions/clients";
 import { getProjects } from "@/lib/actions/projects";
@@ -562,7 +563,7 @@ export default function TimeTrackerPage() {
                         </p>
                       )}
                       <p className="mt-2 text-xs text-muted-foreground">
-                        {format(new Date(entry.start_time), "dd/MM/yyyy HH:mm")}
+                        {formatDateTime24(new Date(entry.start_time))}
                       </p>
                     </div>
                   );

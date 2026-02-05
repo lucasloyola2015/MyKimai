@@ -6,6 +6,7 @@ import { revalidatePath } from "next/cache";
 import { differenceInMinutes, format } from "date-fns";
 import type { time_entries } from "@prisma/client";
 import { calculateNetDurationMinutes, computeEntryTotals } from "@/lib/utils";
+import { formatTime24 } from "@/lib/date-format";
 import { getUsdExchangeRate } from "./exchange";
 
 export type ActionResponse<T> =
@@ -871,8 +872,8 @@ export async function previewConsolidation(): Promise<ConsolidationPreview[]> {
             clientName,
             originalCount: group.length,
             newBreaksCount: breaksCount,
-            startTime: format(first.start_time, "HH:mm"),
-            endTime: format(last.end_time!, "HH:mm"),
+            startTime: formatTime24(first.start_time),
+            endTime: formatTime24(last.end_time!),
             totalDuration: differenceInMinutes(last.end_time!, first.start_time),
         });
     }

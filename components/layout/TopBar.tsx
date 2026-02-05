@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useActiveTimeEntry } from "@/contexts/active-time-entry-context";
 import { UserMenu } from "@/components/user/user-menu";
+import { ThemeToggle } from "@/components/theme-toggle";
 import { Button } from "@/components/ui/button";
 import { Square, Play, Pause } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
@@ -201,8 +202,9 @@ export function TopBar() {
         )}
       </div>
 
-      {/* Avatar y menú de usuario (derecha) */}
-      <div className="flex items-center gap-2 shrink-0">
+      {/* Tema y menú de usuario (derecha) */}
+      <div className="flex items-center gap-1 shrink-0">
+        <ThemeToggle />
         <UserMenu />
       </div>
     </header>

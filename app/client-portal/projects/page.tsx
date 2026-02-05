@@ -1,12 +1,15 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { FolderKanban, Clock, CircleDollarSign, AlertCircle } from "lucide-react";
+import { AlertCircle, ChevronRight } from "lucide-react";
 import { getPortalProjects } from "@/lib/actions/projects";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import Link from "next/link";
+import { format } from "date-fns";
+import { es } from "date-fns/locale";
+import { formatDateTime24Short } from "@/lib/date-format";
 
 export default function ClientProjectsPage() {
   const [projects, setProjects] = useState<any[]>([]);
@@ -32,26 +35,38 @@ export default function ClientProjectsPage() {
 
   if (loading) {
     return (
-      <div className="space-y-6">
-        <div>
-          <Skeleton className="h-10 w-48 mb-2" />
-          <Skeleton className="h-5 w-64" />
+      <div className="space-y-4">
+        <div className="flex justify-between items-end gap-4">
+          <div>
+            <Skeleton className="h-8 w-48 mb-1" />
+            <Skeleton className="h-4 w-72" />
+          </div>
         </div>
-        <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-          {[1, 2, 3].map((i) => (
-            <Card key={i} className="overflow-hidden">
-              <CardHeader className="pb-2">
-                <Skeleton className="h-6 w-3/4" />
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <Skeleton className="h-4 w-full" />
-                <div className="space-y-2">
-                  <div className="flex justify-between"><Skeleton className="h-4 w-24" /><Skeleton className="h-4 w-12" /></div>
-                  <div className="flex justify-between"><Skeleton className="h-4 w-24" /><Skeleton className="h-4 w-16" /></div>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
+        <div className="border rounded-lg overflow-hidden">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-muted/40 border-b">
+                <th className="text-left py-2.5 px-3 font-semibold text-muted-foreground uppercase tracking-wider text-[10px]">Proyecto</th>
+                <th className="text-right py-2.5 px-3 font-semibold text-muted-foreground uppercase tracking-wider text-[10px]">Horas</th>
+                <th className="text-left py-2.5 px-3 font-semibold text-muted-foreground uppercase tracking-wider text-[10px]">Último registro</th>
+                <th className="text-left py-2.5 px-3 font-semibold text-muted-foreground uppercase tracking-wider text-[10px]">Estado</th>
+                <th className="text-left py-2.5 px-3 font-semibold text-muted-foreground uppercase tracking-wider text-[10px]">Facturación</th>
+                <th className="w-8" />
+              </tr>
+            </thead>
+            <tbody className="divide-y">
+              {[1, 2, 3, 4, 5].map((i) => (
+                <tr key={i}>
+                  <td className="py-2 px-3"><Skeleton className="h-4 w-32" /></td>
+                  <td className="py-2 px-3 text-right"><Skeleton className="h-4 w-12 ml-auto" /></td>
+                  <td className="py-2 px-3"><Skeleton className="h-4 w-24" /></td>
+                  <td className="py-2 px-3"><Skeleton className="h-5 w-16 rounded-full" /></td>
+                  <td className="py-2 px-3"><Skeleton className="h-5 w-20 rounded-full" /></td>
+                  <td className="py-2 px-3" />
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       </div>
     );
@@ -59,11 +74,11 @@ export default function ClientProjectsPage() {
 
   if (error) {
     return (
-      <div className="flex flex-col items-center justify-center py-20 text-center">
-        <AlertCircle className="h-12 w-12 text-destructive mb-4" />
-        <h2 className="text-2xl font-bold">Error de vinculación</h2>
-        <p className="text-muted-foreground mt-2 max-w-md">{error}</p>
-        <Button onClick={loadProjects} variant="outline" className="mt-6">
+      <div className="flex flex-col items-center justify-center py-16 text-center">
+        <AlertCircle className="h-10 w-10 text-destructive mb-3" />
+        <h2 className="text-xl font-bold">Error de vinculación</h2>
+        <p className="text-muted-foreground text-sm mt-1 max-w-md">{error}</p>
+        <Button onClick={loadProjects} variant="outline" size="sm" className="mt-4">
           Reintentar
         </Button>
       </div>
@@ -71,74 +86,90 @@ export default function ClientProjectsPage() {
   }
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold">Mis Proyectos</h1>
-        <p className="text-muted-foreground">
-          Visualiza el estado de tus proyectos y horas trabajadas
-        </p>
+    <div className="space-y-4">
+      <div className="flex justify-between items-end gap-4">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight">Proyectos</h1>
+          <p className="text-muted-foreground text-sm mt-0.5">
+            Estado y horas netas por proyecto. Montos solo en Facturación.
+          </p>
+        </div>
       </div>
 
-      <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-        {projects.map((project) => (
-          <Link key={project.id} href={`/client-portal/projects/${project.id}`}>
-            <Card className="group cursor-pointer hover:shadow-xl hover:-translate-y-1 transition-all duration-300 border-primary/10 h-full">
-              <CardHeader className="bg-primary/5 py-4 border-b">
-                <CardTitle className="flex items-center gap-2 group-hover:text-primary transition-colors">
-                  <FolderKanban className="h-5 w-5 opacity-70" />
-                  {project.name}
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="pt-6 space-y-4">
-                {project.description && (
-                  <p className="text-sm text-muted-foreground line-clamp-2 italic">
-                    "{project.description}"
-                  </p>
-                )}
-
-                <div className="grid gap-3 pt-2">
-                  <div className="flex justify-between items-center p-3 rounded-lg bg-muted/40">
-                    <div className="flex items-center gap-2 text-muted-foreground">
-                      <Clock className="h-4 w-4" />
-                      <span className="text-xs font-semibold uppercase tracking-wider">Horas totales</span>
-                    </div>
-                    <span className="font-mono font-bold text-lg">
-                      {project.total_hours.toFixed(2)}h
-                    </span>
-                  </div>
-
-                  <div className="flex justify-between items-center p-3 rounded-lg bg-emerald-500/5 border border-emerald-500/10">
-                    <div className="flex items-center gap-2 text-emerald-600">
-                      <CircleDollarSign className="h-4 w-4" />
-                      <span className="text-xs font-semibold uppercase tracking-wider">Inversión</span>
-                    </div>
-                    <span className="font-mono font-bold text-lg text-emerald-700">
-                      {project.currency} {Number(project.total_amount).toLocaleString()}
-                    </span>
-                  </div>
-                </div>
-
-                <div className="flex items-center justify-between pt-2">
-                  <span className="text-[10px] font-bold uppercase text-muted-foreground">Estado</span>
-                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase border ${project.status === 'active'
-                    ? 'bg-blue-500/10 text-blue-600 border-blue-200'
-                    : 'bg-muted text-muted-foreground border-border'
-                    }`}>
-                    {project.status === 'active' ? 'En curso' : project.status}
-                  </span>
-                </div>
-              </CardContent>
-            </Card>
-          </Link>
-        ))}
+      <div className="border rounded-lg overflow-hidden bg-card overflow-x-auto -mx-px" style={{ WebkitOverflowScrolling: "touch" }}>
+        <table className="w-full text-sm min-w-[580px]">
+          <thead>
+            <tr className="bg-muted/40 border-b text-muted-foreground">
+              <th className="text-left py-2 px-3 font-semibold uppercase tracking-widest text-[10px]">Proyecto</th>
+              <th className="text-right py-2 px-3 font-semibold uppercase tracking-widest text-[10px]">Horas netas</th>
+              <th className="text-left py-2 px-3 font-semibold uppercase tracking-widest text-[10px]">Último registro</th>
+              <th className="text-left py-2 px-3 font-semibold uppercase tracking-widest text-[10px]">Estado</th>
+              <th className="text-left py-2 px-3 font-semibold uppercase tracking-widest text-[10px]">Facturación</th>
+              <th className="w-8 py-2 px-3" />
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border">
+            {projects.map((project) => (
+              <tr key={project.id} className="hover:bg-muted/20 transition-colors group">
+                <td className="py-2 px-3">
+                  <Link
+                    href={`/client-portal/projects/${project.id}`}
+                    className="font-medium text-foreground hover:text-primary hover:underline underline-offset-2"
+                  >
+                    {project.name}
+                  </Link>
+                  {project.description && (
+                    <p className="text-[11px] text-muted-foreground truncate max-w-[200px] mt-0.5" title={project.description}>
+                      {project.description}
+                    </p>
+                  )}
+                </td>
+                <td className="py-2 px-3 text-right font-mono tabular-nums text-foreground">
+                  {project.total_hours.toFixed(2)}h
+                </td>
+                <td className="py-2 px-3 font-mono text-[11px] text-muted-foreground tabular-nums">
+                  {project.last_entry_date
+                    ? formatDateTime24Short(new Date(project.last_entry_date))
+                    : "—"}
+                </td>
+                <td className="py-2 px-3">
+                  <Badge
+                    size="sm"
+                    variant={project.status === "active" ? "active" : "outline"}
+                    className="font-mono text-[10px] uppercase"
+                  >
+                    {project.status === "active" ? "En curso" : project.status}
+                  </Badge>
+                </td>
+                <td className="py-2 px-3">
+                  <Badge
+                    size="sm"
+                    variant={project.billing_status === "invoiced" ? "completed" : project.billing_status === "pending" ? "warning" : "outline"}
+                    className="font-mono text-[10px] uppercase"
+                  >
+                    {project.billing_status === "invoiced" ? "Facturado" : project.billing_status === "pending" ? "Pendiente" : "Sin registros"}
+                  </Badge>
+                </td>
+                <td className="py-2 px-3">
+                  <Link
+                    href={`/client-portal/projects/${project.id}`}
+                    className="inline-flex text-muted-foreground hover:text-primary transition-colors"
+                    aria-label={`Ver ${project.name}`}
+                  >
+                    <ChevronRight className="h-4 w-4" />
+                  </Link>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
 
       {projects.length === 0 && (
-        <div className="text-center py-20 border-2 border-dashed rounded-xl">
-          <FolderKanban className="h-12 w-12 text-muted-foreground mx-auto mb-4 opacity-20" />
-          <h2 className="text-xl font-semibold">No hay proyectos asignados</h2>
-          <p className="text-muted-foreground mt-1">
-            Si crees que esto es un error, por favor contacta al administrador.
+        <div className="text-center py-12 border border-dashed rounded-lg">
+          <p className="text-sm font-medium">No hay proyectos asignados</p>
+          <p className="text-muted-foreground text-xs mt-1">
+            Si crees que esto es un error, contacta al administrador.
           </p>
         </div>
       )}

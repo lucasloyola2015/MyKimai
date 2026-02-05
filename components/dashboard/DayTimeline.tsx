@@ -14,9 +14,11 @@ interface DayTimelineProps {
     endTime: Date | null;
     breaks?: Break[];
     className?: string;
+    /** Variante compacta: barra más baja y sin etiquetas 00h/24h (para tablas o listas). */
+    compact?: boolean;
 }
 
-export function DayTimeline({ startTime, endTime, breaks = [], className }: DayTimelineProps) {
+export function DayTimeline({ startTime, endTime, breaks = [], className, compact = false }: DayTimelineProps) {
     const dayStart = startOfDay(startTime);
     const dayEnd = endOfDay(startTime);
     const TOTAL_MINUTES = 1440;
@@ -81,8 +83,11 @@ export function DayTimeline({ startTime, endTime, breaks = [], className }: DayT
     }
 
     return (
-        <div className={cn("mt-4 space-y-1.5", className)}>
-            <div className="relative h-2 w-full bg-slate-100 rounded-full overflow-hidden border border-slate-200">
+        <div className={cn(compact ? "mt-1 space-y-0.5" : "mt-4 space-y-1.5", className)}>
+            <div className={cn(
+                "relative w-full bg-slate-100 rounded-full overflow-hidden border border-slate-200",
+                compact ? "h-1.5" : "h-2"
+            )}>
                 {segments.map((seg, idx) => (
                     <div
                         key={idx}
@@ -98,14 +103,16 @@ export function DayTimeline({ startTime, endTime, breaks = [], className }: DayT
                 ))}
             </div>
 
-            {/* Ticks/Labels */}
-            <div className="flex justify-between px-0.5 text-[10px] font-medium text-slate-400">
-                <span>00h</span>
-                <span>06h</span>
-                <span>12h</span>
-                <span>18h</span>
-                <span>24h</span>
-            </div>
+            {/* Ticks/Labels (ocultos en compacto) */}
+            {!compact && (
+                <div className="flex justify-between px-0.5 text-[10px] font-medium text-slate-400">
+                    <span>00h</span>
+                    <span>06h</span>
+                    <span>12h</span>
+                    <span>18h</span>
+                    <span>24h</span>
+                </div>
+            )}
         </div>
     );
 }

@@ -246,23 +246,28 @@ export async function getPortalProjects() {
 
     return projects.map(project => {
         let totalMinutes = 0;
-        let totalAmount = 0;
+        let lastEntryDate: Date | null = null;
+        let hasUnbilled = false;
 
         project.tasks.forEach(task => {
             task.time_entries.forEach(entry => {
                 const totals = computeEntryTotals(entry as any);
                 totalMinutes += totals.duration_minutes;
-                totalAmount += totals.amount;
+                const start = new Date(entry.start_time);
+                if (!lastEntryDate || start > lastEntryDate) lastEntryDate = start;
+                if (!entry.is_billed) hasUnbilled = true;
             });
         });
 
-        // Eliminar tasks de la respuesta para el cliente para limpiar el payload
+        // Eliminar tasks de la respuesta para el cliente para limpiar el payload.
+        // No exponer total_amount: montos solo en módulo de facturación (portal).
         const { tasks, ...projectData } = project;
 
         return {
             ...projectData,
             total_hours: totalMinutes / 60,
-            total_amount: totalAmount,
+            last_entry_date: lastEntryDate != null ? (lastEntryDate as Date).toISOString() : null,
+            billing_status: hasUnbilled ? "pending" : (totalMinutes > 0 ? "invoiced" : "none"),
         };
     });
 }
@@ -297,32 +302,34 @@ export async function getPortalProjectDetail(projectId: string) {
 
     if (!project) return null;
 
-    // Procesar tareas para obtener totales por tarea
+    // Procesar tareas: solo horas netas (sin montos; visibilidad monetaria solo en facturación).
     const tasksWithStats = project.tasks.map(task => {
         let taskMinutes = 0;
-        let taskAmount = 0;
 
         task.time_entries.forEach(entry => {
             const totals = computeEntryTotals(entry as any);
             taskMinutes += totals.duration_minutes;
-            taskAmount += totals.amount;
         });
 
         return {
             ...task,
             total_hours: taskMinutes / 60,
-            total_amount: taskAmount,
         };
     });
 
-    // Aplanar registros de tiempo para una vista cronológica global del proyecto
+    // Aplanar registros: duración neta + breaks para la barra de tiempo (auditoría visual de jornada).
     const allTimeEntries = project.tasks.flatMap(task =>
         task.time_entries.map(entry => {
             const totals = computeEntryTotals(entry as any);
             return {
-                ...entry,
-                ...totals,
+                id: entry.id,
+                start_time: entry.start_time,
+                end_time: entry.end_time,
+                description: entry.description,
+                is_billed: entry.is_billed,
+                duration_minutes: totals.duration_minutes,
                 taskName: task.name,
+                breaks: entry.breaks ?? [],
             };
         })
     ).sort((a, b) => new Date(b.start_time).getTime() - new Date(a.start_time).getTime());

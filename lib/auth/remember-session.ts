@@ -4,16 +4,23 @@ export const REMEMBER_COOKIE_NAME = "remember_session";
 /** 30 días en segundos */
 export const REMEMBER_MAX_AGE = 30 * 24 * 60 * 60;
 
-const BASE_OPTIONS = { path: "/", sameSite: "lax" as const };
+const BASE_OPTIONS = {
+  path: "/",
+  sameSite: "lax" as const,
+  /** Secure en producción para HTTPS (requerido para SameSite en algunos navegadores). */
+  secure: typeof process !== "undefined" && process.env.NODE_ENV === "production",
+};
 
 /**
  * Opciones para cookies de auth.
  * - Con "recordar": maxAge 30 días (persiste al cerrar navegador).
  * - Sin "recordar": sesión (expira al cerrar navegador).
+ * - SameSite=Lax y Secure (en producción) para compatibilidad y seguridad.
  */
 export function getAuthCookieOptions(remember: boolean): {
   path: string;
   sameSite: "lax";
+  secure: boolean;
   maxAge?: number;
 } {
   return remember

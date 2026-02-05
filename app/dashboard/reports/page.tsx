@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/select";
 import { Download } from "lucide-react";
 import { format } from "date-fns";
+import { formatDateTime24 } from "@/lib/date-format";
 import { getClients } from "@/lib/actions/clients";
 import { getTimeEntries } from "@/lib/actions/time-entries";
 import type { clients, time_entries } from "@prisma/client";
@@ -97,7 +98,7 @@ export default function ReportsPage() {
       const client = project?.client;
 
       return [
-        format(new Date(entry.start_time), "dd/MM/yyyy HH:mm"),
+        formatDateTime24(new Date(entry.start_time)),
         client?.name || "",
         project?.name || "",
         task?.name || "",
@@ -237,7 +238,7 @@ export default function ReportsPage() {
                     <p className="text-muted-foreground">{entry.description}</p>
                   )}
                   <p className="text-xs text-muted-foreground mt-2">
-                    {format(new Date(entry.start_time), "dd/MM/yyyy HH:mm")}
+                    {formatDateTime24(new Date(entry.start_time))}
                   </p>
                 </div>
               );

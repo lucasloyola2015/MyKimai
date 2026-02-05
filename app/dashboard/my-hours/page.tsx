@@ -37,6 +37,7 @@ import {
   type ConsolidationPreview
 } from "@/lib/actions/time-entries";
 import { format, differenceInMinutes } from "date-fns";
+import { formatTime24 } from "@/lib/date-format";
 import { toast } from "@/hooks/use-toast";
 import { cn, calculateNetDurationMinutes } from "@/lib/utils";
 import type { clients, projects, time_entries } from "@prisma/client";
@@ -129,15 +130,15 @@ export default function Page() {
     setFormData({
       description: entry.description || "",
       start_date: format(startDate, "yyyy-MM-dd"),
-      start_time: format(startDate, "HH:mm"),
+      start_time: formatTime24(startDate),
       end_date: format(endDate, "yyyy-MM-dd"),
-      end_time: entry.end_time ? format(endDate, "HH:mm") : "",
+      end_time: entry.end_time ? formatTime24(endDate) : "",
     });
     const breakValues: Record<string, { start: string; end: string }> = {};
     (entry.breaks || []).forEach((b: any) => {
       breakValues[b.id] = {
-        start: format(new Date(b.start_time), "HH:mm"),
-        end: b.end_time ? format(new Date(b.end_time), "HH:mm") : "",
+        start: formatTime24(new Date(b.start_time)),
+        end: b.end_time ? formatTime24(new Date(b.end_time)) : "",
       };
     });
     setBreakFormValues(breakValues);
@@ -245,8 +246,8 @@ export default function Page() {
           (updated.breaks || []).forEach((br: any) => {
             if (!(br.id in next))
               next[br.id] = {
-                start: format(new Date(br.start_time), "HH:mm"),
-                end: br.end_time ? format(new Date(br.end_time), "HH:mm") : "",
+                start: formatTime24(new Date(br.start_time)),
+                end: br.end_time ? formatTime24(new Date(br.end_time)) : "",
               };
           });
           return next;
@@ -731,8 +732,8 @@ export default function Page() {
                   {editingEntry?.breaks?.length > 0 ? (
                     editingEntry.breaks.map((b: any) => {
                       const breakVal = breakFormValues[b.id] ?? {
-                        start: format(new Date(b.start_time), "HH:mm"),
-                        end: b.end_time ? format(new Date(b.end_time), "HH:mm") : "",
+                        start: formatTime24(new Date(b.start_time)),
+                        end: b.end_time ? formatTime24(new Date(b.end_time)) : "",
                       };
                       return (
                         <div key={b.id} className="flex items-center gap-2 bg-muted/50 p-2 rounded-md">

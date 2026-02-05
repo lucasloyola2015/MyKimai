@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useTheme } from "next-themes";
 import { createClientComponentClient } from "@/lib/supabase/client";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -29,13 +30,9 @@ import {
   subDays,
   subWeeks,
   subMonths,
-  addDays,
-  addWeeks,
-  addMonths,
   parse,
-  isSameMonth,
-  isSameWeek,
 } from "date-fns";
+import { es } from "date-fns/locale";
 import { Loader2, Calendar, ChevronLeft, ChevronRight } from "lucide-react";
 
 type TimePeriod = "day" | "week" | "month";
@@ -88,6 +85,10 @@ export function HoursChart() {
     hours: number;
   } | null>(null);
   const supabase = createClientComponentClient();
+  const { resolvedTheme } = useTheme();
+  const isDark = resolvedTheme === "dark";
+  const chartGridStroke = isDark ? "hsl(0,0%,25%)" : undefined;
+  const chartTickFill = isDark ? "hsl(215,15%,75%)" : undefined;
 
   useEffect(() => {
     loadData();
@@ -108,44 +109,32 @@ export function HoursChart() {
       let endDate: Date;
       let periodCount: number;
 
+      const ROLLING_PERIODS = 7;
       switch (period) {
         case "day": {
-          periodCount = 7; // Mostrar 7 días (una semana completa)
-          const weekOptions = { weekStartsOn: 1 as const }; // Lunes = 1
-          
-          // Calcular el lunes de la semana actual o del período seleccionado
-          let targetMonday: Date;
-          if (periodOffset === 0) {
-            // Semana actual: encontrar el lunes de esta semana
-            targetMonday = startOfWeek(now, weekOptions);
-          } else {
-            // Períodos anteriores: retroceder semanas completas
-            const weeksToGoBack = Math.abs(periodOffset);
-            targetMonday = startOfWeek(subWeeks(now, weeksToGoBack), weekOptions);
-          }
-          
-          // El rango va desde el lunes hasta el domingo (7 días)
-          startDate = startOfDay(targetMonday);
-          endDate = endOfDay(subDays(targetMonday, -6)); // 6 días después del lunes = domingo
+          // Últimos 7 días terminando en hoy (rolling)
+          endDate =
+            periodOffset === 0
+              ? endOfDay(now)
+              : endOfDay(subDays(now, Math.abs(periodOffset) * ROLLING_PERIODS));
+          startDate = startOfDay(subDays(endDate, ROLLING_PERIODS - 1));
           break;
         }
         case "week": {
-          periodCount = 8; // Mostrar 8 semanas
-          const weekOptions = { weekStartsOn: 1 as const }; // Lunes = 1
-          const baseEnd = periodOffset === 0
-            ? endOfWeek(now, weekOptions)
-            : endOfWeek(subWeeks(now, Math.abs(periodOffset) * periodCount), weekOptions);
-          endDate = baseEnd;
-          startDate = startOfWeek(subWeeks(baseEnd, periodCount - 1), weekOptions);
+          const weekOptions = { weekStartsOn: 1 as const };
+          endDate =
+            periodOffset === 0
+              ? endOfWeek(now, weekOptions)
+              : endOfWeek(subWeeks(now, Math.abs(periodOffset) * ROLLING_PERIODS), weekOptions);
+          startDate = startOfWeek(subWeeks(endDate, ROLLING_PERIODS - 1), weekOptions);
           break;
         }
         case "month": {
-          periodCount = 6; // Mostrar 6 meses
-          const baseEnd = periodOffset === 0
-            ? endOfMonth(now)
-            : endOfMonth(subMonths(now, Math.abs(periodOffset) * periodCount));
-          endDate = baseEnd;
-          startDate = startOfMonth(subMonths(baseEnd, periodCount - 1));
+          endDate =
+            periodOffset === 0
+              ? endOfMonth(now)
+              : endOfMonth(subMonths(now, Math.abs(periodOffset) * ROLLING_PERIODS));
+          startDate = startOfMonth(subMonths(endDate, ROLLING_PERIODS - 1));
           break;
         }
       }
@@ -215,7 +204,7 @@ export function HoursChart() {
           periodKey = `Sem ${format(startOfWeek(entryDate, { weekStartsOn: 1 }), "dd/MM")}`;
           break;
         case "month":
-          periodKey = format(entryDate, "MMM yyyy");
+          periodKey = format(entryDate, "MMM yyyy", { locale: es });
           break;
       }
 
@@ -257,7 +246,7 @@ export function HoursChart() {
           start: startOfMonth(startDate),
           end: endOfMonth(endDate),
         });
-        allPeriods = months.map((m) => format(m, "MMM yyyy"));
+        allPeriods = months.map((m) => format(m, "MMM yyyy", { locale: es }));
         break;
       }
     }
@@ -314,7 +303,7 @@ export function HoursChart() {
       try {
         // Parsear el mes (formato: "MMM yyyy" como "Jan 2026")
         // El año ya está incluido en el formato
-        const monthDate = parse(clickedPeriod, "MMM yyyy", new Date());
+        const monthDate = parse(clickedPeriod, "MMM yyyy", new Date(), { locale: es });
         
         // Calcular el lunes de la primera semana de ese mes
         const monthStart = startOfMonth(monthDate);
@@ -328,10 +317,9 @@ export function HoursChart() {
           (nowWeekStart.getTime() - monthStartWeek.getTime()) / (7 * 24 * 60 * 60 * 1000)
         );
         
-        // Cambiar a modo semana con el offset calculado
-        // Mostrar 8 semanas, así que ajustamos el offset para que el mes quede visible
+        // Cambiar a modo semana con el offset calculado (ventana de 7 semanas)
         setPeriod("week");
-        setPeriodOffset(-Math.floor(weeksDiff / 8)); // 8 semanas por vista
+        setPeriodOffset(-Math.floor(weeksDiff / 7));
       } catch (error) {
         console.error("Error parsing month:", error);
       }
@@ -468,19 +456,34 @@ export function HoursChart() {
             <BarChart
               data={chartData}
               margin={{ top: 20, right: 30, left: 20, bottom: 80 }}
+              barCategoryGap="12%"
+              barGap={2}
             >
-              <CartesianGrid strokeDasharray="3 3" opacity={0.1} />
+              <CartesianGrid strokeDasharray="3 3" stroke={chartGridStroke} opacity={isDark ? 0.25 : 0.1} />
               <XAxis
                 dataKey="period"
-                angle={-45}
+                angle={period === "day" ? -25 : -45}
                 textAnchor="end"
-                height={100}
-                tick={{ fontSize: 11 }}
+                height={80}
+                tick={{ fontSize: 10, fill: chartTickFill }}
                 interval={0}
+                tickFormatter={(value) => {
+                  if (period !== "day" || !dateRange.end) return value;
+                  const parts = dateRange.end.split("/");
+                  if (parts.length !== 3) return value;
+                  const [d, m] = value.split("/");
+                  if (!d || !m) return value;
+                  const year = parseInt(parts[2], 10);
+                  const month = parseInt(m, 10) - 1;
+                  const day = parseInt(d, 10);
+                  const date = new Date(year, month, day);
+                  if (Number.isNaN(date.getTime())) return value;
+                  return format(date, "EEE d", { locale: es });
+                }}
               />
               <YAxis
-                label={{ value: "Horas", angle: -90, position: "insideLeft", style: { textAnchor: "middle" } }}
-                tick={{ fontSize: 12 }}
+                label={{ value: "Horas", angle: -90, position: "insideLeft", style: { textAnchor: "middle", fill: chartTickFill } }}
+                tick={{ fontSize: 12, fill: chartTickFill }}
                 domain={[0, Math.ceil(maxHours * 1.1) || 8]}
                 allowDecimals={false}
               />

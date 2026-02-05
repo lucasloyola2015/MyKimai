@@ -3,6 +3,7 @@
 import * as React from "react";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
+import { formatTime24 } from "@/lib/date-format";
 import { Calendar as CalendarIcon, Clock } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -31,12 +32,12 @@ export function DateTimePicker({
   className,
 }: DateTimePickerProps) {
   const [timeValue, setTimeValue] = React.useState(
-    date ? format(date, "HH:mm") : ""
+    date ? formatTime24(date) : ""
   );
 
   React.useEffect(() => {
     if (date) {
-      setTimeValue(format(date, "HH:mm"));
+      setTimeValue(formatTime24(date));
     } else {
       setTimeValue("");
     }
@@ -60,7 +61,7 @@ export function DateTimePicker({
       const now = new Date();
       newDate.setHours(now.getHours(), now.getMinutes(), 0, 0);
       onDateChange(newDate);
-      setTimeValue(format(newDate, "HH:mm"));
+      setTimeValue(formatTime24(newDate));
     }
   };
 
@@ -119,6 +120,8 @@ export function DateTimePicker({
             onChange={handleTimeChange}
             className="pl-10 w-32"
             placeholder="HH:mm"
+            title="Hora en formato 24h (ej: 14:30)"
+            aria-description="Formato 24 horas"
           />
         </div>
       </div>

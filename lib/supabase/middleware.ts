@@ -6,9 +6,8 @@ import {
 } from "@/lib/auth/remember-session";
 
 export async function updateSession(request: NextRequest) {
-  let supabaseResponse = NextResponse.next({
-    request,
-  });
+  // Una única respuesta: todas las cookies se escriben aquí (evita perder Set-Cookie al refrescar sesión).
+  const response = NextResponse.next({ request });
 
   const remember =
     request.cookies.get(REMEMBER_COOKIE_NAME)?.value === "1";
@@ -25,26 +24,19 @@ export async function updateSession(request: NextRequest) {
         set(name: string, value: string, options: CookieOptions) {
           const opts = { ...options, ...authOpts };
           request.cookies.set({ name, value, ...opts });
-          supabaseResponse = NextResponse.next({
-            request: { headers: request.headers },
-          });
-          supabaseResponse.cookies.set({ name, value, ...opts });
+          response.cookies.set({ name, value, ...opts });
         },
         remove(name: string, options: CookieOptions) {
           const opts = { ...options, maxAge: 0 };
           request.cookies.set({ name, value: "", ...opts });
-          supabaseResponse = NextResponse.next({
-            request: { headers: request.headers },
-          });
-          supabaseResponse.cookies.set({ name, value: "", ...opts });
+          response.cookies.set({ name, value: "", ...opts });
         },
       },
     }
   );
 
-  // Verificamos el usuario para refrescar la sesión si es necesario.
-  // No usamos timeout manual aquí para evitar AbortError: signal is aborted
+  // Refresca la sesión si es necesario; los tokens se persisten con la duración según "recordar sesión".
   await supabase.auth.getUser();
 
-  return supabaseResponse;
+  return response;
 }

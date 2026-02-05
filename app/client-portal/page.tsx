@@ -1,24 +1,78 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Clock, FileText, TrendingUp, Calendar, AlertCircle } from "lucide-react";
-import { format } from "date-fns";
+import { useEffect, useState, useCallback } from "react";
+import { Card, CardContent } from "@/components/ui/card";
+import { Clock, FolderKanban, FileText, TrendingUp, AlertCircle } from "lucide-react";
+import { format, subWeeks, addWeeks, subMonths, addMonths } from "date-fns";
 import { es } from "date-fns/locale";
 import { getPortalDashboardData } from "@/lib/actions/portal";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
+import {
+    PortalHoursChart,
+    type PortalDrillLevel,
+} from "@/components/client-portal/PortalHoursChart";
+import { PortalProjectChart } from "@/components/client-portal/PortalProjectChart";
+import Link from "next/link";
 
 export default function ClientDashboardPage() {
     const [data, setData] = useState<any>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [workStatus, setWorkStatus] = useState<{ active: boolean; milestone?: string } | null>(null);
+    const [drillLevel, setDrillLevel] = useState<PortalDrillLevel>("month");
+    const [focusRange, setFocusRange] = useState<{ start: Date; end: Date } | null>(null);
+
+    const handleDrillDown = useCallback((range: { start: Date; end: Date }) => {
+        setFocusRange(range);
+        setDrillLevel((prev) =>
+            prev === "month" ? "week" : prev === "week" ? "day" : "hour"
+        );
+    }, []);
+
+    const handleDrillReset = useCallback(() => {
+        setFocusRange(null);
+        setDrillLevel("month");
+    }, []);
+
+    const handlePeriodSelect = useCallback(
+        (period: "day" | "week" | "month", range?: { start: Date; end: Date }) => {
+            if (period === "day" || period === "month") {
+                setFocusRange(null);
+                setDrillLevel("month");
+            } else if (period === "week" && range) {
+                setFocusRange(range);
+                setDrillLevel("day");
+            }
+        },
+        []
+    );
+
+    const handleNavigate = useCallback(
+        (delta: number) => {
+            setFocusRange((prev) => {
+                if (!prev) return null;
+                const n = Math.abs(delta) || 1;
+                if (drillLevel === "week") {
+                    return delta > 0
+                        ? { start: addMonths(prev.start, n), end: addMonths(prev.end, n) }
+                        : { start: subMonths(prev.start, n), end: subMonths(prev.end, n) };
+                }
+                if (drillLevel === "day") {
+                    return delta > 0
+                        ? { start: addWeeks(prev.start, n), end: addWeeks(prev.end, n) }
+                        : { start: subWeeks(prev.start, n), end: subWeeks(prev.end, n) };
+                }
+                return prev;
+            });
+        },
+        [drillLevel]
+    );
 
     useEffect(() => {
         loadDashboardData();
         fetchWorkStatus();
-        const interval = setInterval(fetchWorkStatus, 60000); // Actualizar cada minuto
+        const interval = setInterval(fetchWorkStatus, 60000);
         return () => clearInterval(interval);
     }, []);
 
@@ -49,22 +103,24 @@ export default function ClientDashboardPage() {
 
     if (loading) {
         return (
-            <div className="space-y-8 animate-pulse">
-                <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
-                    <div className="space-y-2">
-                        <Skeleton className="h-10 w-64" />
-                        <Skeleton className="h-5 w-80" />
-                    </div>
-                    <Skeleton className="h-12 w-40" />
+            <div className="space-y-6 animate-pulse">
+                <div>
+                    <Skeleton className="h-9 w-56 mb-1" />
+                    <Skeleton className="h-4 w-72" />
                 </div>
-                <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
-                    {[1, 2, 3, 4].map(i => (
-                        <Card key={i} className="h-32 bg-muted/20 border-none shadow-none" />
+                <div className="grid gap-4 sm:grid-cols-3">
+                    {[1, 2, 3].map((i) => (
+                        <Card key={i} className="border border-border bg-card">
+                            <CardContent className="pt-6">
+                                <Skeleton className="h-4 w-24 mb-3" />
+                                <Skeleton className="h-8 w-20" />
+                            </CardContent>
+                        </Card>
                     ))}
                 </div>
                 <div className="grid gap-6 md:grid-cols-2">
-                    <Skeleton className="h-48 w-full" />
-                    <Skeleton className="h-48 w-full" />
+                    <Skeleton className="h-80 rounded-lg border border-border" />
+                    <Skeleton className="h-80 rounded-lg border border-border" />
                 </div>
             </div>
         );
@@ -74,7 +130,7 @@ export default function ClientDashboardPage() {
         return (
             <div className="flex flex-col items-center justify-center py-20 text-center">
                 <AlertCircle className="h-12 w-12 text-destructive mb-4" />
-                <h2 className="text-2xl font-bold">Error de vinculación de cuenta</h2>
+                <h2 className="text-2xl font-bold text-foreground">Error de vinculación de cuenta</h2>
                 <p className="text-muted-foreground mt-2 max-w-md">
                     {error || "No se encontraron datos vinculados a tu cuenta de cliente."}
                 </p>
@@ -85,144 +141,154 @@ export default function ClientDashboardPage() {
         );
     }
 
-    const now = new Date();
-
     return (
-        <div className="space-y-8 animate-in fade-in duration-500">
-            <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
+        <div className="space-y-6 animate-in fade-in duration-300">
+            {/* Header: limpio, sin saturados */}
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
                 <div>
-                    <h1 className="text-4xl font-extrabold tracking-tight">Bienvenido, {data.clientName}</h1>
-                    <p className="text-muted-foreground mt-1 text-lg">
-                        Resumen de actividad y facturación al {format(new Date(), "d 'de' MMMM", { locale: es })}
+                    <h1 className="text-2xl font-bold tracking-tight text-foreground">
+                        {data.clientName}
+                    </h1>
+                    <p className="text-sm text-muted-foreground mt-0.5">
+                        Resumen al {format(new Date(), "d 'de' MMMM yyyy", { locale: es })}
                     </p>
                 </div>
-                <div className="bg-primary/5 border border-primary/20 rounded-lg px-4 py-2 flex items-center gap-3">
-                    <TrendingUp className="h-5 w-5 text-primary" />
+                <div className="flex items-center gap-2 rounded-lg border border-border bg-muted/30 px-3 py-2">
+                    <TrendingUp className="h-4 w-4 text-muted-foreground" />
                     <div>
-                        <p className="text-[10px] uppercase font-bold text-primary/70 leading-none">Cotización USD Oficial</p>
-                        <p className="text-xl font-mono font-bold text-primary">${data.exchangeRate.toFixed(2)}</p>
+                        <p className="text-[10px] uppercase tracking-wider text-muted-foreground">USD Oficial</p>
+                        <p className="text-sm font-mono font-semibold text-foreground">
+                            {data.exchangeRate.toFixed(2)}
+                        </p>
                     </div>
                 </div>
             </div>
 
-            {/* Live Activity Status */}
+            {/* Live: ingeniero trabajando */}
             {workStatus?.active && (
-                <Card className="border-none shadow-md bg-emerald-500/5 border-l-4 border-l-emerald-500 overflow-hidden animate-in slide-in-from-top-4 duration-700">
-                    <CardContent className="py-4 flex items-center gap-4">
-                        <div className="relative flex h-3 w-3">
-                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                            <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
-                        </div>
-                        <div className="flex-1">
-                            <p className="text-[10px] font-black text-emerald-800 uppercase tracking-widest mb-0.5">
-                                El Ingeniero está trabajando en este momento en:
+                <Card className="border-l-4 border-l-primary bg-primary/5 border-border">
+                    <CardContent className="py-3 flex items-center gap-3">
+                        <span className="relative flex h-2.5 w-2.5">
+                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-60" />
+                            <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-primary" />
+                        </span>
+                        <div>
+                            <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                                En curso
                             </p>
-                            <p className="text-lg font-bold text-emerald-950 italic leading-tight">
-                                {workStatus.milestone}
-                            </p>
+                            <p className="text-sm font-medium text-foreground">{workStatus.milestone}</p>
                         </div>
                     </CardContent>
                 </Card>
             )}
 
-            <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
-                <Card className="overflow-hidden border-none shadow-lg bg-gradient-to-br from-blue-600 to-blue-700 text-white">
-                    <CardHeader className="pb-2">
-                        <CardTitle className="text-sm font-medium flex items-center gap-2 opacity-80">
-                            <Clock className="h-4 w-4" />
-                            Horas este Mes
-                        </CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                        <div className="text-3xl font-bold">{data.hoursCurrentMonth.toFixed(1)}h</div>
-                        <p className="text-xs opacity-70 mt-1">
-                            vs {data.hoursPreviousMonth.toFixed(1)}h el mes pasado
+            {/* Tres métricas clave: paleta clean, monospace para números */}
+            <div className="grid gap-4 sm:grid-cols-3">
+                <Card className="border border-border bg-card shadow-sm">
+                    <CardContent className="pt-5 pb-5">
+                        <div className="flex items-center justify-between">
+                            <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                                Horas este mes
+                            </span>
+                            <Clock className="h-4 w-4 text-muted-foreground" />
+                        </div>
+                        <p className="mt-2 text-2xl font-mono font-bold text-foreground tabular-nums">
+                            {data.hoursCurrentMonth.toFixed(1)}h
+                        </p>
+                        <p className="text-[11px] text-muted-foreground mt-0.5">
+                            vs {data.hoursPreviousMonth.toFixed(1)}h mes anterior
                         </p>
                     </CardContent>
                 </Card>
 
-                <Card className="overflow-hidden border-none shadow-lg bg-gradient-to-br from-amber-500 to-orange-600 text-white">
-                    <CardHeader className="pb-2">
-                        <CardTitle className="text-sm font-medium flex items-center gap-2 opacity-80">
-                            <AlertCircle className="h-4 w-4" />
-                            Facturas Pendientes
-                        </CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                        <div className="text-3xl font-bold">{data.unpaidInvoices}</div>
-                        <p className="text-xs opacity-70 mt-1">
-                            Acción requerida para pago
+                <Card className="border border-border bg-card shadow-sm">
+                    <CardContent className="pt-5 pb-5">
+                        <div className="flex items-center justify-between">
+                            <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                                Proyectos activos
+                            </span>
+                            <FolderKanban className="h-4 w-4 text-muted-foreground" />
+                        </div>
+                        <p className="mt-2 text-2xl font-mono font-bold text-foreground tabular-nums">
+                            {data.activeProjectsCount ?? 0}
+                        </p>
+                        <p className="text-[11px] text-muted-foreground mt-0.5">
+                            Con trabajo registrado
                         </p>
                     </CardContent>
                 </Card>
 
-                <Card className="overflow-hidden border-none shadow-lg bg-gradient-to-br from-emerald-600 to-teal-700 text-white">
-                    <CardHeader className="pb-2">
-                        <CardTitle className="text-sm font-medium flex items-center gap-2 opacity-80">
+                <Card className="border border-border bg-card shadow-sm">
+                    <CardContent className="pt-5 pb-5">
+                        <div className="flex items-center justify-between">
+                            <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                                Última factura
+                            </span>
+                            <FileText className="h-4 w-4 text-muted-foreground" />
+                        </div>
+                        {data.lastInvoice ? (
+                            <>
+                                <p className="mt-2 text-2xl font-mono font-bold text-foreground tabular-nums">
+                                    {data.lastInvoice.currency} {Number(data.lastInvoice.total_amount).toLocaleString()}
+                                </p>
+                                <p className="text-[11px] text-muted-foreground mt-0.5">
+                                    Última emitida
+                                </p>
+                            </>
+                        ) : (
+                            <>
+                                <p className="mt-2 text-lg font-mono text-muted-foreground">—</p>
+                                <p className="text-[11px] text-muted-foreground mt-0.5">
+                                    Sin facturas aún
+                                </p>
+                            </>
+                        )}
+                    </CardContent>
+                </Card>
+            </div>
+
+            {/* Gráficas: drill-down sincronizado + distribución por proyecto */}
+            <div className="grid gap-6 lg:grid-cols-5 items-stretch">
+                <div className="lg:col-span-3 flex min-h-[420px]">
+                    <PortalHoursChart
+                        drillLevel={drillLevel}
+                        focusRange={focusRange}
+                        onDrillDown={handleDrillDown}
+                        onReset={handleDrillReset}
+                        onPeriodSelect={handlePeriodSelect}
+                        onNavigate={handleNavigate}
+                        className="flex-1 min-h-0 flex flex-col"
+                    />
+                </div>
+                <div className="lg:col-span-2 flex min-h-[420px]">
+                    <PortalProjectChart dateRange={focusRange} className="flex-1 min-h-0 flex flex-col" />
+                </div>
+            </div>
+
+            {/* Enlaces rápidos: discreto */}
+            <Card className="border border-border bg-card shadow-sm">
+                <CardContent className="py-4">
+                    <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-3">
+                        Acceso rápido
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                        <Link
+                            href="/client-portal/invoices"
+                            className="inline-flex items-center gap-2 rounded-md border border-border bg-background px-3 py-2 text-sm font-medium text-foreground hover:bg-muted transition-colors"
+                        >
                             <FileText className="h-4 w-4" />
-                            Saldo Pendiente Total
-                        </CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                        <div className="text-3xl font-bold">{data.currency} {Number(data.totalUnpaidAmount).toLocaleString()}</div>
-                        <p className="text-xs opacity-70 mt-1">
-                            Monto total de facturas no pagas
-                        </p>
-                    </CardContent>
-                </Card>
-
-                <Card className="overflow-hidden border-none shadow-lg bg-muted/50 border border-border">
-                    <CardHeader className="pb-2">
-                        <CardTitle className="text-sm font-medium flex items-center gap-2 text-muted-foreground">
-                            <Calendar className="h-4 w-4" />
-                            Ciclo de Facturación
-                        </CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                        <div className="text-xl font-bold">Mensual</div>
-                        <p className="text-xs text-muted-foreground mt-1">
-                            Próximo cierre: {format(new Date(now.getFullYear(), now.getMonth() + 1, 0), "dd/MM/yyyy")}
-                        </p>
-                    </CardContent>
-                </Card>
-            </div>
-
-            <div className="grid gap-6 md:grid-cols-2">
-                <Card>
-                    <CardHeader>
-                        <CardTitle className="text-lg">Enlaces Rápidos</CardTitle>
-                    </CardHeader>
-                    <CardContent className="grid gap-2">
-                        <a href="/client-portal/invoices" className="flex items-center justify-between p-3 rounded-lg border hover:bg-muted transition-colors">
-                            <div className="flex items-center gap-3">
-                                <FileText className="h-5 w-5 text-blue-500" />
-                                <span className="font-medium">Ver todas mis facturas</span>
-                            </div>
-                        </a>
-                        <a href="/client-portal/projects" className="flex items-center justify-between p-3 rounded-lg border hover:bg-muted transition-colors">
-                            <div className="flex items-center gap-3">
-                                <Clock className="h-5 w-5 text-emerald-500" />
-                                <span className="font-medium">Detalle de horas por proyecto</span>
-                            </div>
-                        </a>
-                    </CardContent>
-                </Card>
-
-                <Card className="bg-primary/5 border-primary/10">
-                    <CardHeader>
-                        <CardTitle className="text-lg flex items-center gap-2">
-                            <AlertCircle className="h-5 w-5 text-primary" />
-                            Notas del Administrador
-                        </CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                        <p className="text-sm text-muted-foreground">
-                            Este es tu portal privado donde puedes auditar el trabajo realizado en tiempo real.
-                            Si tienes dudas sobre alguna factura o registro de tiempo, por favor contacta a soporte.
-                        </p>
-                    </CardContent>
-                </Card>
-            </div>
-        </div >
+                            Facturación
+                        </Link>
+                        <Link
+                            href="/client-portal/projects"
+                            className="inline-flex items-center gap-2 rounded-md border border-border bg-background px-3 py-2 text-sm font-medium text-foreground hover:bg-muted transition-colors"
+                        >
+                            <FolderKanban className="h-4 w-4" />
+                            Proyectos
+                        </Link>
+                    </div>
+                </CardContent>
+            </Card>
+        </div>
     );
 }

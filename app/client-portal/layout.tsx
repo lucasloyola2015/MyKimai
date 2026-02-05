@@ -14,9 +14,9 @@ export default async function ClientPortalLayout({
   }
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen bg-background w-full max-w-full overflow-x-hidden">
       <ClientPortalNav />
-      <main className="container mx-auto py-6">{children}</main>
+      <main className="w-full max-w-full mx-auto px-3 py-4 sm:px-4 md:py-6">{children}</main>
     </div>
   );
 }

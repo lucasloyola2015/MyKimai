@@ -99,6 +99,9 @@ export default function ClientsPage() {
             ? parseFloat(formData.default_rate)
             : null,
           notes: formData.notes || null,
+          ...(editingClient && formData.portal_password
+            ? { newPassword: formData.portal_password }
+            : {}),
         };
 
         if (editingClient) {
@@ -112,8 +115,10 @@ export default function ClientsPage() {
             return;
           }
 
-          // Si el estado de acceso web cambió o se puso password, llamar a la acción específica
-          if (formData.web_access_enabled !== editingClient.web_access_enabled || (formData.web_access_enabled && formData.portal_password)) {
+          // Solo llamar a toggle cuando se activa/desactiva el acceso o se habilita por primera vez (crear usuario en Auth)
+          const accessToggled = formData.web_access_enabled !== editingClient.web_access_enabled;
+          const firstTimeEnable = formData.web_access_enabled && !editingClient.portal_user_id && formData.portal_password;
+          if (accessToggled || firstTimeEnable) {
             const accessResult = await toggleClientWebAccess(
               editingClient.id,
               formData.web_access_enabled,
