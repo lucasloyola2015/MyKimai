@@ -1,9 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { createClientComponentClient } from "@/lib/supabase/client";
-import { setRememberSessionCookie } from "@/lib/auth/remember-session";
+import {
+  setRememberSessionCookie,
+  getRememberFromCookieString,
+} from "@/lib/auth/remember-session";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -15,6 +18,10 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [rememberSession, setRememberSession] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setRememberSession(getRememberFromCookieString(document.cookie || ""));
+  }, []);
   const [loading, setLoading] = useState(false);
   const router = useRouter();
   const supabase = createClientComponentClient();

@@ -14,7 +14,6 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { LogOut, User, Settings } from "lucide-react";
 import type { User as SupabaseUser } from "@supabase/supabase-js";
-import { clearRememberSessionCookie } from "@/lib/auth/remember-session";
 
 export function UserMenu() {
   const [user, setUser] = useState<SupabaseUser | null>(null);
@@ -46,7 +45,6 @@ export function UserMenu() {
   }, [supabase.auth]);
 
   const handleLogout = async () => {
-    clearRememberSessionCookie();
     await supabase.auth.signOut();
     router.push("/login");
     router.refresh();

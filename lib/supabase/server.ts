@@ -3,6 +3,7 @@ import { cookies } from "next/headers";
 import {
   REMEMBER_COOKIE_NAME,
   getAuthCookieOptions,
+  getBaseCookieOptions,
 } from "@/lib/auth/remember-session";
 
 export async function createServerComponentClient() {
@@ -14,7 +15,8 @@ export async function createServerComponentClient() {
   }
 
   const cookieStore = await cookies();
-  const remember = cookieStore.get(REMEMBER_COOKIE_NAME)?.value === "1";
+  const rememberVal = cookieStore.get(REMEMBER_COOKIE_NAME)?.value;
+  const remember = rememberVal !== "0";
   const authOpts = getAuthCookieOptions(remember);
 
   return createServerClient(
@@ -34,7 +36,8 @@ export async function createServerComponentClient() {
         },
         remove(name: string, options: CookieOptions) {
           try {
-            cookieStore.set({ name, value: "", ...options, maxAge: 0 });
+            const base = getBaseCookieOptions();
+            cookieStore.set({ name, value: "", ...base, ...options, maxAge: 0 });
           } catch {
             // Llamado desde Server Component; el middleware refresca sesiones.
           }

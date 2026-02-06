@@ -3,9 +3,8 @@ import { parse, serialize } from "cookie";
 import {
   getRememberFromCookieString,
   getAuthCookieOptions,
+  getBaseCookieOptions,
 } from "@/lib/auth/remember-session";
-
-const BASE = { path: "/", sameSite: "lax" as const };
 
 function createRememberAwareCookies() {
   return {
@@ -14,15 +13,20 @@ function createRememberAwareCookies() {
       const all = parse(document.cookie || "");
       return all[key] ?? null;
     },
-    set(key: string, value: string, _opts?: { path?: string; sameSite?: "lax"; maxAge?: number; secure?: boolean }) {
+    set(
+      key: string,
+      value: string,
+      _opts?: { path?: string; sameSite?: "lax"; maxAge?: number; secure?: boolean }
+    ) {
       if (typeof document === "undefined") return;
       const remember = getRememberFromCookieString(document.cookie || "");
       const opts = getAuthCookieOptions(remember);
-      document.cookie = serialize(key, value, { ...BASE, ...opts });
+      document.cookie = serialize(key, value, opts);
     },
     remove(key: string) {
       if (typeof document === "undefined") return;
-      document.cookie = serialize(key, "", { ...BASE, maxAge: 0 });
+      const base = getBaseCookieOptions();
+      document.cookie = serialize(key, "", { ...base, maxAge: 0 });
     },
   };
 }

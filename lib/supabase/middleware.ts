@@ -1,16 +1,16 @@
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import {
-  REMEMBER_COOKIE_NAME,
   getAuthCookieOptions,
+  getBaseCookieOptions,
+  getRememberFromCookieString,
 } from "@/lib/auth/remember-session";
 
 export async function updateSession(request: NextRequest) {
-  // Una única respuesta: todas las cookies se escriben aquí (evita perder Set-Cookie al refrescar sesión).
   const response = NextResponse.next({ request });
 
-  const remember =
-    request.cookies.get(REMEMBER_COOKIE_NAME)?.value === "1";
+  const cookieHeader = request.headers.get("cookie") || "";
+  const remember = getRememberFromCookieString(cookieHeader);
   const authOpts = getAuthCookieOptions(remember);
 
   const supabase = createServerClient(
@@ -27,7 +27,8 @@ export async function updateSession(request: NextRequest) {
           response.cookies.set({ name, value, ...opts });
         },
         remove(name: string, options: CookieOptions) {
-          const opts = { ...options, maxAge: 0 };
+          const base = getBaseCookieOptions();
+          const opts = { ...base, ...options, maxAge: 0 };
           request.cookies.set({ name, value: "", ...opts });
           response.cookies.set({ name, value: "", ...opts });
         },

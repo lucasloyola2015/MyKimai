@@ -1,39 +1,54 @@
 import { parse, serialize } from "cookie";
 
 export const REMEMBER_COOKIE_NAME = "remember_session";
-/** 30 días en segundos */
-export const REMEMBER_MAX_AGE = 30 * 24 * 60 * 60;
 
-const BASE_OPTIONS = {
-  path: "/",
-  sameSite: "lax" as const,
-  /** Secure en producción para HTTPS (requerido para SameSite en algunos navegadores). */
-  secure: typeof process !== "undefined" && process.env.NODE_ENV === "production",
-};
+/** 60 días en segundos - cookies de auth cuando "recordar" está activo */
+export const REMEMBER_MAX_AGE = 60 * 24 * 60 * 60;
+
+/** 7 días en segundos - cuando "recordar" está desactivado (evita cookies de sesión que los navegadores limpian agresivamente) */
+export const SESSION_MAX_AGE = 7 * 24 * 60 * 60;
+
+export function getBaseCookieOptions() {
+  const isProd = typeof process !== "undefined" && process.env.NODE_ENV === "production";
+  const isLocalhost =
+    typeof window !== "undefined" &&
+    /localhost|127\.0\.0\.1|\[::1\]/.test(window.location?.hostname || "");
+
+  return {
+    path: "/" as const,
+    sameSite: "lax" as const,
+    /** Secure solo en producción con HTTPS; nunca en localhost */
+    secure: isProd && !isLocalhost,
+  };
+}
 
 /**
- * Opciones para cookies de auth.
- * - Con "recordar": maxAge 30 días (persiste al cerrar navegador).
- * - Sin "recordar": sesión (expira al cerrar navegador).
- * - SameSite=Lax y Secure (en producción) para compatibilidad y seguridad.
+ * Opciones para cookies de auth de Supabase.
+ * - Con "recordar": maxAge 60 días (persiste al cerrar navegador).
+ * - Sin "recordar": maxAge 7 días (evita cookies de sesión que se pierden con frecuencia).
  */
 export function getAuthCookieOptions(remember: boolean): {
   path: string;
   sameSite: "lax";
   secure: boolean;
-  maxAge?: number;
+  maxAge: number;
 } {
-  return remember
-    ? { ...BASE_OPTIONS, maxAge: REMEMBER_MAX_AGE }
-    : { ...BASE_OPTIONS };
+  const base = getBaseCookieOptions();
+  return {
+    ...base,
+    maxAge: remember ? REMEMBER_MAX_AGE : SESSION_MAX_AGE,
+  };
 }
 
 /**
- * Lee si "recordar sesión" está activo desde un string de cookies (ej. document.cookie o header).
+ * Lee si "recordar sesión" está activo.
+ * Por defecto TRUE cuando la cookie no existe (mejor UX: sesión persiste).
  */
 export function getRememberFromCookieString(cookieString: string): boolean {
   const parsed = parse(cookieString || "");
-  return parsed[REMEMBER_COOKIE_NAME] === "1";
+  const value = parsed[REMEMBER_COOKIE_NAME];
+  if (value === undefined || value === "") return true;
+  return value === "1";
 }
 
 /**
@@ -43,19 +58,21 @@ export function getRememberFromCookieString(cookieString: string): boolean {
 export function setRememberSessionCookie(remember: boolean): void {
   if (typeof document === "undefined") return;
   const value = remember ? "1" : "0";
-  const opts = remember
-    ? { ...BASE_OPTIONS, maxAge: REMEMBER_MAX_AGE }
-    : BASE_OPTIONS;
+  const opts = {
+    ...getBaseCookieOptions(),
+    maxAge: REMEMBER_MAX_AGE, // La preferencia persiste 60 días
+  };
   document.cookie = serialize(REMEMBER_COOKIE_NAME, value, opts);
 }
 
 /**
- * Cliente: elimina la cookie "recordar sesión" (p. ej. al cerrar sesión).
+ * Opcional: eliminar la cookie al cerrar sesión.
+ * Por defecto NO la eliminamos para conservar la preferencia del usuario.
  */
 export function clearRememberSessionCookie(): void {
   if (typeof document === "undefined") return;
   document.cookie = serialize(REMEMBER_COOKIE_NAME, "", {
-    ...BASE_OPTIONS,
+    ...getBaseCookieOptions(),
     maxAge: 0,
   });
 }
