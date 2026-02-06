@@ -13,7 +13,6 @@ import {
     Package,
     BarChart3,
     Calendar,
-    Menu,
     X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -152,20 +151,6 @@ export function AppSidebar({ stats }: AppSidebarProps) {
                     <SidebarToggle isCollapsed={isCollapsed} onToggle={collapse} />
                 </div>
             </aside>
-
-            {/* Mobile menu button - Fixed top-left, área táctil 44px */}
-            <Button
-                variant="ghost"
-                size="icon"
-                className={cn(
-                    "fixed top-3 left-3 z-30 md:hidden min-h-[44px] min-w-[44px]",
-                    "bg-card border shadow-sm touch-manipulation"
-                )}
-                onClick={toggle}
-                aria-label="Abrir menú"
-            >
-                <Menu className="h-5 w-5" />
-            </Button>
         </>
     );
 }

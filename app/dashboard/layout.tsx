@@ -5,6 +5,7 @@ import { TopBar } from "@/components/layout/TopBar";
 import { PageErrorBoundary } from "@/components/layout/PageErrorBoundary";
 import { ChildrenDebugWrapper } from "@/components/layout/ChildrenDebugWrapper";
 import { ActiveTimeEntryProvider } from "@/contexts/active-time-entry-context";
+import { SidebarProvider } from "@/shared/contexts/SidebarContext";
 import { getNavStats } from "@/lib/actions/stats";
 import { getClientContext } from "@/lib/auth/server";
 import { redirect } from "next/navigation";
@@ -59,6 +60,7 @@ export default async function DashboardLayout({
   return (
     <ProtectedRoute>
       <ActiveTimeEntryProvider>
+        <SidebarProvider>
         <div className="flex min-h-screen bg-background">
           <Suspense fallback={<SidebarFallback />}>
             <SidebarWithStats />
@@ -78,6 +80,7 @@ export default async function DashboardLayout({
             </main>
           </div>
         </div>
+        </SidebarProvider>
       </ActiveTimeEntryProvider>
     </ProtectedRoute>
   );
