@@ -96,7 +96,7 @@ export default function ProjectDetailPage({ params }: { params: { id: string } }
                             <span className={cn(
                                 "text-xs px-2 py-1 rounded-full border",
                                 project.status === 'active'
-                                    ? "bg-blue-500/10 text-blue-600 border-blue-200"
+                                    ? "bg-primary/10 text-primary border-primary/30 dark:bg-primary/20 dark:border-primary/40"
                                     : "bg-muted text-muted-foreground border-border"
                             )}>
                                 {project.status === 'active' ? 'EN CURSO' : project.status.toUpperCase()}
@@ -111,8 +111,8 @@ export default function ProjectDetailPage({ params }: { params: { id: string } }
 
             {/* Tarjetas de Resumen (sin montos: solo horas y actividad) */}
             <div className="grid gap-6 md:grid-cols-2">
-                <Card className="border-none shadow-md bg-white">
-                    <CardHeader className="pb-2 flex flex-row items-center justify-between space-y-0 text-blue-600">
+                <Card className="border border-border bg-card shadow-sm">
+                    <CardHeader className="pb-2 flex flex-row items-center justify-between space-y-0 text-primary">
                         <CardTitle className="text-sm font-bold uppercase tracking-wider">Horas Consumidas</CardTitle>
                         <Clock className="h-5 w-5 opacity-70" />
                     </CardHeader>
@@ -124,8 +124,8 @@ export default function ProjectDetailPage({ params }: { params: { id: string } }
                     </CardContent>
                 </Card>
 
-                <Card className="border-none shadow-md bg-white">
-                    <CardHeader className="pb-2 flex flex-row items-center justify-between space-y-0 text-orange-600">
+                <Card className="border border-border bg-card shadow-sm">
+                    <CardHeader className="pb-2 flex flex-row items-center justify-between space-y-0 text-orange-600 dark:text-orange-400">
                         <CardTitle className="text-sm font-bold uppercase tracking-wider">Última Actividad</CardTitle>
                         <Calendar className="h-5 w-5 opacity-70" />
                     </CardHeader>
@@ -152,7 +152,7 @@ export default function ProjectDetailPage({ params }: { params: { id: string } }
                             <h4 className="font-bold border-b pb-2 mb-3">{task.name}</h4>
                             <div className="flex justify-between items-center text-sm">
                                 <span className="text-muted-foreground">Horas netas:</span>
-                                <span className="font-mono font-bold text-blue-600">{task.total_hours.toFixed(2)}h</span>
+                                <span className="font-mono font-bold text-primary">{task.total_hours.toFixed(2)}h</span>
                             </div>
                         </div>
                     ))}
@@ -168,13 +168,13 @@ export default function ProjectDetailPage({ params }: { params: { id: string } }
                             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                             <Input
                                 placeholder="Buscar por descripción..."
-                                className="pl-9 w-[250px] bg-white border border-border shadow-sm"
+                                className="pl-9 w-[250px]"
                                 value={searchTerm}
                                 onChange={(e) => setSearchTerm(e.target.value)}
                             />
                         </div>
                         <select
-                            className="bg-white border border-border shadow-sm rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary outline-none"
+                            className="bg-background border border-border shadow-sm rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-primary outline-none text-foreground"
                             value={filterTask}
                             onChange={(e) => setFilterTask(e.target.value)}
                         >
@@ -206,12 +206,12 @@ export default function ProjectDetailPage({ params }: { params: { id: string } }
                                                 <span className="font-mono text-muted-foreground">{formatTime24(start)} – {formatTime24(end)}</span>
                                                 <span className="font-mono font-bold text-foreground">{(entry.duration_minutes / 60).toFixed(2)}h</span>
                                                 {entry.is_billed ? (
-                                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-green-50 text-green-700 border border-green-200 text-[10px] font-black uppercase">
+                                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-green-500/10 text-green-700 dark:text-green-400 border border-green-500/30 dark:border-green-500/40 text-[10px] font-black uppercase">
                                                         <CheckCircle2 className="h-3 w-3" />
                                                         Facturado
                                                     </span>
                                                 ) : (
-                                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200 text-[10px] font-black uppercase">
+                                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-500/30 dark:border-amber-500/40 text-[10px] font-black uppercase">
                                                         Pendiente
                                                     </span>
                                                 )}

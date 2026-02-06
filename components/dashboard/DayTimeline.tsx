@@ -85,7 +85,7 @@ export function DayTimeline({ startTime, endTime, breaks = [], className, compac
     return (
         <div className={cn(compact ? "mt-1 space-y-0.5" : "mt-4 space-y-1.5", className)}>
             <div className={cn(
-                "relative w-full bg-slate-100 rounded-full overflow-hidden border border-slate-200",
+                "relative w-full bg-muted rounded-full overflow-hidden border border-border",
                 compact ? "h-1.5" : "h-2"
             )}>
                 {segments.map((seg, idx) => (
@@ -105,7 +105,7 @@ export function DayTimeline({ startTime, endTime, breaks = [], className, compac
 
             {/* Ticks/Labels (ocultos en compacto) */}
             {!compact && (
-                <div className="flex justify-between px-0.5 text-[10px] font-medium text-slate-400">
+                <div className="flex justify-between px-0.5 text-[10px] font-medium text-muted-foreground">
                     <span>00h</span>
                     <span>06h</span>
                     <span>12h</span>
