@@ -74,7 +74,7 @@ export default function PartialBillingPage() {
     }, [timeEntries, selectedIds]);
 
     const summary = useMemo(() => {
-        const totalMinutes = selectedEntries.reduce((sum, e) => sum + (e.duration_minutes || 0), 0);
+        const totalMinutes = selectedEntries.reduce((sum, e) => sum + (e.duration_neto || 0), 0);
 
         let subtotal = 0;
 
@@ -213,7 +213,7 @@ export default function PartialBillingPage() {
                                                 </div>
                                             </div>
                                             <div className="flex items-center gap-3 text-xs text-muted-foreground mt-1">
-                                                <span className="flex items-center gap-1"><Clock className="h-3 w-3" /> {(entry.duration_minutes / 60).toFixed(1)}h</span>
+                                                <span className="flex items-center gap-1"><Clock className="h-3 w-3" /> {(entry.duration_neto / 60).toFixed(1)}h</span>
                                                 <span>•</span>
                                                 <span>{format(new Date(entry.start_time), "dd MMM, yyyy")}</span>
                                                 <span>•</span>

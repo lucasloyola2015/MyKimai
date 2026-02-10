@@ -49,28 +49,28 @@ export default function DashboardPage() {
       // Hours today
       const { data: todayEntries } = await supabase
         .from("time_entries")
-        .select("duration_minutes")
+        .select("duration_neto")
         .eq("user_id", user.id)
         .gte("start_time", todayStart.toISOString())
         .lte("start_time", todayEnd.toISOString());
 
       const minutesToday =
         todayEntries?.reduce(
-          (sum, e) => sum + (e.duration_minutes || 0),
+          (sum, e) => sum + (e.duration_neto || 0),
           0
         ) || 0;
 
       // Hours this week
       const { data: weekEntries } = await supabase
         .from("time_entries")
-        .select("duration_minutes")
+        .select("duration_neto")
         .eq("user_id", user.id)
         .gte("start_time", weekStart.toISOString())
         .lte("start_time", weekEnd.toISOString());
 
       const minutesThisWeek =
         weekEntries?.reduce(
-          (sum, e) => sum + (e.duration_minutes || 0),
+          (sum, e) => sum + (e.duration_neto || 0),
           0
         ) || 0;
 

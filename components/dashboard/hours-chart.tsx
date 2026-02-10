@@ -46,7 +46,7 @@ interface ChartDataPoint {
 interface TimeEntryWithRelations {
   id: string;
   start_time: string;
-  duration_minutes: number | null;
+  duration_neto: number | null;
   tasks: {
     name: string;
     projects: {
@@ -182,7 +182,7 @@ export function HoursChart() {
     const dataMap = new Map<string, Map<string, number>>(); // period -> client -> hours
 
     entries.forEach((entry) => {
-      if (!entry.duration_minutes) return;
+      if (!entry.duration_neto) return;
 
       const clientId = entry.tasks?.projects?.clients?.id;
       const clientName = entry.tasks?.projects?.clients?.name || "Sin cliente";
@@ -213,7 +213,7 @@ export function HoursChart() {
       }
 
       const periodData = dataMap.get(periodKey)!;
-      const hours = (entry.duration_minutes || 0) / 60;
+      const hours = (entry.duration_neto || 0) / 60;
       periodData.set(key, (periodData.get(key) || 0) + hours);
     });
 
@@ -304,19 +304,19 @@ export function HoursChart() {
         // Parsear el mes (formato: "MMM yyyy" como "Jan 2026")
         // El año ya está incluido en el formato
         const monthDate = parse(clickedPeriod, "MMM yyyy", new Date(), { locale: es });
-        
+
         // Calcular el lunes de la primera semana de ese mes
         const monthStart = startOfMonth(monthDate);
         const monthStartWeek = startOfWeek(monthStart, weekOptions);
-        
+
         // Calcular el lunes de la semana actual
         const nowWeekStart = startOfWeek(now, weekOptions);
-        
+
         // Calcular diferencia en semanas
         const weeksDiff = Math.floor(
           (nowWeekStart.getTime() - monthStartWeek.getTime()) / (7 * 24 * 60 * 60 * 1000)
         );
-        
+
         // Cambiar a modo semana con el offset calculado (ventana de 7 semanas)
         setPeriod("week");
         setPeriodOffset(-Math.floor(weeksDiff / 7));
@@ -329,11 +329,11 @@ export function HoursChart() {
         // Parsear la semana (formato: "Sem dd/MM" como "Sem 01/01")
         const weekMatch = clickedPeriod.match(/Sem (\d{2}\/\d{2})/);
         if (!weekMatch) return;
-        
+
         const weekDateStr = weekMatch[1];
         // Parsear con el año actual como referencia
         const weekDate = parse(weekDateStr, "dd/MM", new Date());
-        
+
         // Ajustar el año: si el mes es mayor que el actual, probablemente es del año pasado
         if (weekDate.getMonth() > now.getMonth()) {
           weekDate.setFullYear(now.getFullYear() - 1);
@@ -341,16 +341,16 @@ export function HoursChart() {
           // Si es el mismo mes pero el día es mayor, también es del año pasado
           weekDate.setFullYear(now.getFullYear() - 1);
         }
-        
+
         // Calcular el lunes de esa semana
         const clickedWeekStart = startOfWeek(weekDate, weekOptions);
         const nowWeekStart = startOfWeek(now, weekOptions);
-        
+
         // Calcular diferencia en semanas
         const weeksDiff = Math.floor(
           (nowWeekStart.getTime() - clickedWeekStart.getTime()) / (7 * 24 * 60 * 60 * 1000)
         );
-        
+
         // Cambiar a modo día con el offset calculado
         setPeriod("day");
         setPeriodOffset(-weeksDiff); // Cada offset es una semana
@@ -375,38 +375,38 @@ export function HoursChart() {
           </div>
           <div className="flex flex-col gap-3">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-            <div className="flex gap-2 flex-wrap">
-              <Button
-                variant={period === "day" ? "default" : "outline"}
-                size="sm"
-                onClick={() => handlePeriodChange("day")}
-                className="min-w-[60px]"
-              >
-                Día
-              </Button>
-              <Button
-                variant={period === "week" ? "default" : "outline"}
-                size="sm"
-                onClick={() => handlePeriodChange("week")}
-                className="min-w-[60px]"
-              >
-                Semana
-              </Button>
-              <Button
-                variant={period === "month" ? "default" : "outline"}
-                size="sm"
-                onClick={() => handlePeriodChange("month")}
-                className="min-w-[60px]"
-              >
-                Mes
-              </Button>
-            </div>
-            {dateRange.start && dateRange.end && (
-              <div className="flex items-center gap-2 px-3 py-1.5 bg-muted rounded-md text-xs font-medium">
-                <Calendar className="h-3 w-3" />
-                <span>{dateRange.start} - {dateRange.end}</span>
+              <div className="flex gap-2 flex-wrap">
+                <Button
+                  variant={period === "day" ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => handlePeriodChange("day")}
+                  className="min-w-[60px]"
+                >
+                  Día
+                </Button>
+                <Button
+                  variant={period === "week" ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => handlePeriodChange("week")}
+                  className="min-w-[60px]"
+                >
+                  Semana
+                </Button>
+                <Button
+                  variant={period === "month" ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => handlePeriodChange("month")}
+                  className="min-w-[60px]"
+                >
+                  Mes
+                </Button>
               </div>
-            )}
+              {dateRange.start && dateRange.end && (
+                <div className="flex items-center gap-2 px-3 py-1.5 bg-muted rounded-md text-xs font-medium">
+                  <Calendar className="h-3 w-3" />
+                  <span>{dateRange.start} - {dateRange.end}</span>
+                </div>
+              )}
             </div>
             <div className="flex items-center gap-2">
               <Button
@@ -501,7 +501,7 @@ export function HoursChart() {
                     if (data && data.payload) {
                       payload = data.payload;
                     }
-                    
+
                     if (payload) {
                       const hours = payload[clientKey] as number;
                       if (hours && hours > 0) {
@@ -522,7 +522,7 @@ export function HoursChart() {
                     if (data && data.payload) {
                       payload = data.payload;
                     }
-                    
+
                     if (payload && payload.period) {
                       handleBarClick(payload, index);
                     }

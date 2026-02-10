@@ -544,7 +544,7 @@ export default function TimeTrackerPage() {
                           {task?.name || "Tarea eliminada"}
                         </p>
                         <p className="text-muted-foreground">
-                          {entry.duration_minutes} min
+                          {entry.duration_neto} min
                         </p>
                       </div>
                       {project && (

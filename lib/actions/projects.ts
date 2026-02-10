@@ -252,7 +252,7 @@ export async function getPortalProjects() {
         project.tasks.forEach(task => {
             task.time_entries.forEach(entry => {
                 const totals = computeEntryTotals(entry as any);
-                totalMinutes += totals.duration_minutes;
+                totalMinutes += totals.duration_neto;
                 const start = new Date(entry.start_time);
                 if (!lastEntryDate || start > lastEntryDate) lastEntryDate = start;
                 if (!entry.is_billed) hasUnbilled = true;
@@ -308,7 +308,7 @@ export async function getPortalProjectDetail(projectId: string) {
 
         task.time_entries.forEach(entry => {
             const totals = computeEntryTotals(entry as any);
-            taskMinutes += totals.duration_minutes;
+            taskMinutes += totals.duration_neto;
         });
 
         return {
@@ -327,7 +327,7 @@ export async function getPortalProjectDetail(projectId: string) {
                 end_time: entry.end_time,
                 description: entry.description,
                 is_billed: entry.is_billed,
-                duration_minutes: totals.duration_minutes,
+                duration_neto: totals.duration_neto,
                 taskName: task.name,
                 breaks: entry.breaks ?? [],
             };

@@ -118,7 +118,7 @@ export default function ProjectDetailPage({ params }: { params: { id: string } }
                     </CardHeader>
                     <CardContent>
                         <div className="text-3xl font-mono font-black">
-                            {(project.timeEntries.reduce((sum: number, e: any) => sum + (e.duration_minutes || 0), 0) / 60).toFixed(2)}h
+                            {(project.timeEntries.reduce((sum: number, e: any) => sum + (e.duration_neto || 0), 0) / 60).toFixed(2)}h
                         </div>
                         <p className="text-xs text-muted-foreground mt-1">Total acumulado del proyecto</p>
                     </CardContent>
@@ -190,7 +190,7 @@ export default function ProjectDetailPage({ params }: { params: { id: string } }
                     {filteredEntries.map((entry: any) => {
                         const start = new Date(entry.start_time);
                         const endTime = entry.end_time ? new Date(entry.end_time) : null;
-                        const endMs = endTime ? endTime.getTime() : start.getTime() + (entry.duration_minutes || 0) * 60 * 1000;
+                        const endMs = endTime ? endTime.getTime() : start.getTime() + (entry.duration_neto || 0) * 60 * 1000;
                         const end = new Date(endMs);
                         const breaks = (entry.breaks ?? []).map((b: any) => ({
                             start_time: b.start_time instanceof Date ? b.start_time : new Date(b.start_time),
@@ -204,7 +204,7 @@ export default function ProjectDetailPage({ params }: { params: { id: string } }
                                             <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
                                                 <span className="font-bold">{format(start, "dd/MM/yyyy")}</span>
                                                 <span className="font-mono text-muted-foreground">{formatTime24(start)} – {formatTime24(end)}</span>
-                                                <span className="font-mono font-bold text-foreground">{(entry.duration_minutes / 60).toFixed(2)}h</span>
+                                                <span className="font-mono font-bold text-foreground">{(entry.duration_neto / 60).toFixed(2)}h</span>
                                                 {entry.is_billed ? (
                                                     <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-green-500/10 text-green-700 dark:text-green-400 border border-green-500/30 dark:border-green-500/40 text-[10px] font-black uppercase">
                                                         <CheckCircle2 className="h-3 w-3" />

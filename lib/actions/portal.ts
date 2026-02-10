@@ -81,12 +81,12 @@ export async function getPortalDashboardData() {
 
     const hoursCurrent = (currentEntries.reduce((sum, e) => {
         const totals = computeEntryTotals(e as any);
-        return sum + totals.duration_minutes;
+        return sum + totals.duration_neto;
     }, 0)) / 60;
 
     const hoursPrev = (prevEntries.reduce((sum, e) => {
         const totals = computeEntryTotals(e as any);
-        return sum + totals.duration_minutes;
+        return sum + totals.duration_neto;
     }, 0)) / 60;
 
     // 4. Tipo de cambio actual
@@ -169,13 +169,13 @@ export async function getPortalUnbilledSummary(): Promise<
         const cur = entry.task.project.currency || "USD";
         const existing = byProject.get(pid);
         if (existing) {
-            existing.totalMinutes += totals.duration_minutes;
+            existing.totalMinutes += totals.duration_neto;
             existing.totalAmount += totals.amount;
         } else {
             byProject.set(pid, {
                 projectName: entry.task.project.name,
                 currency: cur,
-                totalMinutes: totals.duration_minutes,
+                totalMinutes: totals.duration_neto,
                 totalAmount: totals.amount,
             });
         }
@@ -257,7 +257,7 @@ export async function getPortalChartData(
 
     for (const entry of entries) {
         const totals = computeEntryTotals(entry as any);
-        const hours = totals.duration_minutes / 60;
+        const hours = totals.duration_neto / 60;
         const projectName = entry.task?.project?.name ?? "Sin proyecto";
         const entryDate = new Date(entry.start_time);
         let periodKey: string;
@@ -391,7 +391,7 @@ export async function getPortalChartDataInRange(
 
     for (const entry of entries) {
         const totals = computeEntryTotals(entry as any);
-        const hours = totals.duration_minutes / 60;
+        const hours = totals.duration_neto / 60;
         const projectName = entry.task?.project?.name ?? "Sin proyecto";
         const entryDate = new Date(entry.start_time);
         let periodKey: string;
@@ -465,7 +465,7 @@ export async function getPortalProjectDistribution(options?: {
     const byProject = new Map<string, number>();
     for (const entry of entries) {
         const totals = computeEntryTotals(entry as any);
-        const hours = totals.duration_minutes / 60;
+        const hours = totals.duration_neto / 60;
         const name = entry.task?.project?.name ?? "Sin proyecto";
         byProject.set(name, (byProject.get(name) ?? 0) + hours);
     }

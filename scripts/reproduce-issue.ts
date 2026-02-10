@@ -81,7 +81,7 @@ async function reproduce() {
                             invoice_id: invoice.id,
                             time_entry_id: entry.id,
                             description: entry.description || entry.task.name || "Trabajo",
-                            quantity: (entry.duration_minutes || 0) / 60,
+                            quantity: (entry.duration_neto || 0) / 60,
                             rate: Number(entry.rate_applied || 0),
                             amount: Number(entry.amount || 0),
                             type: "time",

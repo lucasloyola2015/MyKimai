@@ -140,7 +140,8 @@ model time_entries {
   description      String?
   start_time       DateTime            @db.Timestamptz(6)
   end_time         DateTime?           @db.Timestamptz(6)
-  duration_minutes Int?
+  duration_total   Int?
+  duration_neto    Int?                @default(0)
   billable         Boolean             @default(true)
   rate_applied     Decimal?            @db.Decimal(10, 2)
   amount           Decimal?            @db.Decimal(10, 2)

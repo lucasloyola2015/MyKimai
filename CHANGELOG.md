@@ -1,5 +1,38 @@
 # CHANGELOG - MyKimai
 
+## [2026-02-10] - Persistencia de montos por evento y cascada de precios (Harden Finance)
+### Documentación (@chronicler)
+*   **Implementación de persistencia de montos por evento y lógica de precios en cascada (Task > Project > Client) para garantizar inmutabilidad histórica**.
+
+### Base de Datos (@architect)
+*   **Cascada de Tarifas**: Creación de la función SQL \`get_cascade_rate\` para búsqueda jerárquica de tarifas (Tarea > Proyecto > Cliente).
+*   **Integridad del Monto**: El trigger principal ahora calcula el \`amount\` basándose en la tarifa capturada (\`rate_applied\`) y la duración neta. El cálculo es exclusivo del servidor.
+*   **Inmutabilidad**: Cambios en precios de clientes o proyectos no afectan registros históricos ya que la tarifa se persiste en cada fila al momento del registro.
+
+### Lógica de Servidor (@devops)
+*   **Función Centralizada**: Implementación de la Server Action \`calculateEntryAmount\` como único punto de entrada para refrescar tarifas en registros antiguos mediante el botón de recalcular.
+*   **Única Fuente de Verdad**: El campo \`amount\` en la base de datos es ahora el soberano para facturación, reportes y dashboards.
+
+### UI Segura (@designer)
+*   **Blindaje Frontend**: Se eliminó toda lógica de cálculo de montos en el cliente (\`computeEntryTotals\`). La UI muestra estrictamente lo persistido en la DB.
+*   **Seguridad Visual**: Los registros activos no muestran monto hasta ser cerrados, siguiendo la directiva de cálculo por evento de finalización.
+
+## [2026-02-06] - Migración de lógica de duración a Base de Datos (SSOT)
+### Documentación (@chronicler)
+*   **Migración de la lógica de cálculo de horas netas de la UI a la Base de Datos para establecer una única fuente de verdad (Single Source of Truth).**
+
+### Base de Datos (@architect)
+*   **Esquema**: Renombrado de \`duration_minutes\` a \`duration_total\` y adición de \`duration_neto\`.
+*   **Automatización**: Implementación de triggers en PostgreSQL que recalculan automáticamente el tiempo neto y el monto facturable cada vez que se modifica una jornada o se añade/edita una pausa.
+*   **Sincronización**: Script de migración ejecutado para actualizar todos los registros históricos con los nuevos campos persistidos.
+
+### UI y Dashboard (@designer)
+*   **Unificación**: Todos los componentes (Dashboard, Mis Horas, Gráficas, Reportes, Portal de Cliente) consumen ahora directamente \`duration_neto\` del servidor, eliminando discrepancias de cálculo en el cliente.
+*   **Visualización**: Desglose de horas Bruto/Pausas/Neto en 'Mis Horas' ahora proviene íntegramente de los campos persistidos.
+
+### Resultado
+*   Cálculos 100% consistentes en todas las vistas. El servidor de base de datos es ahora el soberano de la lógica matemática del tiempo.
+
 ## [2026-02-05] - Estandarización técnica: Formato de 24 horas en todo el sistema
 ### Documentación (@chronicler)
 *   **Estandarización técnica: Migración global a formato de 24 horas en todas las interfaces y componentes del sistema.**

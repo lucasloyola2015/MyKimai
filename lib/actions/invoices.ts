@@ -309,7 +309,7 @@ export async function createInvoiceFromTimeEntries(data: {
                             invoice_id: invoice.id,
                             time_entry_id: entry.id,
                             description: entry.description || entry.task.name || "Trabajo",
-                            quantity: (entry.duration_minutes || 0) / 60,
+                            quantity: (entry.duration_neto || 0) / 60,
                             rate: itemRate,
                             amount: itemAmount,
                             type: "time",
@@ -541,7 +541,7 @@ export async function getClientBillingSummary() {
         );
 
         const unbilledMinutes = clientUnbilledEntries.reduce(
-            (sum, entry) => sum + (entry.duration_minutes || 0),
+            (sum, entry) => sum + (entry.duration_neto || 0),
             0
         );
         const unbilledAmount = clientUnbilledEntries.reduce(

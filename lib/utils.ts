@@ -43,27 +43,22 @@ export function calculateNetDurationMinutes(
   return Math.round(netMs / 60000);
 }
 
-/**
- * Unifica el cálculo de duración y monto para un entry.
- * Usado tanto en el admin como en el portal para garantizar consistencia.
- */
 export function computeEntryTotals(entry: {
   start_time: Date;
   end_time: Date | null;
   breaks?: { start_time: Date; end_time: Date | null }[];
+  duration_neto?: number | null;
   rate_applied: any;
+  amount?: any;
 }) {
-  const netMinutes = calculateNetDurationMinutes(
-    entry.start_time,
-    entry.end_time,
-    entry.breaks || []
-  );
-  const rate = Number(entry.rate_applied || 0);
-  const amount = Number(((netMinutes / 60) * rate).toFixed(2));
+  // Siempre priorizar el valor persistido en DB para mantener la integridad financiera (SSOT)
+  const netMinutes = entry.duration_neto !== undefined && entry.duration_neto !== null && entry.end_time
+    ? entry.duration_neto
+    : calculateNetDurationMinutes(entry.start_time, entry.end_time, entry.breaks || []);
 
   return {
-    duration_minutes: netMinutes,
-    amount: amount
+    duration_neto: netMinutes,
+    amount: Number(entry.amount || 0)
   };
 }
 

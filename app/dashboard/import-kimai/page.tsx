@@ -241,7 +241,8 @@ export default function ImportKimaiPage() {
           description: row.Description || null,
           start_time: startTime,
           end_time: endTime,
-          duration_minutes: durationMinutes,
+          duration_total: durationMinutes,
+          duration_neto: durationMinutes,
           billable: billable,
           rate_applied: hourlyRate,
         };

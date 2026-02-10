@@ -103,8 +103,8 @@ export default function ReportsPage() {
         project?.name || "",
         task?.name || "",
         entry.description || "",
-        entry.duration_minutes || 0,
-        ((entry.duration_minutes || 0) / 60).toFixed(2),
+        entry.duration_neto || 0,
+        ((entry.duration_neto || 0) / 60).toFixed(2),
         Number(entry.rate_applied || 0),
         Number(entry.amount || 0),
       ];
@@ -225,7 +225,7 @@ export default function ReportsPage() {
                     </div>
                     <div className="text-right">
                       <p className="font-medium">
-                        {(entry.duration_minutes || 0) / 60}h
+                        {(entry.duration_neto || 0) / 60}h
                       </p>
                       {entry.amount && (
                         <p className="text-muted-foreground">

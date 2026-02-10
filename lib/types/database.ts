@@ -137,7 +137,8 @@ export interface Database {
           description: string | null;
           start_time: string;
           end_time: string | null;
-          duration_minutes: number | null;
+          duration_total: number | null;
+          duration_neto: number | null;
           billable: boolean;
           rate_applied: number | null;
           amount: number | null;
@@ -151,7 +152,8 @@ export interface Database {
           description?: string | null;
           start_time: string;
           end_time?: string | null;
-          duration_minutes?: number | null;
+          duration_total?: number | null;
+          duration_neto?: number | null;
           billable?: boolean;
           rate_applied?: number | null;
           amount?: number | null;
@@ -165,7 +167,8 @@ export interface Database {
           description?: string | null;
           start_time?: string;
           end_time?: string | null;
-          duration_minutes?: number | null;
+          duration_total?: number | null;
+          duration_neto?: number | null;
           billable?: boolean;
           rate_applied?: number | null;
           amount?: number | null;

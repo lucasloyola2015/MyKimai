@@ -540,21 +540,21 @@ export default function Page() {
                         <div className="text-center">
                           <p className="text-[6px] font-black text-slate-400 uppercase tracking-tighter leading-none mb-0.5">Bruto</p>
                           <p className="text-[10px] font-mono font-medium text-slate-500 leading-none">
-                            {(differenceInMinutes(entry.end_time || new Date(), entry.start_time) / 60).toFixed(2)}h
+                            {((entry.duration_total || 0) / 60).toFixed(2)}h
                           </p>
                         </div>
                         <div className="text-slate-300 text-[10px] font-light">-</div>
                         <div className="text-center">
                           <p className="text-[6px] font-black text-orange-400 uppercase tracking-tighter leading-none mb-0.5">Pausas</p>
                           <p className="text-[10px] font-mono font-bold text-orange-600 leading-none">
-                            {((differenceInMinutes(entry.end_time || new Date(), entry.start_time) - (entry.duration_minutes || 0)) / 60).toFixed(2)}h
+                            {(((entry.duration_total || 0) - (entry.duration_neto || 0)) / 60).toFixed(2)}h
                           </p>
                         </div>
                         <div className="text-slate-300 text-[10px] font-light">=</div>
                         <div className="text-center min-w-[35px]">
                           <p className="text-[6px] font-black text-blue-400 uppercase tracking-tighter leading-none mb-0.5">Neto</p>
                           <p className="text-[11px] font-mono font-black text-blue-700 leading-none">
-                            {((entry.duration_minutes || 0) / 60).toFixed(2)}h
+                            {((entry.duration_neto || 0) / 60).toFixed(2)}h
                           </p>
                         </div>
                       </div>

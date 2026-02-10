@@ -68,7 +68,7 @@ export async function getNavStats() {
                         },
                     },
                     select: {
-                        duration_minutes: true,
+                        duration_neto: true,
                     },
                 }),
             ]);
@@ -79,7 +79,7 @@ export async function getNavStats() {
 
         // Calcular total de minutos trabajados hoy
         const todayMinutes = todayEntries.reduce(
-            (sum, entry) => sum + (entry.duration_minutes || 0),
+            (sum, entry) => sum + (entry.duration_neto || 0),
             0
         );
 

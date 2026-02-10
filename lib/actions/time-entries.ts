@@ -188,7 +188,8 @@ export async function startTimeEntry(
                 description: description || null,
                 start_time: new Date(),
                 end_time: null,
-                duration_minutes: null,
+                duration_total: null,
+                duration_neto: 0,
                 billable: true,
                 rate_applied: Number(rate),
                 amount: null,
@@ -255,45 +256,18 @@ export async function stopTimeEntry(
         };
     }
 
-    // Calcular duración y monto
     const endTime = new Date();
     const exchangeRate = await getUsdExchangeRate();
 
-    // Obtener los breaks para restar
-    const entryWithBreaks = await prisma.time_entries.findUnique({
-        where: { id: entryId },
-        include: { breaks: true }
-    });
-
-    // Si hay un break activo, cerrarlo con el endTime final
-    const activeBreak = entryWithBreaks?.breaks.find(b => b.end_time === null);
-    if (activeBreak) {
-        await prisma.time_entry_breaks.update({
-            where: { id: activeBreak.id },
-            data: { end_time: endTime }
-        });
-        // Actualizar localmente para el cálculo
-        if (activeBreak) activeBreak.end_time = endTime;
-    }
-
-    const grossMinutes = differenceInMinutes(endTime, entry.start_time);
-    const durationMinutes = calculateNetDurationMinutes(
-        entry.start_time,
-        endTime,
-        entryWithBreaks?.breaks || []
-    );
-    const rate = Number(entry.rate_applied || 0);
-    const amount = Number(((durationMinutes / 60) * rate).toFixed(2));
-
+    // El cálculo de duración y monto ahora lo hace el trigger DB via 'updated_at'
     try {
         // Actualizar entry
         const updatedEntry = await prisma.time_entries.update({
             where: { id: entryId },
             data: {
                 end_time: endTime,
-                duration_minutes: Math.round(durationMinutes),
-                amount: amount,
                 usd_exchange_rate: exchangeRate,
+                updated_at: new Date(), // Forzar disparador
             },
             include: {
                 task: {
@@ -475,14 +449,10 @@ export async function getTimeEntries(filters?: {
     });
 
     return entries.map(entry => {
-        const duration = entry.end_time
-            ? calculateNetDurationMinutes(entry.start_time, entry.end_time, entry.breaks)
-            : 0;
-        const rate = Number(entry.rate_applied || 0);
+        const totals = computeEntryTotals(entry as any);
         return {
             ...entry,
-            duration_minutes: duration,
-            amount: Number(((duration / 60) * rate).toFixed(2))
+            ...totals
         } as any;
     });
 }
@@ -496,7 +466,8 @@ export async function updateTimeEntry(
         description?: string | null;
         start_time?: Date;
         end_time?: Date | null;
-        duration_minutes?: number | null;
+        duration_total?: number | null;
+        duration_neto?: number | null;
         billable?: boolean;
         rate_applied?: number | null;
         amount?: number | null;
@@ -526,32 +497,9 @@ export async function updateTimeEntry(
     // Si se actualiza start_time o end_time, recalcular duración y monto considerando las pausas
     let updateData = { ...data };
 
-    if (data.start_time || data.end_time !== undefined) {
-        const startTime = data.start_time || entry.start_time;
-        const endTime = data.end_time || entry.end_time;
-
-        if (endTime && startTime) {
-            // Obtener pausas para el cálculo neto
-            const breaks = await prisma.time_entry_breaks.findMany({
-                where: { time_entry_id: entryId },
-            });
-
-            const netDuration = calculateNetDurationMinutes(startTime, endTime, breaks);
-            updateData.duration_minutes = netDuration;
-
-            // Recalcular monto si hay tarifa
-            const rate = data.rate_applied !== undefined
-                ? (data.rate_applied || 0)
-                : Number(entry.rate_applied || 0);
-
-            updateData.amount = Number(((netDuration / 60) * rate).toFixed(2));
-
-            // Capturar exchange rate si no lo tiene (para registros viejos o manuales)
-            if (!entry.usd_exchange_rate) {
-                const exchangeRate = await getUsdExchangeRate();
-                (updateData as any).usd_exchange_rate = exchangeRate;
-            }
-        }
+    if (data.start_time || data.end_time !== undefined || data.rate_applied !== undefined) {
+        // El trigger DB se encargará de recalcular todo si detecta cambios o updated_at
+        (updateData as any).updated_at = new Date();
     }
 
     // Si solo se actualiza la descripción, mantener rate y amount
@@ -696,17 +644,10 @@ async function recalculateEntry(entryId: string) {
 
     if (!entry || !entry.end_time) return;
 
-    const netDuration = calculateNetDurationMinutes(entry.start_time, entry.end_time, entry.breaks);
-    const rate = Number(entry.rate_applied || 0);
-
-    const exchangeRate = entry.usd_exchange_rate || await getUsdExchangeRate();
-
     await prisma.time_entries.update({
         where: { id: entryId },
         data: {
-            duration_minutes: netDuration,
-            amount: Number(((netDuration / 60) * rate).toFixed(2)),
-            usd_exchange_rate: exchangeRate
+            updated_at: new Date() // El trigger DB recalcula duration_total, neto y amount
         }
     });
 
@@ -965,7 +906,8 @@ export async function executeConsolidation() {
                         .join(" | "),
                     start_time: first.start_time,
                     end_time: last.end_time,
-                    duration_minutes: Math.round(netDuration),
+                    duration_total: Math.round(netDuration + allBreaks.reduce((s: number, b: any) => s + (Number(b.duration) || 0), 0)),
+                    duration_neto: Math.round(netDuration),
                     billable: first.billable,
                     rate_applied: first.rate_applied,
                     amount: amount,
@@ -1011,50 +953,21 @@ export async function executeConsolidation() {
  * Recalcula la tarifa y el monto de un time entry basado en la configuración actual
  * de la tarea/proyecto/cliente.
  */
-export async function recalculateTimeEntryRate(entryId: string): Promise<ActionResponse<time_entries>> {
+/**
+ * Función centralizada para recalcular el monto de una entrada.
+ * Sigue la misión de blindaje financiero delegando la cascada a la DB.
+ */
+export async function calculateEntryAmount(entryId: string): Promise<ActionResponse<time_entries>> {
     const user = await getAuthUser();
 
     try {
-        // 1. Obtener el entry con sus relaciones
-        const entry = await prisma.time_entries.findUnique({
-            where: { id: entryId },
-            include: {
-                task: true,
-                breaks: true
-            }
-        });
-
-        if (!entry) return { success: false, error: "Entrada no encontrada" };
-        if (entry.user_id !== user.id) return { success: false, error: "No autorizado" };
-        if (entry.is_billed) return { success: false, error: "No se puede recalcular una entrada ya facturada" };
-
-        // 2. Calcular la nueva tarifa usando la lógica de cascada existente
-        const newRate = await calculateRate(entry.task_id);
-
-        // 3. Recalcular la duración neta y el monto
-        // Si el entry está en curso (end_time null), usamos 'now' para el cálculo visual,
-        // pero solo actualizamos duration_minutes si el entry ya terminó.
-        let amount: any = entry.amount;
-        let durationMinutes = entry.duration_minutes;
-
-        const effectiveEndTime = entry.end_time || new Date();
-        const netDuration = calculateNetDurationMinutes(entry.start_time, effectiveEndTime, entry.breaks);
-
-        // Calculamos el monto basado en la duración neta (esté terminada o no)
-        amount = Number(((netDuration / 60) * newRate).toFixed(2));
-
-        // Solo actualizamos la persistencia de duration_minutes si la entrada ya cerró
-        if (entry.end_time) {
-            durationMinutes = netDuration;
-        }
-
-        // 4. Actualizar en DB
+        // Simplemente ponemos rate_applied en null y forzamos updated_at.
+        // El trigger get_cascade_rate de la DB hará el resto.
         const updatedEntry = await prisma.time_entries.update({
             where: { id: entryId },
             data: {
-                rate_applied: newRate as any,
-                amount: amount as any,
-                duration_minutes: durationMinutes
+                rate_applied: null,
+                updated_at: new Date(),
             },
             include: {
                 task: {
@@ -1074,8 +987,11 @@ export async function recalculateTimeEntryRate(entryId: string): Promise<ActionR
 
         return { success: true, data: updatedEntry };
     } catch (error) {
-        console.error("Error recalculating rate:", error);
-        return { success: false, error: "Error al recalcular la tarifa" };
+        console.error("Error calculating entry amount:", error);
+        return { success: false, error: "Error al recalcular el monto financiero" };
     }
 }
 
+// Mantener el nombre anterior por compatibilidad con la UI si es necesario, 
+// pero redirigir a la nueva función centralizada.
+export const recalculateTimeEntryRate = calculateEntryAmount;
