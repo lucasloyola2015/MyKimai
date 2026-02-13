@@ -4,8 +4,7 @@ import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Download, FileText, AlertCircle, Clock, FolderKanban } from "lucide-react";
 import { format } from "date-fns";
-import { InvoicePDF } from "@/components/invoices/invoice-pdf";
-import { PDFDownloadLink } from "@react-pdf/renderer";
+import { InvoicePDFDownloadLink } from "@/components/invoices/invoice-pdf-download-link";
 import { getInvoices } from "@/lib/actions/invoices";
 import { getPortalUnbilledSummary } from "@/lib/actions/portal";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -216,15 +215,7 @@ export default function ClientInvoicesPage() {
                         {currency} {amount.toLocaleString()}
                       </td>
                       <td className="py-2 px-3">
-                        <PDFDownloadLink
-                          document={<InvoicePDF invoice={invoice as any} />}
-                          fileName={`${invoice.invoice_number}.pdf`}
-                          className="inline-flex"
-                        >
-                          <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-primary" aria-label="Descargar PDF">
-                            <Download className="h-4 w-4" />
-                          </Button>
-                        </PDFDownloadLink>
+                        <InvoicePDFDownloadLink invoice={invoice} />
                       </td>
                     </tr>
                   );

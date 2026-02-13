@@ -25,9 +25,9 @@ export async function getRateContext(
   const task = await prisma.tasks.findUnique({
     where: { id: taskId },
     include: {
-      project: {
+      projects: {
         include: {
-          client: true,
+          clients: true,
         },
       },
     },
@@ -38,14 +38,14 @@ export async function getRateContext(
   }
 
   // Verificar que el usuario tenga acceso a esta tarea
-  if (task.project.client.user_id !== user.id) {
+  if (task.projects.clients.user_id !== user.id) {
     throw new Error("No tienes acceso a esta tarea");
   }
 
   return {
     task,
-    project: task.project,
-    client: task.project.client,
+    project: task.projects,
+    client: task.projects.clients,
     defaultRate,
   };
 }

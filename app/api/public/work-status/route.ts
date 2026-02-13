@@ -29,16 +29,17 @@ export async function GET() {
                     end_time: null
                 },
                 include: {
-                    task: {
+                    tasks: {
                         include: {
-                            project: true
+                            projects: true
                         }
                     }
                 }
             });
 
             // Solo mostramos el detalle si el proyecto pertenece a este cliente (Privacidad)
-            if (activeEntry && activeEntry.task?.project?.client_id === context.clientId) {
+            // Note: need to check if activeEntry.tasks and activeEntry.tasks.projects exist and if client_id match
+            if (activeEntry && activeEntry.tasks?.projects?.client_id === context.clientId) {
                 const start = new Date(activeEntry.start_time);
                 const diffMinutes = differenceInMinutes(now, start);
                 const hours = (diffMinutes / 60).toFixed(2);
@@ -46,10 +47,10 @@ export async function GET() {
                 return NextResponse.json({
                     active: true,
                     mode: "timer",
-                    project: activeEntry.task.project.name,
-                    task: activeEntry.task.name,
+                    project: activeEntry.tasks.projects.name,
+                    task: activeEntry.tasks.name,
                     elapsed: `${hours}h`,
-                    milestone: `${activeEntry.task.project.name} / ${activeEntry.task.name} : ${hours}h`
+                    milestone: `${activeEntry.tasks.projects.name} / ${activeEntry.tasks.name} : ${hours}h`
                 });
             }
         }

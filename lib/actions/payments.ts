@@ -25,7 +25,7 @@ export async function recordPayment(data: {
         const invoice = await prisma.invoices.findFirst({
             where: {
                 id: data.invoice_id,
-                client: {
+                clients: {
                     user_id: user.id
                 }
             },

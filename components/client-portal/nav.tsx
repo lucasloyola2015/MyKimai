@@ -5,13 +5,14 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { createClientComponentClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
-import { FolderKanban, FileText, LogOut, LayoutDashboard, Menu, X } from "lucide-react";
+import { FolderKanban, FileText, LogOut, LayoutDashboard, Menu, X, BarChart3 } from "lucide-react";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { cn } from "@/lib/utils";
 
 const navItems = [
   { href: "/client-portal", label: "Resumen", icon: LayoutDashboard },
   { href: "/client-portal/projects", label: "Proyectos", icon: FolderKanban },
+  { href: "/client-portal/reports", label: "Reportes", icon: BarChart3 },
   { href: "/client-portal/invoices", label: "Facturas", icon: FileText },
 ];
 
@@ -68,14 +69,14 @@ export function ClientPortalNav() {
         <div className="flex md:hidden items-center gap-1">
           <ThemeToggle />
           <Button
-          variant="ghost"
-          size="icon"
-          className="md:hidden min-h-[44px] min-w-[44px]"
-          onClick={() => setMenuOpen(true)}
-          aria-label="Abrir menú"
-        >
-          <Menu className="h-5 w-5" />
-        </Button>
+            variant="ghost"
+            size="icon"
+            className="md:hidden min-h-[44px] min-w-[44px]"
+            onClick={() => setMenuOpen(true)}
+            aria-label="Abrir menú"
+          >
+            <Menu className="h-5 w-5" />
+          </Button>
         </div>
       </div>
 

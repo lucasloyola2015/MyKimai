@@ -1,5 +1,44 @@
 # CHANGELOG - MyKimai
 
+## [2026-02-10] - Implementación de reportes PDF con gráficos de actividad y soporte para logos corporativos de clientes
+### Documentación (@chronicler)
+*   **Reportes Técnicos Premium**: Finalización del módulo de reportes con exportación profesional a PDF, branding corporativo dinámico y analíticas visuales integradas.
+
+### UI/UX (@designer)
+*   **Branding Dinámico**: Implementación de visualización de logos de clientes en el Dashboard de Reportes y en los documentos PDF generados.
+*   **Analíticas Visuales**: Integración de gráficos de barras para distribución diaria de horas y carga por proyecto, utilizando una estética de "tablero de instrumentos" compacta.
+*   **Diseño PDF**: Maquetación profesional de reportes A4 con @react-pdf, optimizada para auditoría técnica de tiempos con tipografías monoespaciadas.
+
+### Lógica de Datos (@architect)
+*   **Data Aggregation**: Nuevas Server Actions para el procesamiento de analíticas de reportes agrupar tiempo por día y proyecto.
+*   **Branding Engine**: Lógica de resolución de logos (Supabase Storage) integrada en el flujo de generación de documentos.
+
+## [2026-02-10] - Despliegue de Módulo de Reportes para Clientes con filtrado por propiedad y capacidad de edición de descripciones para el administrador
+### UI/UX (@designer)
+*   **Edición In-line (Root Only)**: Implementación de edición en tiempo real de descripciones mediante un sistema de lápiz y editor táctil, restringido exclusivamente al rol administrador.
+*   **Portal de Clientes**: Habilitación del módulo de reportes en el portal de clientes con la misma fidelidad visual y analíticas que la vista Root.
+
+### Seguridad (@architect)
+*   **Filtrado por Propiedad**: Implementación de seguridad estricta para asegurar que los clientes solo accedan a analíticas y registros de sus propios proyectos.
+*   **Persistence Action**: Nueva Server Action `updateEntryDescription` para la gestión profesional de descripciones de tareas.
+
+### Branding (@devops)
+*   **Branding Multimodal**: Integración de logos corporativos de clientes tanto en la plataforma web como en los reportes PDF generados desde el portal.
+*   **Storage Setup**: Creación de script SQL (`supabase/setup_storage.sql`) para inicializar el bucket de `logos` y sus políticas RLS, resolviendo errores de subida.
+
+## [2026-02-10] - Refactorización de Reportes Técnicos (Auditoría de Horas)
+### Documentación (@chronicler)
+*   **Refactorización de Reportes: Eliminación de datos financieros, adición de filtro por proyecto y sumatoria de horas netas totales**.
+
+### UI/UX (@designer)
+*   **Limpieza Monetaria**: Eliminación de columnas de Tarifa y Monto tanto en la vista web como en la exportación CSV, enfocando la herramienta en auditoría técnica de tiempos.
+*   **Nueva Estética de Auditoría**: Diseño más denso y profesional con uso de badges para duración y jerarquía visual de Proyecto/Cliente.
+*   **Pie de Reporte**: Adición de un panel resumen que muestra el total acumulado de horas netas con tipografía monoespaciada de alta visibilidad.
+
+### Lógica de Datos (@architect)
+*   **Filtro por Proyecto**: Implementación de selector de proyecto reactivo al cliente, permitiendo filtrado cruzado (Cliente + Proyecto + Fechas).
+*   **Precisión de Auditoría**: Uso exclusivo del campo persistido \`duration_neto\` en todas las consultas y cálculos de totales para garantizar consistencia con el Dashboard.
+
 ## [2026-02-10] - Persistencia de montos por evento y cascada de precios (Harden Finance)
 ### Documentación (@chronicler)
 *   **Implementación de persistencia de montos por evento y lógica de precios en cascada (Task > Project > Client) para garantizar inmutabilidad histórica**.

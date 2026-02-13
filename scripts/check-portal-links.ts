@@ -19,7 +19,7 @@ async function main() {
 
     const clientUsers = await prisma.client_users.findMany({
         include: {
-            client: {
+            clients: {
                 select: { name: true }
             }
         }

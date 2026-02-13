@@ -11,7 +11,11 @@ export const metadata: Metadata = {
   title: "Sistema de Gestión de Tiempos",
   description: "Sistema simplificado de gestión de tiempos y facturación",
   icons: {
-    icon: "/favicon.svg",
+    icon: [
+      { url: "/favicon.svg", type: "image/svg+xml" },
+      { url: "/logo-lucas-loyola.svg", type: "image/svg+xml" },
+    ],
+    apple: "/logo-lucas-loyola.svg",
   },
 };
 

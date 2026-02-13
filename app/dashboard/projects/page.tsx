@@ -23,9 +23,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Plus, Pencil, Trash2 } from "lucide-react";
+import { Plus, Pencil, Trash2, ShieldCheck } from "lucide-react";
 import type { Database } from "@/lib/types/database";
 import Link from "next/link";
+import { Checkbox } from "@/components/ui/checkbox";
 
 type Project = Database["public"]["Tables"]["projects"]["Row"];
 type Client = Database["public"]["Tables"]["clients"]["Row"];
@@ -53,10 +54,10 @@ const PROJECT_STATUSES = [
 ];
 
 export default function ProjectsPage() {
-  const [projects, setProjects] = useState<(Project & { clients: Client })[]>(
+  const [projects, setProjects] = useState<(Project & { clients: Client & { is_billable: boolean } })[]>(
     []
   );
-  const [clients, setClients] = useState<Client[]>([]);
+  const [clients, setClients] = useState<(Client & { is_billable: boolean })[]>([]);
   const [loading, setLoading] = useState(true);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingProject, setEditingProject] = useState<Project | null>(null);
@@ -72,6 +73,7 @@ export default function ProjectsPage() {
     status: "active" as "active" | "paused" | "completed" | "cancelled",
     start_date: "",
     end_date: "",
+    is_billable: true,
   });
 
   useEffect(() => {
@@ -126,6 +128,7 @@ export default function ProjectsPage() {
         status: formData.status,
         start_date: formData.start_date || null,
         end_date: formData.end_date || null,
+        is_billable: formData.is_billable,
       };
 
       if (editingProject) {
@@ -163,6 +166,7 @@ export default function ProjectsPage() {
       status: project.status,
       start_date: project.start_date || "",
       end_date: project.end_date || "",
+      is_billable: (project as any).is_billable ?? true,
     });
     setIsDialogOpen(true);
   };
@@ -195,6 +199,7 @@ export default function ProjectsPage() {
       status: "active",
       start_date: "",
       end_date: "",
+      is_billable: true,
     });
     setEditingProject(null);
   };
@@ -374,6 +379,40 @@ export default function ProjectsPage() {
                     />
                   </div>
                 </div>
+
+                <div className="flex items-center space-x-2 bg-muted/30 p-4 rounded-lg border">
+                  {(() => {
+                    const client = clients.find(c => c.id === formData.client_id);
+                    const isInheritedNonBillable = client ? !client.is_billable : false;
+                    const effectiveBillable = isInheritedNonBillable ? false : formData.is_billable;
+
+                    return (
+                      <>
+                        <Checkbox
+                          id="is_billable"
+                          checked={effectiveBillable}
+                          onCheckedChange={(checked) =>
+                            setFormData({ ...formData, is_billable: checked === true })
+                          }
+                          disabled={isInheritedNonBillable}
+                        />
+                        <div className="grid gap-1.5 leading-none">
+                          <Label
+                            htmlFor="is_billable"
+                            className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
+                          >
+                            Proyecto Facturable
+                          </Label>
+                          <p className="text-xs text-muted-foreground">
+                            {isInheritedNonBillable
+                              ? "Heredado: El cliente no es facturable."
+                              : "Si se desactiva, todas las tareas de este proyecto no serán facturables."}
+                          </p>
+                        </div>
+                      </>
+                    );
+                  })()}
+                </div>
               </div>
               <DialogFooter>
                 <Button
@@ -465,6 +504,15 @@ export default function ProjectsPage() {
                       /h
                     </p>
                   )}
+                  <div className="pt-2">
+                    <div className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-medium border ${(project as any).is_billable && (client as any).is_billable
+                      ? "bg-blue-500/10 text-blue-500 border-blue-500/20"
+                      : "bg-orange-500/10 text-orange-500 border-orange-500/20"
+                      }`}>
+                      <ShieldCheck className="h-3 w-3" />
+                      {(project as any).is_billable && (client as any).is_billable ? "Facturable" : "No Facturable"}
+                    </div>
+                  </div>
                 </div>
               </CardContent>
             </Card>

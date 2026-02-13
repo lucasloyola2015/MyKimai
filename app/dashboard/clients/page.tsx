@@ -22,7 +22,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Plus, Pencil, Trash2, Globe, ShieldCheck } from "lucide-react";
+import { Plus, Pencil, Trash2, Globe, ShieldCheck, Upload, Image as ImageIcon, X } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import {
   getClients,
@@ -34,6 +34,8 @@ import {
 import type { clients } from "@prisma/client";
 import { Separator } from "@/components/ui/separator";
 import { Checkbox } from "@/components/ui/checkbox";
+import { createClientComponentClient } from "@/lib/supabase/client";
+import { cn } from "@/lib/utils";
 
 const CURRENCIES = [
   { value: "USD", label: "USD - Dólar Estadounidense" },
@@ -51,6 +53,8 @@ export default function ClientsPage() {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingClient, setEditingClient] = useState<clients | null>(null);
   const [isPending, startTransition] = useTransition();
+  const [uploading, setUploading] = useState(false);
+  const supabase = createClientComponentClient();
   const { toast } = useToast();
 
   const [formData, setFormData] = useState({
@@ -61,8 +65,15 @@ export default function ClientsPage() {
     currency: "USD",
     default_rate: "",
     notes: "",
+    logo_url: "",
+    is_billable: true,
     web_access_enabled: false,
     portal_password: "",
+    // Campos fiscales AFIP
+    tax_id: "",
+    business_name: "",
+    legal_address: "",
+    tax_condition: "",
   });
 
   useEffect(() => {
@@ -99,6 +110,13 @@ export default function ClientsPage() {
             ? parseFloat(formData.default_rate)
             : null,
           notes: formData.notes || null,
+          logo_url: formData.logo_url || null,
+          is_billable: formData.is_billable,
+          // Campos fiscales AFIP
+          tax_id: formData.tax_id || null,
+          business_name: formData.business_name || null,
+          legal_address: formData.legal_address || null,
+          tax_condition: formData.tax_condition || null,
           ...(editingClient && formData.portal_password
             ? { newPassword: formData.portal_password }
             : {}),
@@ -186,8 +204,15 @@ export default function ClientsPage() {
       currency: client.currency,
       default_rate: client.default_rate?.toString() || "",
       notes: client.notes || "",
+      logo_url: client.logo_url || "",
+      is_billable: (client as any).is_billable ?? true,
       web_access_enabled: client.web_access_enabled,
       portal_password: "",
+      // Campos fiscales AFIP
+      tax_id: client.tax_id || "",
+      business_name: client.business_name || "",
+      legal_address: client.legal_address || "",
+      tax_condition: client.tax_condition || "",
     });
     setIsDialogOpen(true);
   };
@@ -230,10 +255,52 @@ export default function ClientsPage() {
       currency: "USD",
       default_rate: "",
       notes: "",
+      logo_url: "",
+      is_billable: true,
       web_access_enabled: false,
       portal_password: "",
+      // Campos fiscales AFIP
+      tax_id: "",
+      business_name: "",
+      legal_address: "",
+      tax_condition: "",
     });
     setEditingClient(null);
+  };
+
+  const handleUploadLogo = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (!file.type.startsWith('image/')) {
+      toast({ title: "Error", description: "El archivo debe ser una imagen.", variant: "destructive" });
+      return;
+    }
+
+    setUploading(true);
+    try {
+      const fileExt = file.name.split('.').pop();
+      const fileName = `${Math.random()}.${fileExt}`;
+      const filePath = `client-logos/${fileName}`;
+
+      const { error: uploadError } = await supabase.storage
+        .from('logos')
+        .upload(filePath, file);
+
+      if (uploadError) throw uploadError;
+
+      const { data: { publicUrl } } = supabase.storage
+        .from('logos')
+        .getPublicUrl(filePath);
+
+      setFormData({ ...formData, logo_url: publicUrl });
+      toast({ title: "Éxito", description: "Logo cargado correctamente." });
+    } catch (error) {
+      console.error(error);
+      toast({ title: "Error", description: "No se pudo cargar el logo.", variant: "destructive" });
+    } finally {
+      setUploading(false);
+    }
   };
 
   if (loading) {
@@ -278,7 +345,54 @@ export default function ClientsPage() {
               </DialogDescription>
             </DialogHeader>
             <form onSubmit={handleSubmit}>
-              <div className="grid gap-4 py-4">
+              <div className="grid gap-6 py-4">
+                <div className="flex flex-col items-center gap-4 py-2 bg-muted/30 rounded-lg border border-dashed border-border/50">
+                  <div className="relative w-24 h-24 rounded-lg overflow-hidden border bg-background group">
+                    {formData.logo_url ? (
+                      <>
+                        <img
+                          src={formData.logo_url}
+                          alt="Logo Preview"
+                          className="w-full h-full object-contain p-2"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setFormData({ ...formData, logo_url: "" })}
+                          className="absolute inset-0 flex items-center justify-center bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity text-white"
+                        >
+                          <X className="h-6 w-6" />
+                        </button>
+                      </>
+                    ) : (
+                      <div className="w-full h-full flex flex-col items-center justify-center text-muted-foreground">
+                        <ImageIcon className="h-8 w-8 mb-1" />
+                        <span className="text-[10px] uppercase font-bold tracking-tighter">Sin Logo</span>
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex flex-col items-center gap-1.5 px-6 text-center">
+                    <Label
+                      htmlFor="logo-upload"
+                      className={cn(
+                        "flex items-center gap-2 px-4 py-2 rounded-md bg-background border shadow-sm cursor-pointer hover:bg-muted transition-colors",
+                        uploading && "opacity-50 pointer-events-none"
+                      )}
+                    >
+                      <Upload className="h-4 w-4" />
+                      {uploading ? "Cargando..." : "Subir Logo Corporativo"}
+                      <input
+                        id="logo-upload"
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={handleUploadLogo}
+                        disabled={uploading || isPending}
+                      />
+                    </Label>
+                    <p className="text-[10px] text-muted-foreground">PNG, JPG o SVG. Máx 2MB.</p>
+                  </div>
+                </div>
+
                 <div className="grid gap-2">
                   <Label htmlFor="name">Nombre *</Label>
                   <Input
@@ -367,16 +481,26 @@ export default function ClientsPage() {
                     />
                   </div>
                 </div>
-                <div className="grid gap-2">
-                  <Label htmlFor="notes">Notas</Label>
-                  <Textarea
-                    id="notes"
-                    value={formData.notes}
-                    onChange={(e) =>
-                      setFormData({ ...formData, notes: e.target.value })
+                <div className="flex items-center space-x-2 bg-muted/30 p-4 rounded-lg border">
+                  <Checkbox
+                    id="is_billable"
+                    checked={formData.is_billable}
+                    onCheckedChange={(checked) =>
+                      setFormData({ ...formData, is_billable: checked === true })
                     }
                     disabled={isPending}
                   />
+                  <div className="grid gap-1.5 leading-none">
+                    <Label
+                      htmlFor="is_billable"
+                      className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
+                    >
+                      Cliente Facturable
+                    </Label>
+                    <p className="text-xs text-muted-foreground">
+                      Si se desactiva, todos los proyectos y tareas de este cliente no serán facturables.
+                    </p>
+                  </div>
                 </div>
 
                 <div className="pt-4">
@@ -434,6 +558,83 @@ export default function ClientsPage() {
                     </CardContent>
                   </Card>
                 </div>
+
+                <div className="pt-4">
+                  <Separator className="mb-4" />
+                  <Card className="border-blue-500/20 bg-blue-500/5">
+                    <CardHeader className="py-3 px-4">
+                      <CardTitle className="text-sm font-medium flex items-center gap-2 text-blue-600">
+                        <ShieldCheck className="h-4 w-4" />
+                        Datos Fiscales (AFIP)
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="py-0 px-4 pb-4 space-y-4">
+                      <div className="grid gap-2">
+                        <Label htmlFor="tax_id">CUIT / CUIL</Label>
+                        <Input
+                          id="tax_id"
+                          value={formData.tax_id}
+                          onChange={(e) =>
+                            setFormData({ ...formData, tax_id: e.target.value })
+                          }
+                          placeholder="20-12345678-9"
+                          disabled={isPending}
+                        />
+                        <p className="text-[10px] text-muted-foreground italic">
+                          Requerido para emitir facturas electrónicas AFIP
+                        </p>
+                      </div>
+
+                      <div className="grid gap-2">
+                        <Label htmlFor="business_name">Razón Social</Label>
+                        <Input
+                          id="business_name"
+                          value={formData.business_name}
+                          onChange={(e) =>
+                            setFormData({ ...formData, business_name: e.target.value })
+                          }
+                          placeholder="Nombre legal de la empresa"
+                          disabled={isPending}
+                        />
+                      </div>
+
+                      <div className="grid gap-2">
+                        <Label htmlFor="legal_address">Dirección Legal</Label>
+                        <Textarea
+                          id="legal_address"
+                          value={formData.legal_address}
+                          onChange={(e) =>
+                            setFormData({ ...formData, legal_address: e.target.value })
+                          }
+                          placeholder="Calle, número, ciudad, código postal"
+                          disabled={isPending}
+                        />
+                      </div>
+
+                      <div className="grid gap-2">
+                        <Label htmlFor="tax_condition">Condición frente al IVA</Label>
+                        <Select
+                          value={formData.tax_condition}
+                          onValueChange={(value) =>
+                            setFormData({ ...formData, tax_condition: value })
+                          }
+                          disabled={isPending}
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="Seleccionar condición" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="Responsable Inscripto">Responsable Inscripto</SelectItem>
+                            <SelectItem value="Monotributista">Monotributista</SelectItem>
+                            <SelectItem value="Exento">Exento</SelectItem>
+                            <SelectItem value="Consumidor Final">Consumidor Final</SelectItem>
+                            <SelectItem value="No Responsable">No Responsable</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </CardContent>
+                  </Card>
+                </div>
               </div>
               <DialogFooter>
                 <Button
@@ -462,9 +663,22 @@ export default function ClientsPage() {
 
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
         {clients.map((client) => (
-          <Card key={client.id}>
-            <CardHeader>
-              <CardTitle className="flex items-center justify-between">
+          <Card key={client.id} className="overflow-hidden group hover:border-primary/50 transition-colors">
+            <div className="h-24 bg-muted/30 flex items-center justify-center p-4 border-b relative">
+              {client.logo_url ? (
+                <img
+                  src={client.logo_url}
+                  alt={client.name}
+                  className="max-w-full max-h-full object-contain"
+                />
+              ) : (
+                <div className="text-muted-foreground/20 italic font-bold text-xl uppercase tracking-widest font-mono">
+                  {client.name.substring(0, 3)}
+                </div>
+              )}
+            </div>
+            <CardHeader className="pb-2">
+              <CardTitle className="flex items-center justify-between text-base">
                 {client.name}
                 <div className="flex space-x-2">
                   <Button
@@ -509,11 +723,18 @@ export default function ClientsPage() {
                 )}
                 <div className="pt-2">
                   <div className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-medium border ${client.web_access_enabled
-                      ? "bg-green-500/10 text-green-500 border-green-500/20"
-                      : "bg-muted text-muted-foreground border-border"
+                    ? "bg-green-500/10 text-green-500 border-green-500/20"
+                    : "bg-muted text-muted-foreground border-border"
                     }`}>
                     <Globe className="h-3 w-3" />
                     {client.web_access_enabled ? "Portal Activo" : "Sin Acceso Web"}
+                  </div>
+                  <div className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-medium border ${(client as any).is_billable
+                    ? "bg-blue-500/10 text-blue-500 border-blue-500/20"
+                    : "bg-orange-500/10 text-orange-500 border-orange-500/20"
+                    }`}>
+                    <ShieldCheck className="h-3 w-3" />
+                    {(client as any).is_billable ? "Facturable" : "No Facturable"}
                   </div>
                 </div>
               </div>

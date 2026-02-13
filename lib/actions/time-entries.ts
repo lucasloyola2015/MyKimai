@@ -26,16 +26,16 @@ export async function getActiveTimeEntry() {
             end_time: null,
         },
         include: {
-            task: {
+            tasks: {
                 include: {
-                    project: {
+                    projects: {
                         include: {
-                            client: true,
+                            clients: true,
                         },
                     },
                 },
             },
-            breaks: true,
+            time_entry_breaks: true,
         },
     });
 
@@ -53,11 +53,11 @@ export async function getRecentTimeEntries(limit: number = 10) {
             user_id: user.id,
         },
         include: {
-            task: {
+            tasks: {
                 include: {
-                    project: {
+                    projects: {
                         include: {
-                            client: true,
+                            clients: true,
                         },
                     },
                 },
@@ -92,11 +92,11 @@ export async function getLastCompletedEntry() {
             },
         },
         include: {
-            task: {
+            tasks: {
                 include: {
-                    project: {
+                    projects: {
                         include: {
-                            client: true,
+                            clients: true,
                         },
                     },
                 },
@@ -118,9 +118,9 @@ async function calculateRate(taskId: string): Promise<number> {
     const task = await prisma.tasks.findUnique({
         where: { id: taskId },
         include: {
-            project: {
+            projects: {
                 include: {
-                    client: true,
+                    clients: true,
                 },
             },
         },
@@ -128,15 +128,24 @@ async function calculateRate(taskId: string): Promise<number> {
 
     if (!task) return 0;
 
+    // SSOT de Facturabilidad: Si no es facturable en la jerarquía, la tarifa es obligatoriamente 0.
+    const isBillableTask = !!(task as any).is_billable;
+    const isBillableProject = !!(task.projects as any).is_billable;
+    const isBillableClient = !!(task.projects.clients as any).is_billable;
+
+    const isBillable = isBillableTask && isBillableProject && isBillableClient;
+
+    // Si no es facturable, la tarifa es 0 sin importar lo que diga el campo rate
+    if (!isBillable) return 0;
+
     // Cascada de tarifas: Tarea -> Proyecto -> Cliente
-    // Si una tarifa es null o 0, pasamos a la siguiente en la jerarquía.
     const taskRate = task.rate ? Number(task.rate) : 0;
     if (taskRate > 0) return taskRate;
 
-    const projectRate = task.project.rate ? Number(task.project.rate) : 0;
+    const projectRate = task.projects.rate ? Number(task.projects.rate) : 0;
     if (projectRate > 0) return projectRate;
 
-    const clientRate = task.project.client.default_rate ? Number(task.project.client.default_rate) : 0;
+    const clientRate = task.projects.clients.default_rate ? Number(task.projects.clients.default_rate) : 0;
     return clientRate;
 }
 
@@ -164,9 +173,16 @@ export async function startTimeEntry(
         };
     }
 
-    // Verificar que la tarea existe
+    // Verificar que la tarea existe y obtener su jerarquía de facturación
     const task = await prisma.tasks.findUnique({
         where: { id: taskId },
+        include: {
+            projects: {
+                include: {
+                    clients: true,
+                },
+            },
+        },
     });
 
     if (!task) {
@@ -175,6 +191,8 @@ export async function startTimeEntry(
             error: "Tarea no encontrada.",
         };
     }
+
+    const isBillable = !!(task as any).is_billable && !!(task.projects as any).is_billable && !!(task.projects.clients as any).is_billable;
 
     // Calcular tarifa aplicable
     const rate = await calculateRate(taskId);
@@ -190,16 +208,16 @@ export async function startTimeEntry(
                 end_time: null,
                 duration_total: null,
                 duration_neto: 0,
-                billable: true,
-                rate_applied: Number(rate),
+                billable: isBillable,
                 amount: null,
+
             },
             include: {
-                task: {
+                tasks: {
                     include: {
-                        project: {
+                        projects: {
                             include: {
-                                client: true,
+                                clients: true,
                             },
                         },
                     },
@@ -259,27 +277,39 @@ export async function stopTimeEntry(
     const endTime = new Date();
     const exchangeRate = await getUsdExchangeRate();
 
-    // El cálculo de duración y monto ahora lo hace el trigger DB via 'updated_at'
+    // Obtenemos la tarifa de la SSOT (calculateRate ya maneja la jerarquía de facturabilidad)
+    const rate = await calculateRate(entry.task_id);
+
+    // Calculamos duración neta para el blindaje financiero en código
+    const currentBreaks = await prisma.time_entry_breaks.findMany({
+        where: { time_entry_id: entryId }
+    });
+    const netDuration = calculateNetDurationMinutes(entry.start_time, endTime, currentBreaks);
+    const finalAmount = rate === 0 ? 0 : Number(((netDuration / 60) * rate).toFixed(2));
+
     try {
-        // Actualizar entry
+        // Actualizar entry con el monto calculado por la SSOT del código
         const updatedEntry = await prisma.time_entries.update({
             where: { id: entryId },
             data: {
                 end_time: endTime,
                 usd_exchange_rate: exchangeRate,
-                updated_at: new Date(), // Forzar disparador
+                rate_applied: rate,
+                amount: finalAmount,
+                billable: rate > 0,
+                updated_at: new Date(), // Forzar disparador (pero ya enviamos el amount)
             },
             include: {
-                task: {
+                tasks: {
                     include: {
-                        project: {
+                        projects: {
                             include: {
-                                client: true,
+                                clients: true,
                             },
                         },
                     },
                 },
-                breaks: true,
+                time_entry_breaks: true,
             },
         });
 
@@ -345,17 +375,17 @@ export async function getAvailableTasks() {
 
     const tasks = await prisma.tasks.findMany({
         where: {
-            project: {
-                client: {
+            projects: {
+                clients: {
                     user_id: user.id,
                 },
                 status: "active",
             },
         },
         include: {
-            project: {
+            projects: {
                 include: {
-                    client: true,
+                    clients: true,
                 },
             },
         },
@@ -383,13 +413,20 @@ export async function getTimeEntries(filters?: {
     const where: any = {};
 
     if (clientContext) {
-        where.task = {
-            project: {
+        where.tasks = {
+            projects: {
                 client_id: clientContext.clientId,
             },
         };
     } else {
-        where.user_id = user.id;
+        // Para admin, ver todas las entradas de sus clientes
+        where.tasks = {
+            projects: {
+                clients: {
+                    user_id: user.id
+                }
+            }
+        };
     }
 
     if (filters?.onlyCompleted) {
@@ -415,16 +452,18 @@ export async function getTimeEntries(filters?: {
     }
 
     if (filters?.clientId) {
-        where.task = {
-            project: {
+        where.tasks = {
+            ...where.tasks,
+            projects: {
+                ...where.tasks?.projects,
                 client_id: filters.clientId,
             },
         };
     }
 
     if (filters?.projectId) {
-        where.task = {
-            ...where.task,
+        where.tasks = {
+            ...where.tasks,
             project_id: filters.projectId,
         };
     }
@@ -432,16 +471,16 @@ export async function getTimeEntries(filters?: {
     const entries = await prisma.time_entries.findMany({
         where,
         include: {
-            task: {
+            tasks: {
                 include: {
-                    project: {
+                    projects: {
                         include: {
-                            client: true,
+                            clients: true,
                         },
                     },
                 },
             },
-            breaks: true,
+            time_entry_breaks: true,
         },
         orderBy: {
             start_time: "desc",
@@ -507,6 +546,7 @@ export async function updateTimeEntry(
         updateData = {
             description: updateData.description,
         };
+
     }
 
     try {
@@ -514,11 +554,11 @@ export async function updateTimeEntry(
             where: { id: entryId },
             data: updateData,
             include: {
-                task: {
+                tasks: {
                     include: {
-                        project: {
+                        projects: {
                             include: {
-                                client: true,
+                                clients: true,
                             },
                         },
                     },
@@ -565,7 +605,7 @@ export async function pauseTimeEntry(
     try {
         const entry = await prisma.time_entries.findUnique({
             where: { id: entryId },
-            include: { breaks: true }
+            include: { time_entry_breaks: true }
         });
 
         if (!entry || entry.user_id !== user.id) {
@@ -573,7 +613,7 @@ export async function pauseTimeEntry(
         }
 
         // Verificar si ya hay una pausa activa
-        const activeBreak = entry.breaks.find(b => b.end_time === null);
+        const activeBreak = entry.time_entry_breaks.find(b => b.end_time === null);
         if (activeBreak) {
             return { success: false, error: "Ya existe una pausa activa" };
         }
@@ -606,14 +646,14 @@ export async function resumeTimeEntry(
     try {
         const entry = await prisma.time_entries.findUnique({
             where: { id: entryId },
-            include: { breaks: true }
+            include: { time_entry_breaks: true }
         });
 
         if (!entry || entry.user_id !== user.id) {
             return { success: false, error: "No autorizado o no encontrado" };
         }
 
-        const activeBreak = entry.breaks.find(b => b.end_time === null);
+        const activeBreak = entry.time_entry_breaks.find(b => b.end_time === null);
         if (!activeBreak) {
             return { success: false, error: "No hay ninguna pausa activa" };
         }
@@ -633,13 +673,10 @@ export async function resumeTimeEntry(
     }
 }
 
-/**
- * Función interna para recalcular tiempo neto y monto de un entry
- */
 async function recalculateEntry(entryId: string) {
     const entry = await prisma.time_entries.findUnique({
         where: { id: entryId },
-        include: { breaks: true }
+        include: { time_entry_breaks: true }
     });
 
     if (!entry || !entry.end_time) return;
@@ -692,10 +729,10 @@ export async function updateTimeEntryBreak(
     try {
         const breakNode = await prisma.time_entry_breaks.findUnique({
             where: { id: breakId },
-            include: { time_entry: true }
+            include: { time_entries: true }
         });
 
-        if (!breakNode || breakNode.time_entry.user_id !== user.id) {
+        if (!breakNode || breakNode.time_entries.user_id !== user.id) {
             return { success: false, error: "No autorizado" };
         }
 
@@ -724,10 +761,10 @@ export async function deleteTimeEntryBreak(breakId: string): Promise<ActionRespo
     try {
         const breakNode = await prisma.time_entry_breaks.findUnique({
             where: { id: breakId },
-            include: { time_entry: true }
+            include: { time_entries: true }
         });
 
-        if (!breakNode || breakNode.time_entry.user_id !== user.id) {
+        if (!breakNode || breakNode.time_entries.user_id !== user.id) {
             return { success: false, error: "No autorizado" };
         }
 
@@ -762,11 +799,11 @@ export async function previewConsolidation(): Promise<ConsolidationPreview[]> {
             end_time: { not: null }
         },
         include: {
-            task: {
+            tasks: {
                 include: {
-                    project: {
+                    projects: {
                         include: {
-                            client: true,
+                            clients: true,
                         },
                     },
                 },
@@ -779,7 +816,7 @@ export async function previewConsolidation(): Promise<ConsolidationPreview[]> {
 
     entries.forEach((entry: any) => {
         const dateKey = format(entry.start_time, "yyyy-MM-dd");
-        const clientId = entry.task.project.client.id;
+        const clientId = entry.tasks.projects.clients.id;
         const groupKey = `${dateKey}_${clientId}`;
 
         if (!groups[groupKey]) {
@@ -796,7 +833,7 @@ export async function previewConsolidation(): Promise<ConsolidationPreview[]> {
 
         const first = group[0];
         const last = group[group.length - 1];
-        const clientName = first.task.project.client.name;
+        const clientName = first.tasks.projects.clients.name;
         const date = format(first.start_time, "dd/MM/yyyy");
 
         let breaksCount = 0;
@@ -834,16 +871,16 @@ export async function executeConsolidation() {
             end_time: { not: null }
         },
         include: {
-            task: {
+            tasks: {
                 include: {
-                    project: {
+                    projects: {
                         include: {
-                            client: true,
+                            clients: true,
                         },
                     },
                 },
             },
-            breaks: true,
+            time_entry_breaks: true,
         },
         orderBy: { start_time: "asc" },
     });
@@ -851,7 +888,7 @@ export async function executeConsolidation() {
     const groups: Record<string, any[]> = {};
     entries.forEach((entry: any) => {
         const dateKey = format(entry.start_time, "yyyy-MM-dd");
-        const clientId = entry.task.project.client.id;
+        const clientId = entry.tasks.projects.clients.id;
         const groupKey = `${dateKey}_${clientId}`;
         if (!groups[groupKey]) groups[groupKey] = [];
         groups[groupKey].push(entry);
@@ -872,7 +909,7 @@ export async function executeConsolidation() {
             const last = group[group.length - 1];
             const originalIds = group.map((e) => e.id);
 
-            const allBreaks = group.flatMap((e: any) => e.breaks || []);
+            const allBreaks = group.flatMap((e: any) => e.time_entry_breaks || []);
 
             const newBreaksData: { start_time: Date; end_time: Date }[] = [];
             for (let i = 0; i < group.length - 1; i++) {
@@ -894,7 +931,8 @@ export async function executeConsolidation() {
             );
 
             const rate = Number(first.rate_applied || 0);
-            const amount = Number(((netDuration / 60) * rate).toFixed(2));
+            const isBillable = first.billable;
+            const amount = isBillable ? Number(((netDuration / 60) * rate).toFixed(2)) : 0;
 
             const masterEntry = await (tx.time_entries as any).create({
                 data: {
@@ -906,7 +944,7 @@ export async function executeConsolidation() {
                         .join(" | "),
                     start_time: first.start_time,
                     end_time: last.end_time,
-                    duration_total: Math.round(netDuration + allBreaks.reduce((s: number, b: any) => s + (Number(b.duration) || 0), 0)),
+                    duration_total: Math.round(totalMinutes),
                     duration_neto: Math.round(netDuration),
                     billable: first.billable,
                     rate_applied: first.rate_applied,
@@ -961,25 +999,41 @@ export async function calculateEntryAmount(entryId: string): Promise<ActionRespo
     const user = await getAuthUser();
 
     try {
-        // Simplemente ponemos rate_applied en null y forzamos updated_at.
-        // El trigger get_cascade_rate de la DB hará el resto.
+        const currentEntry = await prisma.time_entries.findUnique({
+            where: { id: entryId },
+        });
+
+        if (!currentEntry) throw new Error("Entrada no encontrada");
+
+        // Obtenemos la tarifa de la SSOT (calculateRate ya maneja la jerarquía de facturabilidad)
+        const rate = await calculateRate(currentEntry.task_id);
+        const durationNeto = currentEntry.duration_neto || 0;
+
+        // Blindaje total: Si el rate es 0 (no facturable), forzamos amount a 0.
+        const finalAmount = rate === 0 ? 0 : Number(((durationNeto / 60) * rate).toFixed(2));
+        const isBillable = rate > 0;
+
         const updatedEntry = await prisma.time_entries.update({
             where: { id: entryId },
             data: {
-                rate_applied: null,
+                rate_applied: rate,
+                amount: finalAmount,
+                billable: isBillable,
                 updated_at: new Date(),
             },
+
+            // Incluimos las relaciones para devolver el objeto completo a la UI
             include: {
-                task: {
+                tasks: {
                     include: {
-                        project: {
+                        projects: {
                             include: {
-                                client: true,
+                                clients: true,
                             },
                         },
                     },
                 },
-            }
+            },
         });
 
         revalidatePath("/dashboard/my-hours");

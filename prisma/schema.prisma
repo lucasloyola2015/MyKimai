@@ -8,283 +8,6 @@ datasource db {
   schemas  = ["auth", "public"]
 }
 
-/// This model contains an expression index which requires additional setup for migrations. Visit https://pris.ly/d/expression-indexes for more info.
-model auth_users {
-  instance_id                 String?                @db.Uuid
-  id                          String                 @id @db.Uuid
-  aud                         String?                @db.VarChar(255)
-  role                        String?                @db.VarChar(255)
-  email                       String?                @db.VarChar(255)
-  encrypted_password          String?                @db.VarChar(255)
-  email_confirmed_at          DateTime?              @db.Timestamptz(6)
-  invited_at                  DateTime?              @db.Timestamptz(6)
-  confirmation_token          String?                @db.VarChar(255)
-  confirmation_sent_at        DateTime?              @db.Timestamptz(6)
-  recovery_token              String?                @db.VarChar(255)
-  recovery_sent_at            DateTime?              @db.Timestamptz(6)
-  email_change_token_new      String?                @db.VarChar(255)
-  email_change                String?                @db.VarChar(255)
-  email_change_sent_at        DateTime?              @db.Timestamptz(6)
-  last_sign_in_at             DateTime?              @db.Timestamptz(6)
-  raw_app_meta_data           Json?
-  raw_user_meta_data          Json?
-  is_super_admin              Boolean?
-  created_at                  DateTime?              @db.Timestamptz(6)
-  updated_at                  DateTime?              @db.Timestamptz(6)
-  phone                       String?                @unique
-  phone_confirmed_at          DateTime?              @db.Timestamptz(6)
-  phone_change                String?                @default("")
-  phone_change_token          String?                @default("") @db.VarChar(255)
-  phone_change_sent_at        DateTime?              @db.Timestamptz(6)
-  confirmed_at                DateTime?              @default(dbgenerated("LEAST(email_confirmed_at, phone_confirmed_at)")) @db.Timestamptz(6)
-  email_change_token_current  String?                @default("") @db.VarChar(255)
-  email_change_confirm_status Int?                   @default(0) @db.SmallInt
-  banned_until                DateTime?              @db.Timestamptz(6)
-  reauthentication_token      String?                @default("") @db.VarChar(255)
-  reauthentication_sent_at    DateTime?              @db.Timestamptz(6)
-  is_sso_user                 Boolean                @default(false)
-  deleted_at                  DateTime?              @db.Timestamptz(6)
-  is_anonymous                Boolean                @default(false)
-  identities                  identities[]
-  mfa_factors                 mfa_factors[]
-  oauth_authorizations        oauth_authorizations[]
-  oauth_consents              oauth_consents[]
-  one_time_tokens             one_time_tokens[]
-  sessions                    sessions[]
-  client_users                client_users[]
-  clients                     clients[]
-  portal_clients              clients?               @relation("PortalUser")
-  time_entries                time_entries[]
-
-  @@index([instance_id])
-  @@index([is_anonymous])
-  @@map("users")
-  @@schema("auth")
-}
-
-model clients {
-  id            String          @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
-  user_id       String          @db.Uuid
-  name          String          @db.VarChar(255)
-  email         String?         @db.VarChar(255)
-  phone         String?         @db.VarChar(50)
-  address       String?
-  currency      String          @default("USD") @db.VarChar(3)
-  default_rate  Decimal?        @db.Decimal(10, 2)
-  notes         String?
-  created_at    DateTime        @default(now()) @db.Timestamptz(6)
-  updated_at    DateTime        @default(now()) @db.Timestamptz(6)
-  tax_id        String?         @db.VarChar(50)
-  business_name String?         @db.VarChar(255)
-  tax_condition String?         @db.VarChar(100)
-  legal_address            String?
-  preferred_billing_method  billing_type_invoice @default(LEGAL)
-  web_access_enabled Boolean @default(false)
-  portal_user_id    String? @db.Uuid @unique
-  client_users      client_users[]
-  users             auth_users  @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  portal_user       auth_users? @relation("PortalUser", fields: [portal_user_id], references: [id], onDelete: SetNull, onUpdate: NoAction)
-  hour_packages     hour_packages[]
-  invoices          invoices[]
-  projects          projects[]
-
-  @@index([email], map: "idx_clients_email")
-  @@index([name], map: "idx_clients_name")
-  @@index([user_id], map: "idx_clients_user_id")
-  @@schema("public")
-}
-
-model projects {
-  id            String          @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
-  client_id     String          @db.Uuid
-  name          String          @db.VarChar(255)
-  description   String?
-  currency      String          @default("USD") @db.VarChar(3)
-  rate          Decimal?        @db.Decimal(10, 2)
-  billing_type  billing_type    @default(hourly)
-  status        project_status  @default(active)
-  start_date    DateTime?       @db.Date
-  end_date      DateTime?       @db.Date
-  created_at    DateTime        @default(now()) @db.Timestamptz(6)
-  updated_at    DateTime        @default(now()) @db.Timestamptz(6)
-  hour_packages hour_packages[]
-  client        clients         @relation(fields: [client_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  tasks         tasks[]
-
-  @@index([client_id], map: "idx_projects_client_id")
-  @@index([name], map: "idx_projects_name")
-  @@index([status], map: "idx_projects_status")
-  @@schema("public")
-}
-
-model tasks {
-  id           String         @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
-  project_id   String         @db.Uuid
-  name         String         @db.VarChar(255)
-  description  String?
-  rate         Decimal?       @db.Decimal(10, 2)
-  created_at   DateTime       @default(now()) @db.Timestamptz(6)
-  updated_at   DateTime       @default(now()) @db.Timestamptz(6)
-  project      projects       @relation(fields: [project_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  time_entries time_entries[]
-
-  @@index([name], map: "idx_tasks_name")
-  @@index([project_id], map: "idx_tasks_project_id")
-  @@schema("public")
-}
-
-model time_entries {
-  id               String              @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
-  user_id          String              @db.Uuid
-  task_id          String              @db.Uuid
-  description      String?
-  start_time       DateTime            @db.Timestamptz(6)
-  end_time         DateTime?           @db.Timestamptz(6)
-  duration_total   Int?
-  duration_neto    Int?                @default(0)
-  billable         Boolean             @default(true)
-  rate_applied     Decimal?            @db.Decimal(10, 2)
-  amount           Decimal?            @db.Decimal(10, 2)
-  created_at       DateTime            @default(now()) @db.Timestamptz(6)
-  usd_exchange_rate Decimal?            @db.Decimal(10, 2)
-  is_billed        Boolean             @default(false)
-  updated_at       DateTime            @default(now()) @db.Timestamptz(6)
-  invoice_id       String?             @db.Uuid
-  invoice_items    invoice_items[]
-  invoice          invoices?           @relation(fields: [invoice_id], references: [id], onDelete: SetNull, onUpdate: NoAction)
-  task             tasks               @relation(fields: [task_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  users            auth_users          @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  breaks           time_entry_breaks[]
-
-  @@index([billable], map: "idx_time_entries_billable")
-  @@index([created_at(sort: Desc)], map: "idx_time_entries_created_at")
-  @@index([start_time], map: "idx_time_entries_start_time")
-  @@index([task_id], map: "idx_time_entries_task_id")
-  @@index([user_id, start_time(sort: Desc)], map: "idx_time_entries_user_date")
-  @@index([user_id], map: "idx_time_entries_user_id")
-  @@schema("public")
-}
-
-model time_entry_breaks {
-  id            String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  time_entry_id String       @db.Uuid
-  start_time    DateTime     @db.Timestamptz(6)
-  end_time      DateTime?    @db.Timestamptz(6)
-  time_entry    time_entries @relation(fields: [time_entry_id], references: [id], onDelete: Cascade)
-
-  @@index([time_entry_id])
-  @@schema("public")
-}
-
-model invoices {
-  id             String          @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
-  client_id      String               @db.Uuid
-  invoice_number String               @unique @db.VarChar(50)
-  status         invoice_status       @default(draft)
-  billing_type   billing_type_invoice @default(LEGAL)
-  subtotal       Decimal         @default(0) @db.Decimal(10, 2)
-  tax_rate       Decimal?        @default(0) @db.Decimal(5, 2)
-  tax_amount     Decimal?        @default(0) @db.Decimal(10, 2)
-  total_amount   Decimal         @default(0) @db.Decimal(10, 2)
-  currency       String          @default("USD") @db.VarChar(3)
-  issue_date     DateTime        @default(dbgenerated("CURRENT_DATE")) @db.Date
-  due_date       DateTime?       @db.Date
-  paid_at        DateTime?       @db.Timestamptz(6)
-  notes          String?
-  created_at     DateTime        @default(now()) @db.Timestamptz(6)
-  updated_at     DateTime        @default(now()) @db.Timestamptz(6)
-  cae            String?
-  cae_due_date   DateTime?       @db.Timestamptz(6)
-  afip_error     String?
-  cbte_tipo      Int?
-  punto_venta    Int?
-  cbte_nro       Int?
-  invoice_items  invoice_items[]
-  time_entries   time_entries[]
-  client         clients         @relation(fields: [client_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  payments       payments[]
-
-  @@index([client_id], map: "idx_invoices_client_id")
-  @@index([due_date], map: "idx_invoices_due_date")
-  @@index([invoice_number], map: "idx_invoices_invoice_number")
-  @@index([issue_date(sort: Desc)], map: "idx_invoices_issue_date")
-  @@index([status], map: "idx_invoices_status")
-  @@schema("public")
-}
-
-model invoice_items {
-  id            String            @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
-  invoice_id    String            @db.Uuid
-  time_entry_id String?           @db.Uuid
-  description   String
-  quantity      Decimal           @db.Decimal(10, 2)
-  rate          Decimal           @db.Decimal(10, 2)
-  amount        Decimal           @db.Decimal(10, 2)
-  type          invoice_item_type @default(time)
-  created_at    DateTime          @default(now()) @db.Timestamptz(6)
-  invoice       invoices          @relation(fields: [invoice_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  time_entry    time_entries?     @relation(fields: [time_entry_id], references: [id], onUpdate: NoAction)
-
-  @@index([invoice_id], map: "idx_invoice_items_invoice_id")
-  @@index([time_entry_id], map: "idx_invoice_items_time_entry_id")
-  @@schema("public")
-}
-
-model hour_packages {
-  id           String    @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
-  client_id    String    @db.Uuid
-  project_id   String?   @db.Uuid
-  hours        Decimal   @db.Decimal(10, 2)
-  hours_used   Decimal   @default(0) @db.Decimal(10, 2)
-  price        Decimal   @db.Decimal(10, 2)
-  currency     String    @default("USD") @db.VarChar(3)
-  purchased_at DateTime  @default(now()) @db.Timestamptz(6)
-  expires_at   DateTime? @db.Timestamptz(6)
-  notes        String?
-  created_at   DateTime  @default(now()) @db.Timestamptz(6)
-  updated_at   DateTime  @default(now()) @db.Timestamptz(6)
-  client       clients   @relation(fields: [client_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  project      projects? @relation(fields: [project_id], references: [id], onUpdate: NoAction)
-
-  @@index([client_id], map: "idx_hour_packages_client_id")
-  @@index([expires_at], map: "idx_hour_packages_expires_at")
-  @@index([project_id], map: "idx_hour_packages_project_id")
-  @@schema("public")
-}
-
-model client_users {
-  id           String       @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
-  client_id    String       @db.Uuid
-  email        String       @db.VarChar(255)
-  user_id      String?      @db.Uuid
-  access_level access_level @default(read)
-  invited_at   DateTime     @default(now()) @db.Timestamptz(6)
-  accepted_at  DateTime?    @db.Timestamptz(6)
-  created_at   DateTime     @default(now()) @db.Timestamptz(6)
-  client       clients      @relation(fields: [client_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  users        auth_users?  @relation(fields: [user_id], references: [id], onUpdate: NoAction)
-
-  @@unique([client_id, email])
-  @@index([client_id], map: "idx_client_users_client_id")
-  @@index([email], map: "idx_client_users_email")
-  @@index([user_id], map: "idx_client_users_user_id")
-  @@schema("public")
-}
-
-model payments {
-  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  invoice_id   String   @db.Uuid
-  amount       Decimal  @db.Decimal(10, 2)
-  payment_date DateTime @default(now()) @db.Timestamptz(6)
-  method       String?
-  notes        String?
-  created_at   DateTime @default(now()) @db.Timestamptz(6)
-  invoice      invoices @relation(fields: [invoice_id], references: [id], onDelete: Cascade)
-
-  @@index([invoice_id])
-  @@schema("public")
-}
-
 /// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
 /// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
 model audit_log_entries {
@@ -301,18 +24,23 @@ model audit_log_entries {
 /// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
 /// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
 model flow_state {
-  id                     String                @id @db.Uuid
-  user_id                String?               @db.Uuid
-  auth_code              String
-  code_challenge_method  code_challenge_method
-  code_challenge         String
+  id                     String                 @id @db.Uuid
+  user_id                String?                @db.Uuid
+  auth_code              String?
+  code_challenge_method  code_challenge_method?
+  code_challenge         String?
   provider_type          String
   provider_access_token  String?
   provider_refresh_token String?
-  created_at             DateTime?             @db.Timestamptz(6)
-  updated_at             DateTime?             @db.Timestamptz(6)
+  created_at             DateTime?              @db.Timestamptz(6)
+  updated_at             DateTime?              @db.Timestamptz(6)
   authentication_method  String
-  auth_code_issued_at    DateTime?             @db.Timestamptz(6)
+  auth_code_issued_at    DateTime?              @db.Timestamptz(6)
+  invite_token           String?
+  referrer               String?
+  oauth_client_state_id  String?                @db.Uuid
+  linking_target_id      String?                @db.Uuid
+  email_optional         Boolean                @default(false)
   saml_relay_states      saml_relay_states[]
 
   @@index([created_at(sort: Desc)])
@@ -325,15 +53,15 @@ model flow_state {
 /// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
 model identities {
   provider_id     String
-  user_id         String     @db.Uuid
+  user_id         String    @db.Uuid
   identity_data   Json
   provider        String
-  last_sign_in_at DateTime?  @db.Timestamptz(6)
-  created_at      DateTime?  @db.Timestamptz(6)
-  updated_at      DateTime?  @db.Timestamptz(6)
-  email           String?    @default(dbgenerated("lower((identity_data ->> 'email'::text))"))
-  id              String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  users           auth_users @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  last_sign_in_at DateTime? @db.Timestamptz(6)
+  created_at      DateTime? @db.Timestamptz(6)
+  updated_at      DateTime? @db.Timestamptz(6)
+  email           String?   @default(dbgenerated("lower((identity_data ->> 'email'::text))"))
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  users           users     @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@unique([provider_id, provider], map: "identities_provider_id_provider_unique")
   @@index([email])
@@ -400,7 +128,7 @@ model mfa_factors {
   web_authn_aaguid             String?          @db.Uuid
   last_webauthn_challenge_data Json?
   mfa_challenges               mfa_challenges[]
-  users                        auth_users       @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  users                        users            @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@unique([user_id, phone], map: "unique_phone_factor_per_user")
   @@index([user_id, created_at], map: "factor_id_created_at_idx")
@@ -428,7 +156,7 @@ model oauth_authorizations {
   approved_at           DateTime?                  @db.Timestamptz(6)
   nonce                 String?
   oauth_clients         oauth_clients              @relation(fields: [client_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  users                 auth_users?                @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  users                 users?                     @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@schema("auth")
 }
@@ -446,21 +174,22 @@ model oauth_client_states {
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
 model oauth_clients {
-  id                   String                  @id @db.Uuid
-  client_secret_hash   String?
-  registration_type    oauth_registration_type
-  redirect_uris        String
-  grant_types          String
-  client_name          String?
-  client_uri           String?
-  logo_uri             String?
-  created_at           DateTime                @default(now()) @db.Timestamptz(6)
-  updated_at           DateTime                @default(now()) @db.Timestamptz(6)
-  deleted_at           DateTime?               @db.Timestamptz(6)
-  client_type          oauth_client_type       @default(confidential)
-  oauth_authorizations oauth_authorizations[]
-  oauth_consents       oauth_consents[]
-  sessions             sessions[]
+  id                         String                  @id @db.Uuid
+  client_secret_hash         String?
+  registration_type          oauth_registration_type
+  redirect_uris              String
+  grant_types                String
+  client_name                String?
+  client_uri                 String?
+  logo_uri                   String?
+  created_at                 DateTime                @default(now()) @db.Timestamptz(6)
+  updated_at                 DateTime                @default(now()) @db.Timestamptz(6)
+  deleted_at                 DateTime?               @db.Timestamptz(6)
+  client_type                oauth_client_type       @default(confidential)
+  token_endpoint_auth_method String
+  oauth_authorizations       oauth_authorizations[]
+  oauth_consents             oauth_consents[]
+  sessions                   sessions[]
 
   @@index([deleted_at])
   @@schema("auth")
@@ -475,7 +204,7 @@ model oauth_consents {
   granted_at    DateTime      @default(now()) @db.Timestamptz(6)
   revoked_at    DateTime?     @db.Timestamptz(6)
   oauth_clients oauth_clients @relation(fields: [client_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  users         auth_users    @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  users         users         @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@unique([user_id, client_id], map: "oauth_consents_user_client_unique")
   @@index([user_id, granted_at(sort: Desc)], map: "oauth_consents_user_order_idx")
@@ -492,7 +221,7 @@ model one_time_tokens {
   relates_to String
   created_at DateTime            @default(now()) @db.Timestamp(6)
   updated_at DateTime            @default(now()) @db.Timestamp(6)
-  users      auth_users          @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  users      users               @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@unique([user_id, token_type])
   @@index([relates_to], map: "one_time_tokens_relates_to_hash_idx", type: Hash)
@@ -592,7 +321,7 @@ model sessions {
   mfa_amr_claims         mfa_amr_claims[]
   refresh_tokens         refresh_tokens[]
   oauth_clients          oauth_clients?   @relation(fields: [oauth_client_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  users                  auth_users       @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  users                  users            @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@index([not_after(sort: Desc)])
   @@index([oauth_client_id])
@@ -635,50 +364,328 @@ model sso_providers {
   @@schema("auth")
 }
 
-enum billing_type {
-  fixed
-  hourly
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+/// This model contains an expression index which requires additional setup for migrations. Visit https://pris.ly/d/expression-indexes for more info.
+model users {
+  instance_id                           String?                @db.Uuid
+  id                                    String                 @id @db.Uuid
+  aud                                   String?                @db.VarChar(255)
+  role                                  String?                @db.VarChar(255)
+  email                                 String?                @db.VarChar(255)
+  encrypted_password                    String?                @db.VarChar(255)
+  email_confirmed_at                    DateTime?              @db.Timestamptz(6)
+  invited_at                            DateTime?              @db.Timestamptz(6)
+  confirmation_token                    String?                @db.VarChar(255)
+  confirmation_sent_at                  DateTime?              @db.Timestamptz(6)
+  recovery_token                        String?                @db.VarChar(255)
+  recovery_sent_at                      DateTime?              @db.Timestamptz(6)
+  email_change_token_new                String?                @db.VarChar(255)
+  email_change                          String?                @db.VarChar(255)
+  email_change_sent_at                  DateTime?              @db.Timestamptz(6)
+  last_sign_in_at                       DateTime?              @db.Timestamptz(6)
+  raw_app_meta_data                     Json?
+  raw_user_meta_data                    Json?
+  is_super_admin                        Boolean?
+  created_at                            DateTime?              @db.Timestamptz(6)
+  updated_at                            DateTime?              @db.Timestamptz(6)
+  phone                                 String?                @unique
+  phone_confirmed_at                    DateTime?              @db.Timestamptz(6)
+  phone_change                          String?                @default("")
+  phone_change_token                    String?                @default("") @db.VarChar(255)
+  phone_change_sent_at                  DateTime?              @db.Timestamptz(6)
+  confirmed_at                          DateTime?              @default(dbgenerated("LEAST(email_confirmed_at, phone_confirmed_at)")) @db.Timestamptz(6)
+  email_change_token_current            String?                @default("") @db.VarChar(255)
+  email_change_confirm_status           Int?                   @default(0) @db.SmallInt
+  banned_until                          DateTime?              @db.Timestamptz(6)
+  reauthentication_token                String?                @default("") @db.VarChar(255)
+  reauthentication_sent_at              DateTime?              @db.Timestamptz(6)
+  is_sso_user                           Boolean                @default(false)
+  deleted_at                            DateTime?              @db.Timestamptz(6)
+  is_anonymous                          Boolean                @default(false)
+  identities                            identities[]
+  mfa_factors                           mfa_factors[]
+  oauth_authorizations                  oauth_authorizations[]
+  oauth_consents                        oauth_consents[]
+  one_time_tokens                       one_time_tokens[]
+  sessions                              sessions[]
+  client_users                          client_users[]
+  clients_clients_portal_user_idTousers clients?               @relation("clients_portal_user_idTousers")
+  clients_clients_user_idTousers        clients[]              @relation("clients_user_idTousers")
+  time_entries                          time_entries[]
 
+  @@index([instance_id])
+  @@index([is_anonymous])
+  @@schema("auth")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model client_users {
+  id           String       @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  client_id    String       @db.Uuid
+  email        String       @db.VarChar(255)
+  user_id      String?      @db.Uuid
+  access_level access_level @default(read)
+  invited_at   DateTime     @default(now()) @db.Timestamptz(6)
+  accepted_at  DateTime?    @db.Timestamptz(6)
+  created_at   DateTime     @default(now()) @db.Timestamptz(6)
+  clients      clients      @relation(fields: [client_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  users        users?       @relation(fields: [user_id], references: [id], onUpdate: NoAction)
+
+  @@unique([client_id, email])
+  @@index([client_id], map: "idx_client_users_client_id")
+  @@index([email], map: "idx_client_users_email")
+  @@index([user_id], map: "idx_client_users_user_id")
   @@schema("public")
 }
 
-enum project_status {
-  active
-  paused
-  completed
-  cancelled
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model clients {
+  id                       String               @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  user_id                  String               @db.Uuid
+  name                     String               @db.VarChar(255)
+  email                    String?              @db.VarChar(255)
+  phone                    String?              @db.VarChar(50)
+  address                  String?
+  currency                 String               @default("USD") @db.VarChar(3)
+  default_rate             Decimal?             @db.Decimal(10, 2)
+  notes                    String?
+  created_at               DateTime             @default(now()) @db.Timestamptz(6)
+  updated_at               DateTime             @default(now()) @db.Timestamptz(6)
+  tax_id                   String?              @db.VarChar(50)
+  business_name            String?              @db.VarChar(255)
+  legal_address            String?
+  tax_condition            String?              @db.VarChar(100)
+  preferred_billing_method billing_type_invoice @default(LEGAL)
+  portal_user_id           String?              @unique @db.Uuid
+  web_access_enabled       Boolean              @default(false)
+  logo_url                 String?
+  is_billable              Boolean              @default(true)
+  client_users             client_users[]
+  portal_user              users?               @relation("clients_portal_user_idTousers", fields: [portal_user_id], references: [id], onUpdate: NoAction)
+  users                    users                @relation("clients_user_idTousers", fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  hour_packages            hour_packages[]
+  invoices                 invoices[]
+  projects                 projects[]
 
+  @@index([email], map: "idx_clients_email")
+  @@index([name], map: "idx_clients_name")
+  @@index([user_id], map: "idx_clients_user_id")
   @@schema("public")
 }
 
-enum invoice_status {
-  draft
-  sent
-  paid
-  overdue
-  partial
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model hour_packages {
+  id           String    @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  client_id    String    @db.Uuid
+  project_id   String?   @db.Uuid
+  hours        Decimal   @db.Decimal(10, 2)
+  hours_used   Decimal   @default(0) @db.Decimal(10, 2)
+  price        Decimal   @db.Decimal(10, 2)
+  currency     String    @default("USD") @db.VarChar(3)
+  purchased_at DateTime  @default(now()) @db.Timestamptz(6)
+  expires_at   DateTime? @db.Timestamptz(6)
+  notes        String?
+  created_at   DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at   DateTime  @default(now()) @db.Timestamptz(6)
+  clients      clients   @relation(fields: [client_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  projects     projects? @relation(fields: [project_id], references: [id], onUpdate: NoAction)
 
+  @@index([client_id], map: "idx_hour_packages_client_id")
+  @@index([expires_at], map: "idx_hour_packages_expires_at")
+  @@index([project_id], map: "idx_hour_packages_project_id")
   @@schema("public")
 }
 
-enum invoice_item_type {
-  time
-  fixed
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model invoice_items {
+  id            String            @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  invoice_id    String            @db.Uuid
+  time_entry_id String?           @db.Uuid
+  description   String
+  quantity      Decimal           @db.Decimal(10, 2)
+  rate          Decimal           @db.Decimal(10, 2)
+  amount        Decimal           @db.Decimal(10, 2)
+  type          invoice_item_type @default(time)
+  created_at    DateTime          @default(now()) @db.Timestamptz(6)
+  invoices      invoices          @relation(fields: [invoice_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  time_entries  time_entries?     @relation(fields: [time_entry_id], references: [id], onUpdate: NoAction)
 
+  @@index([invoice_id], map: "idx_invoice_items_invoice_id")
+  @@index([time_entry_id], map: "idx_invoice_items_time_entry_id")
   @@schema("public")
 }
 
-enum billing_type_invoice {
-  LEGAL
-  INTERNAL
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model invoices {
+  id             String               @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  client_id      String               @db.Uuid
+  invoice_number String               @unique @db.VarChar(50)
+  status         invoice_status       @default(draft)
+  subtotal       Decimal              @default(0) @db.Decimal(10, 2)
+  tax_rate       Decimal?             @default(0) @db.Decimal(5, 2)
+  tax_amount     Decimal?             @default(0) @db.Decimal(10, 2)
+  total_amount   Decimal              @default(0) @db.Decimal(10, 2)
+  currency       String               @default("USD") @db.VarChar(3)
+  issue_date     DateTime             @default(dbgenerated("CURRENT_DATE")) @db.Date
+  due_date       DateTime?            @db.Date
+  paid_at        DateTime?            @db.Timestamptz(6)
+  notes          String?
+  created_at     DateTime             @default(now()) @db.Timestamptz(6)
+  updated_at     DateTime             @default(now()) @db.Timestamptz(6)
+  cae            String?
+  cae_due_date   DateTime?            @db.Timestamptz(6)
+  afip_error     String?
+  cbte_tipo      Int?
+  punto_venta    Int?
+  cbte_nro       Int?
+  /** CUIT del emisor (para QR AFIP); se guarda al emitir el CAE */
+  issuer_tax_id  String?              @db.VarChar(20)
+  billing_type   billing_type_invoice @default(LEGAL)
+  invoice_items  invoice_items[]
+  clients        clients              @relation(fields: [client_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  payments       payments[]
+  time_entries   time_entries[]
 
+  @@index([client_id], map: "idx_invoices_client_id")
+  @@index([due_date], map: "idx_invoices_due_date")
+  @@index([invoice_number], map: "idx_invoices_invoice_number")
+  @@index([issue_date(sort: Desc)], map: "idx_invoices_issue_date")
+  @@index([status], map: "idx_invoices_status")
   @@schema("public")
 }
 
-enum access_level {
-  read
-  read_write
+model payments {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  invoice_id   String   @db.Uuid
+  amount       Decimal  @db.Decimal(10, 2)
+  payment_date DateTime @default(now()) @db.Timestamptz(6)
+  method       String?
+  notes        String?
+  created_at   DateTime @default(now()) @db.Timestamptz(6)
+  invoices     invoices @relation(fields: [invoice_id], references: [id], onDelete: Cascade)
 
+  @@index([invoice_id])
+  @@schema("public")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model projects {
+  id            String          @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  client_id     String          @db.Uuid
+  name          String          @db.VarChar(255)
+  description   String?
+  currency      String          @default("USD") @db.VarChar(3)
+  rate          Decimal?        @db.Decimal(10, 2)
+  billing_type  billing_type    @default(hourly)
+  status        project_status  @default(active)
+  start_date    DateTime?       @db.Date
+  end_date      DateTime?       @db.Date
+  created_at    DateTime        @default(now()) @db.Timestamptz(6)
+  updated_at    DateTime        @default(now()) @db.Timestamptz(6)
+  is_billable   Boolean         @default(true)
+  hour_packages hour_packages[]
+  clients       clients         @relation(fields: [client_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  tasks         tasks[]
+
+  @@index([client_id], map: "idx_projects_client_id")
+  @@index([name], map: "idx_projects_name")
+  @@index([status], map: "idx_projects_status")
+  @@schema("public")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model tasks {
+  id           String         @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  project_id   String         @db.Uuid
+  name         String         @db.VarChar(255)
+  description  String?
+  rate         Decimal?       @db.Decimal(10, 2)
+  created_at   DateTime       @default(now()) @db.Timestamptz(6)
+  updated_at   DateTime       @default(now()) @db.Timestamptz(6)
+  is_billable  Boolean        @default(true)
+  projects     projects       @relation(fields: [project_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  time_entries time_entries[]
+
+  @@index([name], map: "idx_tasks_name")
+  @@index([project_id], map: "idx_tasks_project_id")
+  @@schema("public")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model time_entries {
+  id                String              @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  user_id           String              @db.Uuid
+  task_id           String              @db.Uuid
+  description       String?
+  start_time        DateTime            @db.Timestamptz(6)
+  end_time          DateTime?           @db.Timestamptz(6)
+  duration_total    Int?
+  billable          Boolean             @default(true)
+  rate_applied      Decimal?            @db.Decimal(10, 2)
+  amount            Decimal?            @db.Decimal(10, 2)
+  created_at        DateTime            @default(now()) @db.Timestamptz(6)
+  is_billed         Boolean             @default(false)
+  invoice_id        String?             @db.Uuid
+  usd_exchange_rate Decimal?            @db.Decimal(10, 2)
+  updated_at        DateTime            @default(now()) @db.Timestamptz(6)
+  duration_neto     Int?                @default(0)
+  invoice_items     invoice_items[]
+  invoices          invoices?           @relation(fields: [invoice_id], references: [id], onUpdate: NoAction)
+  tasks             tasks               @relation(fields: [task_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  users             users               @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  time_entry_breaks time_entry_breaks[]
+
+  @@index([billable], map: "idx_time_entries_billable")
+  @@index([created_at(sort: Desc)], map: "idx_time_entries_created_at")
+  @@index([start_time], map: "idx_time_entries_start_time")
+  @@index([task_id], map: "idx_time_entries_task_id")
+  @@index([user_id, start_time(sort: Desc)], map: "idx_time_entries_user_date")
+  @@index([user_id], map: "idx_time_entries_user_id")
+  @@schema("public")
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model time_entry_breaks {
+  id            String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  time_entry_id String       @db.Uuid
+  start_time    DateTime     @db.Timestamptz(6)
+  end_time      DateTime?    @db.Timestamptz(6)
+  time_entries  time_entries @relation(fields: [time_entry_id], references: [id], onDelete: Cascade)
+
+  @@index([time_entry_id])
+  @@schema("public")
+}
+
+/// Configuración fiscal del usuario emisor de facturas
+model user_fiscal_settings {
+  id                  String    @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  user_id             String    @unique @db.Uuid
+  business_name       String?   @db.VarChar(255)
+  tax_id              String?   @db.VarChar(50)
+  legal_address       String?
+  tax_condition       String?   @db.VarChar(100)
+  gross_income        String?   @db.VarChar(100)
+  activity_start_date DateTime? @db.Date
+  logo_url            String?
+  phone               String?   @db.VarChar(50)
+  email               String?   @db.VarChar(255)
+  created_at          DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at          DateTime  @default(now()) @db.Timestamptz(6)
+
+  @@index([user_id])
   @@schema("public")
 }
 
@@ -784,6 +791,54 @@ enum InvoiceStatus {
 }
 
 enum ProjectStatus {
+  active
+  paused
+  completed
+  cancelled
+
+  @@schema("public")
+}
+
+enum access_level {
+  read
+  read_write
+
+  @@schema("public")
+}
+
+enum billing_type {
+  fixed
+  hourly
+
+  @@schema("public")
+}
+
+enum billing_type_invoice {
+  LEGAL
+  INTERNAL
+
+  @@schema("public")
+}
+
+enum invoice_item_type {
+  time
+  fixed
+
+  @@schema("public")
+}
+
+enum invoice_status {
+  draft
+  sent
+  paid
+  overdue
+  partial
+  cancelled
+
+  @@schema("public")
+}
+
+enum project_status {
   active
   paused
   completed

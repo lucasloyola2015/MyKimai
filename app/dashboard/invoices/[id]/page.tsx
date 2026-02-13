@@ -4,10 +4,11 @@ import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Download, Send, ArrowLeft, CheckCircle2, History, AlertCircle, Banknote, Loader2, FileText, ShieldCheck, AlertTriangle } from "lucide-react";
+import { Download, Send, ArrowLeft, CheckCircle2, History, AlertCircle, Banknote, Loader2, FileText, ShieldCheck, AlertTriangle, XCircle, Trash2 } from "lucide-react";
 import { format } from "date-fns";
-import { getInvoiceWithItems } from "@/lib/actions/invoices";
-import { generateFiscalInvoice } from "@/lib/actions/afip-actions";
+import { getInvoiceWithItems, deleteInvoice } from "@/lib/actions/invoices";
+import { generateFiscalInvoice, generateCreditNote } from "@/lib/actions/afip-actions";
+import { getUserFiscalSettings } from "@/lib/actions/user-settings";
 import { toast } from "@/hooks/use-toast";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
@@ -17,8 +18,11 @@ export default function InvoiceDetailPage() {
   const router = useRouter();
   const invoiceId = params.id as string;
   const [invoice, setInvoice] = useState<any | null>(null);
+  const [issuerName, setIssuerName] = useState<string>("Lucas Loyola");
   const [loading, setLoading] = useState(true);
   const [fiscalLoading, setFiscalLoading] = useState(false);
+  const [creditNoteLoading, setCreditNoteLoading] = useState(false);
+  const [deleteLoading, setDeleteLoading] = useState(false);
 
   useEffect(() => {
     loadInvoice();
@@ -26,9 +30,13 @@ export default function InvoiceDetailPage() {
 
   const loadInvoice = async () => {
     try {
-      const data = await getInvoiceWithItems(invoiceId);
+      const [data, fiscalSettings] = await Promise.all([
+        getInvoiceWithItems(invoiceId),
+        getUserFiscalSettings(),
+      ]);
       if (!data) throw new Error("Factura no encontrada");
       setInvoice(data);
+      setIssuerName(fiscalSettings?.business_name || "Lucas Loyola");
     } catch (error: any) {
       console.error("Error loading invoice:", error);
       toast({ title: "Error", description: error.message, variant: "destructive" });
@@ -62,6 +70,52 @@ export default function InvoiceDetailPage() {
     }
   };
 
+  const handleGenerateCreditNote = async () => {
+    if (!confirm("¿Estás seguro de anular esta factura? Se generará una Nota de Crédito ante AFIP.")) {
+      return;
+    }
+
+    setCreditNoteLoading(true);
+    try {
+      const result = await generateCreditNote(invoiceId);
+      if (result.success) {
+        toast({
+          title: "NOTA DE CRÉDITO GENERADA",
+          description: `CAE obtenido: ${result.cae}. Comprobante Nro: ${result.cbte_nro}`,
+        });
+        await loadInvoice();
+        router.push(`/dashboard/invoices/${result.credit_note_id}`);
+      } else {
+        toast({
+          title: "ERROR AL GENERAR NOTA DE CRÉDITO",
+          description: result.error,
+          variant: "destructive"
+        });
+        await loadInvoice();
+      }
+    } catch (error: any) {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+    } finally {
+      setCreditNoteLoading(false);
+    }
+  };
+
+  const handleDeleteDraft = async () => {
+    if (!invoice || invoice.status !== "draft") return;
+    if (!confirm("¿Eliminar esta factura en borrador? Las horas volverán a estar pendientes de facturar.")) return;
+    setDeleteLoading(true);
+    try {
+      const result = await deleteInvoice(invoice.id);
+      if (!result.success) throw new Error(result.error);
+      toast({ title: "Factura eliminada", description: "Las horas vinculadas volvieron a pendiente." });
+      router.push("/dashboard/invoices");
+    } catch (error: any) {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+    } finally {
+      setDeleteLoading(false);
+    }
+  };
+
   if (loading) return <div className="p-8 text-center text-muted-foreground font-mono">RECUPERANDO DATOS...</div>;
   if (!invoice) return <div className="p-8 text-center">Factura no encontrada</div>;
 
@@ -70,11 +124,25 @@ export default function InvoiceDetailPage() {
 
   return (
     <div className="space-y-6 max-w-4xl mx-auto">
-      <div className="flex items-center gap-4">
-        <Button variant="ghost" size="icon" onClick={() => router.back()}>
-          <ArrowLeft className="h-4 w-4" />
-        </Button>
-        <h1 className="text-2xl font-black uppercase tracking-tighter">Detalle de Factura</h1>
+      <div className="flex items-center justify-between gap-4">
+        <div className="flex items-center gap-4">
+          <Button variant="ghost" size="icon" onClick={() => router.back()}>
+            <ArrowLeft className="h-4 w-4" />
+          </Button>
+          <h1 className="text-2xl font-black uppercase tracking-tighter">Detalle de Factura</h1>
+        </div>
+        {invoice.status === "draft" && (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="text-muted-foreground hover:text-red-600 hover:bg-red-50"
+            onClick={handleDeleteDraft}
+            disabled={deleteLoading}
+            aria-label="Eliminar factura"
+          >
+            {deleteLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+          </Button>
+        )}
       </div>
 
       <div className="grid md:grid-cols-3 gap-6">
@@ -83,8 +151,13 @@ export default function InvoiceDetailPage() {
             <CardHeader className="border-b bg-muted/20">
               <div className="flex justify-between items-start">
                 <div>
-                  <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Nro de Comprobante</span>
+                  <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Comprobante</span>
                   <CardTitle className="text-2xl font-black">{invoice.invoice_number}</CardTitle>
+                  {invoice.billing_type === "LEGAL" && invoice.cae && invoice.cbte_nro != null && (
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      Comprobante AFIP: {String(invoice.punto_venta ?? 3).padStart(5, "0")}-{String(invoice.cbte_nro).padStart(8, "0")}
+                    </p>
+                  )}
                 </div>
                 <div className={cn(
                   "px-3 py-1 rounded-full text-[10px] font-bold uppercase",
@@ -98,12 +171,12 @@ export default function InvoiceDetailPage() {
               <div className="grid grid-cols-2 gap-8 text-sm">
                 <div className="space-y-1">
                   <Label>Emisor</Label>
-                  <p className="font-bold uppercase tracking-tight">MI EMPRESA / KIMAI-SIMPLE</p>
+                  <p className="font-bold uppercase tracking-tight">{issuerName}</p>
                 </div>
                 <div className="space-y-1">
                   <Label>Cliente</Label>
-                  <p className="font-bold">{invoice.client.name}</p>
-                  <p className="text-xs text-muted-foreground">{invoice.client.email}</p>
+                  <p className="font-bold">{invoice.clients.name}</p>
+                  <p className="text-xs text-muted-foreground">{invoice.clients.email}</p>
                 </div>
               </div>
 
@@ -247,7 +320,7 @@ export default function InvoiceDetailPage() {
                     <div>
                       <Label>Comprobante</Label>
                       <p className="font-black font-mono text-sm">
-                        {String(invoice.punto_venta).padStart(5, '0')}-{String(invoice.cbte_nro).padStart(8, '0')}
+                        {String(invoice.punto_venta ?? 3).padStart(5, '0')}-{String(invoice.cbte_nro).padStart(8, '0')}
                       </p>
                     </div>
                     <div>
@@ -265,13 +338,41 @@ export default function InvoiceDetailPage() {
                     <CheckCircle2 className="h-4 w-4 text-emerald-600" />
                     <span className="text-[10px] font-black text-emerald-700 uppercase tracking-widest">Factura Validada por ARCA</span>
                   </div>
+                  
+                  {invoice.status !== 'cancelled' && (
+                    <Button
+                      variant="destructive"
+                      className="w-full font-black uppercase tracking-tighter"
+                      onClick={handleGenerateCreditNote}
+                      disabled={creditNoteLoading}
+                    >
+                      {creditNoteLoading ? (
+                        <>
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          GENERANDO NOTA DE CRÉDITO...
+                        </>
+                      ) : (
+                        <>
+                          <AlertTriangle className="mr-2 h-4 w-4" />
+                          Anular Factura (Nota de Crédito)
+                        </>
+                      )}
+                    </Button>
+                  )}
+                  
+                  {invoice.status === 'cancelled' && (
+                    <div className="bg-red-500/10 border border-red-500/30 p-2 rounded flex items-center gap-2">
+                      <AlertTriangle className="h-4 w-4 text-red-600" />
+                      <span className="text-[10px] font-black text-red-700 uppercase tracking-widest">Factura Anulada</span>
+                    </div>
+                  )}
                 </div>
               ) : (
                 <div className="space-y-4">
                   <div className="p-3 bg-muted/50 rounded-lg space-y-2 border border-dashed">
                     <div className="flex justify-between items-center text-[10px] font-bold opacity-60">
                       <span>PUNTO DE VENTA</span>
-                      <span>{invoice.punto_venta || 1}</span>
+                      <span>{invoice.punto_venta ?? 3}</span>
                     </div>
                     <div className="flex justify-between items-center text-[10px] font-bold opacity-60">
                       <span>TIPO DE COMPROBANTE</span>

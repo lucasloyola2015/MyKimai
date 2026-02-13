@@ -21,7 +21,7 @@ export async function getProjects(clientId?: string) {
     if (clientContext) {
         where.client_id = clientContext.clientId;
     } else {
-        where.client = {
+        where.clients = {
             user_id: user.id,
         };
         if (clientId) where.client_id = clientId;
@@ -30,7 +30,7 @@ export async function getProjects(clientId?: string) {
     const projects = await prisma.projects.findMany({
         where,
         include: {
-            client: true,
+            clients: true,
         },
         orderBy: {
             created_at: "desc",
@@ -51,7 +51,7 @@ export async function getProjectWithRelations(id: string) {
     if (clientContext) {
         where.client_id = clientContext.clientId;
     } else {
-        where.client = {
+        where.clients = {
             user_id: user.id,
         };
     }
@@ -59,7 +59,7 @@ export async function getProjectWithRelations(id: string) {
     const project = await prisma.projects.findFirst({
         where,
         include: {
-            client: true,
+            clients: true,
             tasks: true,
         },
     });
@@ -80,6 +80,7 @@ export async function createProject(data: {
     status?: ProjectStatus;
     start_date?: Date | null;
     end_date?: Date | null;
+    is_billable?: boolean;
 }): Promise<ActionResponse<projects>> {
     const user = await getAuthUser();
 
@@ -99,6 +100,11 @@ export async function createProject(data: {
     }
 
     try {
+        // HERENCIA: Si el cliente no es facturable, el proyecto DEBE ser no facturable
+        if (client && (client as any).is_billable === false) {
+            data.is_billable = false;
+        }
+
         const project = await prisma.projects.create({
             data: {
                 ...data,
@@ -107,7 +113,7 @@ export async function createProject(data: {
                 status: data.status || "active",
             },
             include: {
-                client: true,
+                clients: true,
             },
         });
 
@@ -139,6 +145,7 @@ export async function updateProject(
         status?: ProjectStatus;
         start_date?: Date | null;
         end_date?: Date | null;
+        is_billable?: boolean;
     }
 ): Promise<ActionResponse<projects>> {
     const user = await getAuthUser();
@@ -147,7 +154,7 @@ export async function updateProject(
     const existing = await prisma.projects.findFirst({
         where: {
             id,
-            client: {
+            clients: {
                 user_id: user.id,
             },
         },
@@ -161,11 +168,32 @@ export async function updateProject(
     }
 
     try {
+        // HERENCIA: Validamos contra el cliente al intentar activar facturabilidad
+        if (data.is_billable === true) {
+            const client = await prisma.clients.findUnique({
+                where: { id: existing.client_id }
+            });
+            if (client && (client as any).is_billable === false) {
+                return {
+                    success: false,
+                    error: "No se puede marcar como facturable: El cliente principal no es facturable."
+                };
+            }
+        }
+
+        // Si el proyecto pasa a no ser facturable, forzamos sus tareas a cascada
+        if (data.is_billable === false) {
+            await (prisma.tasks as any).updateMany({
+                where: { project_id: id },
+                data: { is_billable: false }
+            });
+        }
+
         const project = await prisma.projects.update({
             where: { id },
             data,
             include: {
-                client: true,
+                clients: true,
             },
         });
 
@@ -193,7 +221,7 @@ export async function deleteProject(id: string) {
     const existing = await prisma.projects.findFirst({
         where: {
             id,
-            client: {
+            clients: {
                 user_id: user.id,
             },
         },
@@ -233,7 +261,7 @@ export async function getPortalProjects() {
                 include: {
                     time_entries: {
                         include: {
-                            breaks: true
+                            time_entry_breaks: true
                         }
                     }
                 }
@@ -292,7 +320,7 @@ export async function getPortalProjectDetail(projectId: string) {
                             start_time: "desc",
                         },
                         include: {
-                            breaks: true
+                            time_entry_breaks: true
                         }
                     }
                 }
@@ -329,7 +357,7 @@ export async function getPortalProjectDetail(projectId: string) {
                 is_billed: entry.is_billed,
                 duration_neto: totals.duration_neto,
                 taskName: task.name,
-                breaks: entry.breaks ?? [],
+                breaks: entry.time_entry_breaks ?? [],
             };
         })
     ).sort((a, b) => new Date(b.start_time).getTime() - new Date(a.start_time).getTime());

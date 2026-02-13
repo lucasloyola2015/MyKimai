@@ -5,6 +5,7 @@ import { getAuthUser, getClientContext } from "@/lib/auth/server";
 import { revalidatePath } from "next/cache";
 import type { invoices, invoice_items, InvoiceStatus, billing_type_invoice } from "@prisma/client";
 import { getUsdExchangeRate } from "./exchange";
+import { PUNTO_VENTA_DEFAULT } from "@/lib/fiscal-config";
 
 export type ActionResponse<T> =
     | { success: true; data: T }
@@ -21,7 +22,7 @@ export async function getInvoices() {
     if (clientContext) {
         where.client_id = clientContext.clientId;
     } else {
-        where.client = {
+        where.clients = {
             user_id: user.id,
         };
     }
@@ -29,7 +30,8 @@ export async function getInvoices() {
     const invoices = await prisma.invoices.findMany({
         where,
         include: {
-            client: true,
+            clients: true,
+            invoice_items: true,
         },
         orderBy: {
             created_at: "desc",
@@ -50,7 +52,7 @@ export async function getInvoiceWithItems(id: string) {
     if (clientContext) {
         where.client_id = clientContext.clientId;
     } else {
-        where.client = {
+        where.clients = {
             user_id: user.id,
         };
     }
@@ -58,16 +60,16 @@ export async function getInvoiceWithItems(id: string) {
     const invoice = await prisma.invoices.findFirst({
         where,
         include: {
-            client: true,
+            clients: true,
             invoice_items: {
                 include: {
-                    time_entry: {
+                    time_entries: {
                         include: {
-                            task: {
+                            tasks: {
                                 include: {
-                                    project: {
+                                    projects: {
                                         include: {
-                                            client: true,
+                                            clients: true,
                                         },
                                     },
                                 },
@@ -94,19 +96,19 @@ export async function getUnbilledTimeEntries(clientId?: string) {
             billable: true,
             is_billed: false,
             ...(clientId && {
-                task: {
-                    project: {
+                tasks: {
+                    projects: {
                         client_id: clientId,
                     },
                 },
             }),
         },
         include: {
-            task: {
+            tasks: {
                 include: {
-                    project: {
+                    projects: {
                         include: {
-                            client: true,
+                            clients: true,
                         },
                     },
                 },
@@ -126,8 +128,8 @@ export async function getBilledTimeEntryIds() {
 
     const billedItems = await prisma.invoice_items.findMany({
         where: {
-            invoice: {
-                client: {
+            invoices: {
+                clients: {
                     user_id: user.id,
                 },
             },
@@ -146,7 +148,11 @@ export async function getBilledTimeEntryIds() {
 }
 
 /**
- * Genera el próximo número de factura basado en el tipo
+ * Genera el próximo número de factura según el tipo (LEGAL o INTERNAL).
+ * - LEGAL: prefijo INV (ej. INV-2026-001).
+ * - INTERNAL: prefijo INT (ej. INT-2026-001).
+ * La secuencia es independiente por tipo y por año; la restricción única en
+ * invoice_number evita duplicados; en caso de carrera se reintenta la transacción.
  */
 async function generateInvoiceNumber(type: billing_type_invoice = "LEGAL", tx?: any): Promise<string> {
     const year = new Date().getFullYear();
@@ -155,21 +161,17 @@ async function generateInvoiceNumber(type: billing_type_invoice = "LEGAL", tx?: 
 
     const lastInvoice = await client.invoices.findFirst({
         where: {
-            invoice_number: {
-                startsWith: `${prefix}-${year}-`,
-            },
+            invoice_number: { startsWith: `${prefix}-${year}-` },
             billing_type: type,
         },
-        orderBy: {
-            invoice_number: "desc",
-        },
+        orderBy: { invoice_number: "desc" },
     });
 
     if (!lastInvoice) {
         return `${prefix}-${year}-001`;
     }
 
-    const lastNumber = parseInt(lastInvoice.invoice_number.split("-")[2] || "0");
+    const lastNumber = parseInt(lastInvoice.invoice_number.split("-")[2] || "0", 10);
     const nextNumber = (lastNumber + 1).toString().padStart(3, "0");
     return `${prefix}-${year}-${nextNumber}`;
 }
@@ -186,6 +188,7 @@ export async function createInvoiceFromTimeEntries(data: {
     billing_type?: billing_type_invoice;
     currency?: string;
     exchange_strategy?: "CURRENT" | "HISTORICAL";
+    cbte_tipo?: number; // Tipo de comprobante AFIP (11 = Factura C)
 }): Promise<ActionResponse<invoices>> {
     const user = await getAuthUser();
 
@@ -212,14 +215,14 @@ export async function createInvoiceFromTimeEntries(data: {
             },
             user_id: user.id,
             billable: true,
-            task: {
-                project: {
+            tasks: {
+                projects: {
                     client_id: data.client_id,
                 },
             },
         },
         include: {
-            task: true,
+            tasks: true,
         },
     });
 
@@ -259,9 +262,13 @@ export async function createInvoiceFromTimeEntries(data: {
     const taxAmount = subtotal * (taxRate / 100);
     const totalAmount = subtotal + taxAmount;
 
-    try {
-        // Crear factura e items en una transacción
-        const result = await prisma.$transaction(async (tx) => {
+    const MAX_RETRIES = 3; // Reintentos si hay colisión de número (comprobante interno o legal)
+    let lastError: unknown = null;
+
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+        try {
+            // Crear factura e items en una transacción (número único por tipo y año)
+            const result = await prisma.$transaction(async (tx) => {
             // Generar número de factura según tipo
             const billingType = data.billing_type || "LEGAL";
             const invoiceNumber = await generateInvoiceNumber(billingType, tx);
@@ -286,6 +293,9 @@ export async function createInvoiceFromTimeEntries(data: {
                     currency: billingCurrency,
                     due_date: data.due_date ? new Date(data.due_date) : null,
                     notes: invoiceNotes,
+                    // Campos AFIP (solo si es LEGAL)
+                    cbte_tipo: billingType === "LEGAL" ? (data.cbte_tipo || 11) : null,
+                    punto_venta: billingType === "LEGAL" ? PUNTO_VENTA_DEFAULT : null,
                 },
             });
 
@@ -308,7 +318,7 @@ export async function createInvoiceFromTimeEntries(data: {
                         data: {
                             invoice_id: invoice.id,
                             time_entry_id: entry.id,
-                            description: entry.description || entry.task.name || "Trabajo",
+                            description: entry.description || entry.tasks.name || "Trabajo",
                             quantity: (entry.duration_neto || 0) / 60,
                             rate: itemRate,
                             amount: itemAmount,
@@ -329,25 +339,36 @@ export async function createInvoiceFromTimeEntries(data: {
             });
 
             return invoice;
-        });
+            });
 
-        revalidatePath("/dashboard/invoices");
-        revalidatePath("/dashboard");
+            revalidatePath("/dashboard/invoices");
+            revalidatePath("/dashboard");
 
-        return {
-            success: true,
-            data: result,
-        };
-    } catch (error: any) {
-        console.error("DEBUG INVOICE CREATION ERROR:", error);
-        return {
-            success: false,
-            error:
-                error instanceof Error
-                    ? error.message
-                    : "Error desconocido al crear la factura.",
-        };
+            return {
+                success: true,
+                data: result,
+            };
+        } catch (error: any) {
+            lastError = error;
+            const isUniqueViolation =
+                error?.code === "P2002" &&
+                (error?.meta?.target?.includes("invoice_number") ?? error?.meta?.modelName === "invoices");
+            if (isUniqueViolation && attempt < MAX_RETRIES) {
+                continue; // Reintentar con nuevo número
+            }
+            break;
+        }
     }
+
+    console.error("DEBUG INVOICE CREATION ERROR:", lastError);
+    const err = lastError as any;
+    return {
+        success: false,
+        error:
+            err instanceof Error
+                ? err.message
+                : "Error desconocido al crear la factura.",
+    };
 }
 
 /**
@@ -360,7 +381,7 @@ export async function deleteInvoice(id: string): Promise<ActionResponse<void>> {
     const invoice = await prisma.invoices.findFirst({
         where: {
             id,
-            client: {
+            clients: {
                 user_id: user.id,
             },
         },
@@ -378,11 +399,11 @@ export async function deleteInvoice(id: string): Promise<ActionResponse<void>> {
         return { success: false, error: "Factura no encontrada." };
     }
 
-    // 2. Restricción de Seguridad: Inmutable si es LEGAL o tiene CAE
-    if (invoice.billing_type === "LEGAL" || invoice.cae) {
+    // 2. No se puede eliminar si ya tiene CAE (comprobante autorizado por AFIP); en ese caso anular con Nota de Crédito
+    if (invoice.cae) {
         return {
             success: false,
-            error: "No se puede eliminar una factura legal o fiscalizada por AFIP. Debe anularse mediante Nota de Crédito."
+            error: "No se puede eliminar una factura ya autorizada por AFIP. Debe anularse mediante Nota de Crédito."
         };
     }
 
@@ -439,7 +460,7 @@ export async function updateInvoiceStatus(
     const existing = await prisma.invoices.findFirst({
         where: {
             id,
-            client: {
+            clients: {
                 user_id: user.id,
             },
         },
@@ -468,7 +489,7 @@ export async function updateInvoiceStatus(
             where: { id },
             data: updateData as any, // Cast to any to avoid enum sync issues if they haven't reloaded
             include: {
-                client: true,
+                clients: true,
             },
         });
 
@@ -513,11 +534,11 @@ export async function getClientBillingSummary() {
             is_billed: false,
         },
         include: {
-            task: {
+            tasks: {
                 include: {
-                    project: {
+                    projects: {
                         include: {
-                            client: true,
+                            clients: true,
                         },
                     },
                 },
@@ -536,8 +557,8 @@ export async function getClientBillingSummary() {
     const summaries = clients.map((client) => {
         // Entradas sin facturar de este cliente
         const clientUnbilledEntries = unbilledEntries.filter(
-            (entry) =>
-                entry.task.project.client.id === client.id
+            (entry: any) =>
+                entry.tasks.projects.clients.id === client.id
         );
 
         const unbilledMinutes = clientUnbilledEntries.reduce(

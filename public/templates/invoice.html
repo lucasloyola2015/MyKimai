@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Factura Electrónica - Lucas Loyola</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;700&family=Montserrat:wght@600;700;800&display=swap" rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrious/4.0.2/qrious.min.js"></script>
+    <style>
+        :root {
+            --titanio: #0F172A;
+            --azul-activo: #2563EB;
+            --acero: #64748B;
+            --blanco-tecnico: #F8FAFC;
+            --linea-fina: #334155;
+        }
+        * { box-sizing: border-box; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+        body { margin: 0; padding: 0; background-color: #525659; font-family: 'Inter', sans-serif; color: var(--titanio); font-size: 10px; }
+        .page {
+            width: 210mm; height: 297mm; background: white; margin: 20px auto; padding: 10mm 10mm;
+            position: relative; box-shadow: 0 0 10px rgba(0,0,0,0.5); display: flex; flex-direction: column;
+        }
+        h1, h2, .brand-font { font-family: 'Space Grotesk', sans-serif; }
+        .text-azul { color: var(--azul-activo); }
+        .text-bold { font-weight: 600; }
+        .header-container {
+            display: flex; border: 1px solid var(--titanio); height: 180px; margin-bottom: 5px; position: relative; border-radius: 6px;
+        }
+        .header-divider {
+            position: absolute; left: 50%; top: 40px; bottom: 0; width: 1px; background-color: var(--titanio); transform: translateX(-50%);
+        }
+        .header-left {
+            width: 50%; padding: 10px 15px; display: flex; flex-direction: column; align-items: center; text-align: center; justify-content: center;
+        }
+        .header-right {
+            width: 50%; padding: 15px 15px 15px 40px; display: flex; flex-direction: column; justify-content: center;
+        }
+        .header-center-box {
+            position: absolute; left: 50%; top: 0; transform: translateX(-50%); width: 80px; background: white;
+            display: flex; flex-direction: column; align-items: center; justify-content: flex-start; z-index: 10;
+        }
+        .doc-type-label {
+            font-family: 'Space Grotesk', sans-serif; font-size: 10px; font-weight: 700; margin-top: 5px; margin-bottom: 2px;
+            text-transform: uppercase; letter-spacing: 1px; text-align: center; width: 100%;
+        }
+        .letter-square {
+            width: 50px; height: 50px; background-color: var(--titanio); color: white; font-family: 'Space Grotesk', sans-serif;
+            font-size: 36px; font-weight: 700; display: flex; justify-content: center; align-items: center; border-radius: 2px;
+        }
+        .code-text { font-size: 9px; font-weight: 700; margin-top: 3px; text-align: center; width: 100%; display: block; }
+        .logo-svg { width: 45px; height: 45px; margin-bottom: 5px; }
+        .emisor-title { font-size: 18px; line-height: 1; margin: 5px 0; text-transform: uppercase; }
+        .emisor-subtitle { font-size: 8px; font-weight: 600; color: var(--acero); letter-spacing: 1px; margin-bottom: 8px; }
+        .emisor-details { font-size: 9px; line-height: 1.3; }
+        .factura-title { font-size: 28px; margin: 0 0 10px 0; letter-spacing: 1px; line-height: 1; }
+        .invoice-numbers-row { display: flex; font-size: 11px; margin-bottom: 5px; gap: 20px; }
+        .invoice-dates {
+            margin-top: 10px; border-top: 1px solid var(--linea-fina); padding-top: 8px;
+            display: grid; grid-template-columns: 1fr 1fr; gap: 3px; font-size: 10px;
+        }
+        .info-bar {
+            display: flex; justify-content: space-between; border: 1px solid var(--titanio); padding: 5px 10px; font-size: 10px; margin-bottom: 10px; border-radius: 6px;
+        }
+        .client-container { border: 1px solid var(--titanio); padding: 10px; margin-bottom: 15px; position: relative; border-radius: 6px; }
+        .client-grid { display: grid; grid-template-columns: auto 1fr auto 1fr; gap: 6px 20px; font-size: 10px; }
+        .client-label { color: var(--acero); font-weight: 600; }
+        .items-table {
+            width: 100%; border-collapse: collapse; font-size: 10px; margin-bottom: auto;
+        }
+        .items-table th {
+            border: 1px solid var(--titanio); background-color: var(--titanio); color: white;
+            padding: 6px; text-align: center; font-weight: 600; text-transform: uppercase;
+        }
+        .items-table td { border: 1px solid var(--linea-fina); padding: 6px; vertical-align: top; }
+        .t-left { text-align: left; }
+        .t-center { text-align: center; }
+        .t-right { text-align: right; }
+        .items-table td { border-left: 1px solid #e2e8f0; border-right: 1px solid #e2e8f0; }
+        .items-table tr:last-child td { border-bottom: 1px solid var(--titanio); }
+        .footer-container {
+            margin-top: 20px; border: 1px solid var(--titanio); display: flex; border-radius: 6px; overflow: hidden;
+        }
+        .footer-left {
+            flex: 1; padding: 10px; border-right: 1px solid var(--titanio); display: flex; align-items: center; gap: 15px;
+        }
+        .footer-right { width: 350px; background-color: var(--blanco-tecnico); }
+        .total-line { display: flex; justify-content: space-between; padding: 5px 10px; border-bottom: 1px solid #e2e8f0; }
+        .total-line.final {
+            background-color: var(--titanio); color: white; font-weight: 700; font-size: 12px; border-bottom: none; padding: 8px 10px;
+        }
+        .cae-block { padding: 10px; text-align: right; font-family: 'Space Grotesk', sans-serif; font-weight: 600; }
+        .arca-logo-container { display: flex; flex-direction: column; align-items: flex-start; margin-bottom: 5px; }
+        .arca-main-text { font-family: 'Montserrat', sans-serif; font-weight: 800; font-size: 22px; color: #374151; line-height: 1; }
+        .arca-sub-text {
+            font-family: 'Montserrat', sans-serif; font-weight: 600; font-size: 5px; color: #4B5563;
+            text-transform: uppercase; letter-spacing: 0.5px; line-height: 1.3; margin-top: 2px;
+        }
+        @media print {
+            body { background: none; }
+            .page { margin: 0; box-shadow: none; border: none; width: 100%; height: 100%; page-break-after: always; padding: 5mm 10mm; }
+            .page:last-child { page-break-after: auto; }
+        }
+    </style>
+</head>
+<body>
+
+<!-- PAGE 1: ORIGINAL -->
+<div class="page">
+    <div class="header-container">
+        <div class="header-center-box">
+            <div class="doc-type-label">ORIGINAL</div>
+            <div class="letter-square">C</div>
+            <div class="code-text">COD. 011</div>
+        </div>
+        <div class="header-divider"></div>
+        <div class="header-left">
+            <svg class="logo-svg" viewBox="0 0 100 100" fill="none">
+                <path d="M 30 20 L 30 80 L 50 80" stroke="#0F172A" stroke-width="10" stroke-linecap="square" stroke-linejoin="miter"/>
+                <path d="M 70 80 L 70 20 L 50 20" stroke="#0F172A" stroke-width="10" stroke-linecap="square" stroke-linejoin="miter"/>
+                <rect x="42" y="42" width="16" height="16" rx="2" fill="#2563EB"/>
+            </svg>
+            <h1 class="emisor-title brand-font">{RazonSocialEmisor}</h1>
+            <div class="emisor-subtitle">INGENIERÍA • ROBÓTICA • AUTOMATIZACIÓN</div>
+            <div class="emisor-details">
+                <strong>Razón Social:</strong> {RazonSocialEmisor}<br>
+                <strong>Domicilio Comercial:</strong> {DomicilioEmisor}<br>
+                <strong>Condición frente al IVA:</strong> {CondicionIVAEmisor}
+            </div>
+        </div>
+        <div class="header-right">
+            <h2 class="factura-title brand-font">FACTURA</h2>
+            <div class="invoice-numbers-row">
+                <div><span class="text-bold">Punto de Venta:</span> {PtoVta}</div>
+                <div><span class="text-bold">Comp. Nro:</span> {CompNro}</div>
+            </div>
+            <div style="font-size: 11px;">
+                <span class="text-bold">Fecha de Emisión:</span> <span class="text-bold text-azul">{FechaEmision}</span>
+            </div>
+            <div class="invoice-dates">
+                <div><span class="text-bold">CUIT:</span> {CuitEmisor}</div>
+                <div><span class="text-bold">Ingresos Brutos:</span> {IIBB}</div>
+                <div style="grid-column: span 2;"><span class="text-bold">Inicio de Actividades:</span> {InicioActividades}</div>
+            </div>
+        </div>
+    </div>
+    <div class="info-bar">
+        <div><strong>Período Facturado Desde:</strong> {PeriodoDesde}</div>
+        <div><strong>Hasta:</strong> {PeriodoHasta}</div>
+        <div><strong>Fecha de Vto. para el pago:</strong> {FechaVtoPago}</div>
+    </div>
+    <div class="client-container">
+        <div class="client-grid">
+            <div class="client-label">CUIT:</div><div>{CuitReceptor}</div>
+            <div class="client-label">Apellido y Nombre / Razón Social:</div><div class="text-bold">{RazonSocialReceptor}</div>
+            <div class="client-label">Condición frente al IVA:</div><div>{CondicionIVAReceptor}</div>
+            <div class="client-label">Domicilio:</div><div>{DomicilioReceptor}</div>
+            <div class="client-label">Condición de venta:</div><div>{CondicionVenta}</div>
+        </div>
+    </div>
+    <table class="items-table">
+        <thead>
+            <tr>
+                <th width="10%">Código</th>
+                <th width="45%">Producto / Servicio</th>
+                <th width="10%">Cantidad</th>
+                <th width="10%">U. Medida</th>
+                <th width="12%">Precio Unit.</th>
+                <th width="13%">Subtotal</th>
+            </tr>
+        </thead>
+        <tbody>
+            {{ITEMS_ROWS}}
+        </tbody>
+    </table>
+    <div class="footer-container">
+        <div class="footer-left">
+            {QR_BLOCK}
+            {ARCA_DISCLAIMER_BLOCK}
+        </div>
+        <div class="footer-right">
+            <div class="total-line"><span>Subtotal:</span><span class="text-bold">{SubtotalGeneral}</span></div>
+            <div class="total-line"><span>Importe Otros Tributos:</span><span>{ImporteOtrosTributos}</span></div>
+            <div class="total-line final"><span>Importe Total:</span><span>{ImporteTotal}</span></div>
+            {CAE_BLOCK}
+        </div>
+    </div>
+</div>
+
+<!-- PAGE 2: DUPLICADO -->
+<div class="page">
+    <div class="header-container">
+        <div class="header-center-box">
+            <div class="doc-type-label">DUPLICADO</div>
+            <div class="letter-square">C</div>
+            <div class="code-text">COD. 011</div>
+        </div>
+        <div class="header-divider"></div>
+        <div class="header-left">
+            <svg class="logo-svg" viewBox="0 0 100 100" fill="none">
+                <path d="M 30 20 L 30 80 L 50 80" stroke="#0F172A" stroke-width="10" stroke-linecap="square" stroke-linejoin="miter"/>
+                <path d="M 70 80 L 70 20 L 50 20" stroke="#0F172A" stroke-width="10" stroke-linecap="square" stroke-linejoin="miter"/>
+                <rect x="42" y="42" width="16" height="16" rx="2" fill="#2563EB"/>
+            </svg>
+            <h1 class="emisor-title brand-font">{RazonSocialEmisor}</h1>
+            <div class="emisor-subtitle">INGENIERÍA • ROBÓTICA • AUTOMATIZACIÓN</div>
+            <div class="emisor-details">
+                <strong>Razón Social:</strong> {RazonSocialEmisor}<br>
+                <strong>Domicilio Comercial:</strong> {DomicilioEmisor}<br>
+                <strong>Condición frente al IVA:</strong> {CondicionIVAEmisor}
+            </div>
+        </div>
+        <div class="header-right">
+            <h2 class="factura-title brand-font">FACTURA</h2>
+            <div class="invoice-numbers-row">
+                <div><span class="text-bold">Punto de Venta:</span> {PtoVta}</div>
+                <div><span class="text-bold">Comp. Nro:</span> {CompNro}</div>
+            </div>
+            <div style="font-size: 11px;">
+                <span class="text-bold">Fecha de Emisión:</span> <span class="text-bold text-azul">{FechaEmision}</span>
+            </div>
+            <div class="invoice-dates">
+                <div><span class="text-bold">CUIT:</span> {CuitEmisor}</div>
+                <div><span class="text-bold">Ingresos Brutos:</span> {IIBB}</div>
+                <div style="grid-column: span 2;"><span class="text-bold">Inicio de Actividades:</span> {InicioActividades}</div>
+            </div>
+        </div>
+    </div>
+    <div class="info-bar">
+        <div><strong>Período Facturado Desde:</strong> {PeriodoDesde}</div>
+        <div><strong>Hasta:</strong> {PeriodoHasta}</div>
+        <div><strong>Fecha de Vto. para el pago:</strong> {FechaVtoPago}</div>
+    </div>
+    <div class="client-container">
+        <div class="client-grid">
+            <div class="client-label">CUIT:</div><div>{CuitReceptor}</div>
+            <div class="client-label">Apellido y Nombre / Razón Social:</div><div class="text-bold">{RazonSocialReceptor}</div>
+            <div class="client-label">Condición frente al IVA:</div><div>{CondicionIVAReceptor}</div>
+            <div class="client-label">Domicilio:</div><div>{DomicilioReceptor}</div>
+            <div class="client-label">Condición de venta:</div><div>{CondicionVenta}</div>
+        </div>
+    </div>
+    <table class="items-table">
+        <thead>
+            <tr>
+                <th width="10%">Código</th><th width="45%">Producto / Servicio</th><th width="10%">Cantidad</th>
+                <th width="10%">U. Medida</th><th width="12%">Precio Unit.</th><th width="13%">Subtotal</th>
+            </tr>
+        </thead>
+        <tbody>
+            {{ITEMS_ROWS}}
+        </tbody>
+    </table>
+    <div class="footer-container">
+        <div class="footer-left">
+            {QR_BLOCK}
+            {ARCA_DISCLAIMER_BLOCK}
+        </div>
+        <div class="footer-right">
+            <div class="total-line"><span>Subtotal:</span><span class="text-bold">{SubtotalGeneral}</span></div>
+            <div class="total-line"><span>Importe Otros Tributos:</span><span>{ImporteOtrosTributos}</span></div>
+            <div class="total-line final"><span>Importe Total:</span><span>{ImporteTotal}</span></div>
+            {CAE_BLOCK}
+        </div>
+    </div>
+</div>
+
+<!-- PAGE 3: TRIPLICADO -->
+<div class="page">
+    <div class="header-container">
+        <div class="header-center-box">
+            <div class="doc-type-label">TRIPLICADO</div>
+            <div class="letter-square">C</div>
+            <div class="code-text">COD. 011</div>
+        </div>
+        <div class="header-divider"></div>
+        <div class="header-left">
+            <svg class="logo-svg" viewBox="0 0 100 100" fill="none">
+                <path d="M 30 20 L 30 80 L 50 80" stroke="#0F172A" stroke-width="10" stroke-linecap="square" stroke-linejoin="miter"/>
+                <path d="M 70 80 L 70 20 L 50 20" stroke="#0F172A" stroke-width="10" stroke-linecap="square" stroke-linejoin="miter"/>
+                <rect x="42" y="42" width="16" height="16" rx="2" fill="#2563EB"/>
+            </svg>
+            <h1 class="emisor-title brand-font">{RazonSocialEmisor}</h1>
+            <div class="emisor-subtitle">INGENIERÍA • ROBÓTICA • AUTOMATIZACIÓN</div>
+            <div class="emisor-details">
+                <strong>Razón Social:</strong> {RazonSocialEmisor}<br>
+                <strong>Domicilio Comercial:</strong> {DomicilioEmisor}<br>
+                <strong>Condición frente al IVA:</strong> {CondicionIVAEmisor}
+            </div>
+        </div>
+        <div class="header-right">
+            <h2 class="factura-title brand-font">FACTURA</h2>
+            <div class="invoice-numbers-row">
+                <div><span class="text-bold">Punto de Venta:</span> {PtoVta}</div>
+                <div><span class="text-bold">Comp. Nro:</span> {CompNro}</div>
+            </div>
+            <div style="font-size: 11px;">
+                <span class="text-bold">Fecha de Emisión:</span> <span class="text-bold text-azul">{FechaEmision}</span>
+            </div>
+            <div class="invoice-dates">
+                <div><span class="text-bold">CUIT:</span> {CuitEmisor}</div>
+                <div><span class="text-bold">Ingresos Brutos:</span> {IIBB}</div>
+                <div style="grid-column: span 2;"><span class="text-bold">Inicio de Actividades:</span> {InicioActividades}</div>
+            </div>
+        </div>
+    </div>
+    <div class="info-bar">
+        <div><strong>Período Facturado Desde:</strong> {PeriodoDesde}</div>
+        <div><strong>Hasta:</strong> {PeriodoHasta}</div>
+        <div><strong>Fecha de Vto. para el pago:</strong> {FechaVtoPago}</div>
+    </div>
+    <div class="client-container">
+        <div class="client-grid">
+            <div class="client-label">CUIT:</div><div>{CuitReceptor}</div>
+            <div class="client-label">Apellido y Nombre / Razón Social:</div><div class="text-bold">{RazonSocialReceptor}</div>
+            <div class="client-label">Condición frente al IVA:</div><div>{CondicionIVAReceptor}</div>
+            <div class="client-label">Domicilio:</div><div>{DomicilioReceptor}</div>
+            <div class="client-label">Condición de venta:</div><div>{CondicionVenta}</div>
+        </div>
+    </div>
+    <table class="items-table">
+        <thead>
+            <tr>
+                <th width="10%">Código</th><th width="45%">Producto / Servicio</th><th width="10%">Cantidad</th>
+                <th width="10%">U. Medida</th><th width="12%">Precio Unit.</th><th width="13%">Subtotal</th>
+            </tr>
+        </thead>
+        <tbody>
+            {{ITEMS_ROWS}}
+        </tbody>
+    </table>
+    <div class="footer-container">
+        <div class="footer-left">
+            {QR_BLOCK}
+            {ARCA_DISCLAIMER_BLOCK}
+        </div>
+        <div class="footer-right">
+            <div class="total-line"><span>Subtotal:</span><span class="text-bold">{SubtotalGeneral}</span></div>
+            <div class="total-line"><span>Importe Otros Tributos:</span><span>{ImporteOtrosTributos}</span></div>
+            <div class="total-line final"><span>Importe Total:</span><span>{ImporteTotal}</span></div>
+            {CAE_BLOCK}
+        </div>
+    </div>
+</div>
+
+</body>
+</html>

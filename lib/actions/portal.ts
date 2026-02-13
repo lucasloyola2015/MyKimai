@@ -49,23 +49,23 @@ export async function getPortalDashboardData() {
     // 2. Calcular horas del mes actual
     const currentEntries = await prisma.time_entries.findMany({
         where: {
-            task: {
-                project: {
+            tasks: {
+                projects: {
                     client_id: context.clientId,
                 }
             },
             start_time: { gte: firstDayOfMonth }
         },
         include: {
-            breaks: true
+            time_entry_breaks: true
         }
     });
 
     // 3. Calcular horas del mes pasado
     const prevEntries = await prisma.time_entries.findMany({
         where: {
-            task: {
-                project: {
+            tasks: {
+                projects: {
                     client_id: context.clientId,
                 }
             },
@@ -75,17 +75,17 @@ export async function getPortalDashboardData() {
             }
         },
         include: {
-            breaks: true
+            time_entry_breaks: true
         }
     });
 
     const hoursCurrent = (currentEntries.reduce((sum, e) => {
-        const totals = computeEntryTotals(e as any);
+        const totals = computeEntryTotals({ ...e, breaks: e.time_entry_breaks } as any);
         return sum + totals.duration_neto;
     }, 0)) / 60;
 
     const hoursPrev = (prevEntries.reduce((sum, e) => {
-        const totals = computeEntryTotals(e as any);
+        const totals = computeEntryTotals({ ...e, breaks: e.time_entry_breaks } as any);
         return sum + totals.duration_neto;
     }, 0)) / 60;
 
@@ -142,17 +142,17 @@ export async function getPortalUnbilledSummary(): Promise<
         where: {
             is_billed: false,
             billable: true,
-            task: {
-                project: {
+            tasks: {
+                projects: {
                     client_id: context.clientId,
                 },
             },
         },
         include: {
-            breaks: true,
-            task: {
+            time_entry_breaks: true,
+            tasks: {
                 include: {
-                    project: { select: { id: true, name: true, currency: true } },
+                    projects: { select: { id: true, name: true, currency: true } },
                 },
             },
         },
@@ -164,16 +164,16 @@ export async function getPortalUnbilledSummary(): Promise<
     >();
 
     for (const entry of entries) {
-        const totals = computeEntryTotals(entry as any);
-        const pid = entry.task.project.id;
-        const cur = entry.task.project.currency || "USD";
+        const totals = computeEntryTotals({ ...entry, breaks: entry.time_entry_breaks } as any);
+        const pid = entry.tasks.projects.id;
+        const cur = entry.tasks.projects.currency || "USD";
         const existing = byProject.get(pid);
         if (existing) {
             existing.totalMinutes += totals.duration_neto;
             existing.totalAmount += totals.amount;
         } else {
             byProject.set(pid, {
-                projectName: entry.task.project.name,
+                projectName: entry.tasks.projects.name,
                 currency: cur,
                 totalMinutes: totals.duration_neto,
                 totalAmount: totals.amount,
@@ -245,10 +245,10 @@ export async function getPortalChartData(
 
     const entries = await prisma.time_entries.findMany({
         where: {
-            task: { project: { client_id: context.clientId } },
+            tasks: { projects: { client_id: context.clientId } },
             start_time: { gte: startDate, lte: endDate },
         },
-        include: { breaks: true, task: { include: { project: { select: { name: true } } } } },
+        include: { time_entry_breaks: true, tasks: { include: { projects: { select: { name: true } } } } },
         orderBy: { start_time: "asc" },
     });
 
@@ -256,9 +256,9 @@ export async function getPortalChartData(
     const dataMap = new Map<string, Map<string, number>>();
 
     for (const entry of entries) {
-        const totals = computeEntryTotals(entry as any);
+        const totals = computeEntryTotals({ ...entry, breaks: entry.time_entry_breaks } as any);
         const hours = totals.duration_neto / 60;
-        const projectName = entry.task?.project?.name ?? "Sin proyecto";
+        const projectName = entry.tasks?.projects?.name ?? "Sin proyecto";
         const entryDate = new Date(entry.start_time);
         let periodKey: string;
         switch (period) {
@@ -337,14 +337,14 @@ export async function getPortalChartDataHourly(
 
     const entries = await prisma.time_entries.findMany({
         where: {
-            task: { project: { client_id: context.clientId } },
+            tasks: { projects: { client_id: context.clientId } },
             start_time: { gte: dayStart, lte: dayEnd },
         },
-        include: { breaks: true, task: { include: { project: { select: { name: true } } } } },
+        include: { time_entry_breaks: true, tasks: { include: { projects: { select: { name: true } } } } },
         orderBy: { start_time: "asc" },
     });
 
-    const perHour = computeMinutesPerHour(dayStart, entries as any);
+    const perHour = computeMinutesPerHour(dayStart, entries.map(e => ({ ...e, breaks: e.time_entry_breaks })) as any);
 
     const data: PortalHourlyDataPoint[] = perHour.map(({ hour, minutes, percent }) => ({
         hour,
@@ -379,10 +379,10 @@ export async function getPortalChartDataInRange(
 
     const entries = await prisma.time_entries.findMany({
         where: {
-            task: { project: { client_id: context.clientId } },
+            tasks: { projects: { client_id: context.clientId } },
             start_time: { gte: startDate, lte: endDate },
         },
-        include: { breaks: true, task: { include: { project: { select: { name: true } } } } },
+        include: { time_entry_breaks: true, tasks: { include: { projects: { select: { name: true } } } } },
         orderBy: { start_time: "asc" },
     });
 
@@ -390,9 +390,9 @@ export async function getPortalChartDataInRange(
     const dataMap = new Map<string, Map<string, number>>();
 
     for (const entry of entries) {
-        const totals = computeEntryTotals(entry as any);
+        const totals = computeEntryTotals({ ...entry, breaks: entry.time_entry_breaks } as any);
         const hours = totals.duration_neto / 60;
-        const projectName = entry.task?.project?.name ?? "Sin proyecto";
+        const projectName = entry.tasks?.projects?.name ?? "Sin proyecto";
         const entryDate = new Date(entry.start_time);
         let periodKey: string;
         if (period === "day") {
@@ -449,7 +449,7 @@ export async function getPortalProjectDistribution(options?: {
     const context = await getClientContext();
     if (!context) return [];
 
-    const where: any = { task: { project: { client_id: context.clientId } } };
+    const where: any = { tasks: { projects: { client_id: context.clientId } } };
     if (options?.rangeStart != null && options?.rangeEnd != null) {
         where.start_time = {
             gte: new Date(options.rangeStart),
@@ -459,14 +459,14 @@ export async function getPortalProjectDistribution(options?: {
 
     const entries = await prisma.time_entries.findMany({
         where,
-        include: { breaks: true, task: { include: { project: { select: { name: true } } } } },
+        include: { time_entry_breaks: true, tasks: { include: { projects: { select: { name: true } } } } },
     });
 
     const byProject = new Map<string, number>();
     for (const entry of entries) {
-        const totals = computeEntryTotals(entry as any);
+        const totals = computeEntryTotals({ ...entry, breaks: entry.time_entry_breaks } as any);
         const hours = totals.duration_neto / 60;
-        const name = entry.task?.project?.name ?? "Sin proyecto";
+        const name = entry.tasks?.projects?.name ?? "Sin proyecto";
         byProject.set(name, (byProject.get(name) ?? 0) + hours);
     }
 

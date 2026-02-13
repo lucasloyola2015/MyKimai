@@ -56,6 +56,13 @@ export async function createClient(data: {
     currency?: string;
     default_rate?: number | null;
     notes?: string | null;
+    logo_url?: string | null;
+    is_billable?: boolean;
+    // Campos fiscales AFIP
+    tax_id?: string | null;
+    business_name?: string | null;
+    legal_address?: string | null;
+    tax_condition?: string | null;
 }): Promise<ActionResponse<clients>> {
     const user = await getAuthUser();
 
@@ -97,7 +104,14 @@ export async function updateClient(
         address?: string | null;
         currency?: string;
         default_rate?: number | null;
+        is_billable?: boolean;
         notes?: string | null;
+        logo_url?: string | null;
+        // Campos fiscales AFIP
+        tax_id?: string | null;
+        business_name?: string | null;
+        legal_address?: string | null;
+        tax_condition?: string | null;
         /** Nueva contraseña para el portal; solo aplica si el cliente tiene acceso web (portal_user_id). Se sincroniza con Supabase Auth. */
         newPassword?: string;
     }
@@ -154,6 +168,19 @@ export async function updateClient(
 
     try {
         const { newPassword: _, ...dbData } = data;
+
+        // HERENCIA: Si el cliente pasa a no ser facturable, forzamos todos sus proyectos y tareas a cascada
+        if (data.is_billable === false) {
+            await (prisma.projects as any).updateMany({
+                where: { client_id: id },
+                data: { is_billable: false }
+            });
+            await (prisma.tasks as any).updateMany({
+                where: { projects: { client_id: id } },
+                data: { is_billable: false }
+            });
+        }
+
         const client = await prisma.clients.update({
             where: { id },
             data: dbData,

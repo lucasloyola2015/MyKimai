@@ -32,13 +32,13 @@ import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 
 interface TaskWithRelations extends tasks {
-  project: projects & { client: clients };
+  projects: projects & { clients: clients };
 }
 
 export default function TimeTrackerPage() {
   const searchParams = useSearchParams();
   const [clients, setClients] = useState<clients[]>([]);
-  const [projects, setProjects] = useState<(projects & { client: clients })[]>([]);
+  const [projects, setProjects] = useState<(projects & { clients: clients })[]>([]);
   const [tasks, setTasks] = useState<TaskWithRelations[]>([]);
   const [selectedClientId, setSelectedClientId] = useState<string>("");
   const [selectedProjectId, setSelectedProjectId] = useState<string>("");
@@ -106,8 +106,8 @@ export default function TimeTrackerPage() {
           const taskData = await getTaskWithRelations(activeEntry.task_id);
 
           if (taskData) {
-            const project = taskData.project;
-            const client = project?.client;
+            const project = taskData.projects;
+            const client = project?.clients;
 
             if (client && project) {
               setSelectedClientId(client.id);
@@ -411,10 +411,10 @@ export default function TimeTrackerPage() {
             {selectedTask && (
               <div className="rounded-lg border bg-muted p-3 text-sm">
                 <p>
-                  <strong>Cliente:</strong> {selectedTask.project.client.name}
+                  <strong>Cliente:</strong> {selectedTask.projects.clients.name}
                 </p>
                 <p>
-                  <strong>Proyecto:</strong> {selectedTask.project.name}
+                  <strong>Proyecto:</strong> {selectedTask.projects.name}
                 </p>
                 <p>
                   <strong>Tarea:</strong> {selectedTask.name}
@@ -531,9 +531,9 @@ export default function TimeTrackerPage() {
             ) : (
               <div className="space-y-4">
                 {recentEntries.map((entry) => {
-                  const task = (entry as any).task;
-                  const project = task?.project;
-                  const client = project?.client;
+                  const task = (entry as any).tasks;
+                  const project = task?.projects;
+                  const client = project?.clients;
                   return (
                     <div
                       key={entry.id}

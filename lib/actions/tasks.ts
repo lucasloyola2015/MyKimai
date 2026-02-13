@@ -17,17 +17,17 @@ export async function getTasks(projectId?: string) {
 
     const tasks = await prisma.tasks.findMany({
         where: {
-            project: {
-                client: {
+            projects: {
+                clients: {
                     user_id: user.id,
                 },
             },
             ...(projectId && { project_id: projectId }),
         },
         include: {
-            project: {
+            projects: {
                 include: {
-                    client: true,
+                    clients: true,
                 },
             },
         },
@@ -48,16 +48,16 @@ export async function getTaskWithRelations(id: string) {
     const task = await prisma.tasks.findFirst({
         where: {
             id,
-            project: {
-                client: {
+            projects: {
+                clients: {
                     user_id: user.id,
                 },
             },
         },
         include: {
-            project: {
+            projects: {
                 include: {
-                    client: true,
+                    clients: true,
                 },
             },
         },
@@ -72,8 +72,8 @@ export async function getTaskWithRelations(id: string) {
 export async function createTask(data: {
     project_id: string;
     name: string;
-    description?: string | null;
     rate?: number | null;
+    is_billable?: boolean;
 }): Promise<ActionResponse<tasks>> {
     const user = await getAuthUser();
 
@@ -81,7 +81,7 @@ export async function createTask(data: {
     const project = await prisma.projects.findFirst({
         where: {
             id: data.project_id,
-            client: {
+            clients: {
                 user_id: user.id,
             },
         },
@@ -95,12 +95,22 @@ export async function createTask(data: {
     }
 
     try {
+        // HERENCIA: Validar contra proyecto y cliente
+        const project = await prisma.projects.findUnique({
+            where: { id: data.project_id },
+            include: { clients: true }
+        });
+
+        if (project && ((project as any).is_billable === false || (project.clients as any).is_billable === false)) {
+            data.is_billable = false;
+        }
+
         const task = await prisma.tasks.create({
             data,
             include: {
-                project: {
+                projects: {
                     include: {
-                        client: true,
+                        clients: true,
                     },
                 },
             },
@@ -129,6 +139,7 @@ export async function updateTask(
         name?: string;
         description?: string | null;
         rate?: number | null;
+        is_billable?: boolean;
     }
 ): Promise<ActionResponse<tasks>> {
     const user = await getAuthUser();
@@ -137,8 +148,8 @@ export async function updateTask(
     const existing = await prisma.tasks.findFirst({
         where: {
             id,
-            project: {
-                client: {
+            projects: {
+                clients: {
                     user_id: user.id,
                 },
             },
@@ -153,13 +164,27 @@ export async function updateTask(
     }
 
     try {
+        // HERENCIA: Validar contra proyecto y cliente al intentar activar facturabilidad
+        if (data.is_billable === true) {
+            const project = await prisma.projects.findUnique({
+                where: { id: existing.project_id },
+                include: { clients: true }
+            });
+            if (project && ((project as any).is_billable === false || (project.clients as any).is_billable === false)) {
+                return {
+                    success: false,
+                    error: "No se puede marcar como facturable: El proyecto o cliente no es facturable."
+                };
+            }
+        }
+
         const task = await prisma.tasks.update({
             where: { id },
             data,
             include: {
-                project: {
+                projects: {
                     include: {
-                        client: true,
+                        clients: true,
                     },
                 },
             },
@@ -189,8 +214,8 @@ export async function deleteTask(id: string) {
     const existing = await prisma.tasks.findFirst({
         where: {
             id,
-            project: {
-                client: {
+            projects: {
+                clients: {
                     user_id: user.id,
                 },
             },

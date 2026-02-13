@@ -21,7 +21,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Pencil, Trash2, Plus, Coffee, X, Wrench, ChevronRight } from "lucide-react";
+import { Pencil, Trash2, Plus, Coffee, X, Wrench, ChevronRight, ShieldCheck } from "lucide-react";
 import { getClients } from "@/lib/actions/clients";
 import { getProjects } from "@/lib/actions/projects";
 import {
@@ -46,7 +46,7 @@ import { DayTimeline } from "@/components/dashboard/DayTimeline";
 export default function Page() {
   const [loading, setLoading] = useState(true);
   const [clients, setClients] = useState<clients[]>([]);
-  const [projects, setProjects] = useState<(projects & { client: clients })[]>([]);
+  const [projects, setProjects] = useState<(projects & { clients: clients })[]>([]);
   const [entries, setEntries] = useState<time_entries[]>([]);
   const [maintenancePreview, setMaintenancePreview] = useState<ConsolidationPreview[] | null>(null);
   const [isMaintenanceLoading, setIsMaintenanceLoading] = useState(false);
@@ -135,7 +135,7 @@ export default function Page() {
       end_time: entry.end_time ? formatTime24(endDate) : "",
     });
     const breakValues: Record<string, { start: string; end: string }> = {};
-    (entry.breaks || []).forEach((b: any) => {
+    (entry.time_entry_breaks || []).forEach((b: any) => {
       breakValues[b.id] = {
         start: formatTime24(new Date(b.start_time)),
         end: b.end_time ? formatTime24(new Date(b.end_time)) : "",
@@ -243,7 +243,7 @@ export default function Page() {
         setEditingEntry(updated);
         setBreakFormValues((prev) => {
           const next = { ...prev };
-          (updated.breaks || []).forEach((br: any) => {
+          (updated.time_entry_breaks || []).forEach((br: any) => {
             if (!(br.id in next))
               next[br.id] = {
                 start: formatTime24(new Date(br.start_time)),
@@ -399,8 +399,8 @@ export default function Page() {
       </Card>
 
       {/* Herramientas de Limpieza */}
-      <Card className="border-orange-200 bg-orange-50/30 overflow-hidden">
-        <CardHeader className="bg-orange-100/50 pb-4">
+      <Card className="border-orange-200/30 bg-orange-50/5 dark:bg-orange-500/[0.03] overflow-hidden">
+        <CardHeader className="bg-orange-100/30 dark:bg-orange-500/10 pb-4">
           <div className="flex items-center gap-2">
             <Wrench className="w-5 h-5 text-orange-600" />
             <CardTitle className="text-sm font-bold text-orange-800 uppercase tracking-wider">
@@ -418,7 +418,7 @@ export default function Page() {
               <Button
                 variant="outline"
                 size="sm"
-                className="bg-white border-orange-200 hover:bg-orange-100 text-orange-700 font-bold shrink-0"
+                className="bg-white dark:bg-slate-900 border-orange-200/50 dark:border-orange-500/20 hover:bg-orange-100 dark:hover:bg-orange-500/20 text-orange-700 dark:text-orange-400 font-bold shrink-0"
                 onClick={handlePreview}
                 disabled={isMaintenanceLoading}
               >
@@ -428,7 +428,7 @@ export default function Page() {
             </div>
           ) : (
             <div className="space-y-4">
-              <div className="bg-white/80 rounded-xl border border-orange-100 overflow-hidden">
+              <div className="bg-white/80 dark:bg-slate-900/50 rounded-xl border border-orange-100/50 dark:border-orange-500/10 overflow-hidden">
                 <table className="w-full text-xs">
                   <thead className="bg-orange-50/50 border-b border-orange-100 text-orange-900 font-bold">
                     <tr>
@@ -506,37 +506,45 @@ export default function Page() {
           ) : (
             <div className="space-y-4">
               {entries.map((entry) => {
-                const task = (entry as any).task;
-                const project = task?.project;
-                const client = project?.client;
-                const activeBreak = (entry as any).breaks?.find((b: any) => b.end_time === null);
+                const task = (entry as any).tasks;
+                const project = task?.projects;
+                const client = project?.clients;
+                const activeBreak = (entry as any).time_entry_breaks?.find((b: any) => b.end_time === null);
 
                 return (
                   <div
                     key={entry.id}
                     className={cn(
-                      "group relative rounded-xl border bg-white p-3 transition-all hover:border-primary/30 hover:shadow-sm",
-                      !entry.end_time ? "border-primary/40 bg-primary/5" : "border-slate-200"
+                      "group relative rounded-xl border p-3 transition-all hover:border-primary/30 hover:shadow-sm",
+                      !entry.end_time
+                        ? "border-primary/40 bg-primary/5 dark:bg-primary/10"
+                        : "border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/40"
                     )}
                   >
                     <div className="flex items-center justify-between gap-4">
                       {/* LADO IZQUIERDO: Task & Client */}
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 mb-0.5">
-                          <h3 className="font-bold text-slate-900 truncate uppercase tracking-tight text-sm">
+                          <h3 className="font-bold text-slate-900 dark:text-slate-100 truncate uppercase tracking-tight text-sm">
                             {task?.name || "Tarea eliminada"}
                           </h3>
                           {!entry.end_time && (
                             <span className="flex h-2 w-2 rounded-full bg-emerald-500 animate-pulse shrink-0" title="En curso" />
                           )}
+                          {!entry.billable && (
+                            <div className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-orange-100 dark:bg-orange-500/10 text-[8px] font-black text-orange-700 dark:text-orange-400 uppercase tracking-tighter">
+                              <ShieldCheck className="w-2.5 h-2.5" />
+                              No Facturable
+                            </div>
+                          )}
                         </div>
-                        <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest truncate">
-                          {client?.name} <span className="mx-1 text-slate-300 font-normal">|</span> {project?.name}
+                        <p className="text-[10px] text-slate-500 dark:text-slate-400 font-bold uppercase tracking-widest truncate">
+                          {client?.name} <span className="mx-1 text-slate-300 dark:text-slate-700 font-normal">|</span> {project?.name}
                         </p>
                       </div>
 
                       {/* CENTRO: Desglose Compacto (Cálculo) */}
-                      <div className="hidden sm:flex items-center bg-slate-50 border border-slate-100 rounded-lg px-2 py-1 gap-3">
+                      <div className="hidden sm:flex items-center bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800 rounded-lg px-2 py-1 gap-3">
                         <div className="text-center">
                           <p className="text-[6px] font-black text-slate-400 uppercase tracking-tighter leading-none mb-0.5">Bruto</p>
                           <p className="text-[10px] font-mono font-medium text-slate-500 leading-none">
@@ -546,14 +554,14 @@ export default function Page() {
                         <div className="text-slate-300 text-[10px] font-light">-</div>
                         <div className="text-center">
                           <p className="text-[6px] font-black text-orange-400 uppercase tracking-tighter leading-none mb-0.5">Pausas</p>
-                          <p className="text-[10px] font-mono font-bold text-orange-600 leading-none">
+                          <p className="text-[10px] font-mono font-bold text-orange-600 dark:text-orange-400 leading-none">
                             {(((entry.duration_total || 0) - (entry.duration_neto || 0)) / 60).toFixed(2)}h
                           </p>
                         </div>
                         <div className="text-slate-300 text-[10px] font-light">=</div>
                         <div className="text-center min-w-[35px]">
                           <p className="text-[6px] font-black text-blue-400 uppercase tracking-tighter leading-none mb-0.5">Neto</p>
-                          <p className="text-[11px] font-mono font-black text-blue-700 leading-none">
+                          <p className="text-[11px] font-mono font-black text-blue-700 dark:text-blue-400 leading-none">
                             {((entry.duration_neto || 0) / 60).toFixed(2)}h
                           </p>
                         </div>
@@ -563,7 +571,7 @@ export default function Page() {
                       <div className="flex items-center gap-2 shrink-0">
                         <div className="mr-2 text-right hidden md:block">
                           <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest leading-none mb-0.5">Inversión</p>
-                          <p className="text-sm font-black text-slate-800 leading-none">
+                          <p className="text-sm font-black text-slate-800 dark:text-slate-100 leading-none">
                             {recalculatingIds.has(entry.id) ? (
                               <span className="animate-pulse text-blue-600">??.??</span>
                             ) : (
@@ -571,12 +579,12 @@ export default function Page() {
                             )} <span className="text-[9px] font-medium opacity-40">{project?.currency}</span>
                           </p>
                         </div>
-                        <div className="flex items-center bg-slate-50 border border-slate-200 rounded-md overflow-hidden">
+                        <div className="flex items-center bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-md overflow-hidden">
                           <Button
                             variant="ghost"
                             size="icon"
                             onClick={() => handleEdit(entry)}
-                            className="h-8 w-8 rounded-none hover:bg-white text-slate-400 hover:text-primary transition-colors border-r"
+                            className="h-8 w-8 rounded-none hover:bg-white dark:hover:bg-slate-900 text-slate-400 hover:text-primary transition-colors border-r dark:border-slate-800"
                           >
                             <Pencil className="h-3.5 w-3.5" />
                           </Button>
@@ -584,7 +592,7 @@ export default function Page() {
                             variant="ghost"
                             size="icon"
                             onClick={() => handleRecalculateRate(entry.id)}
-                            className="h-8 w-8 rounded-none hover:bg-white text-slate-400 hover:text-blue-600 transition-colors border-r"
+                            className="h-8 w-8 rounded-none hover:bg-white dark:hover:bg-slate-900 text-slate-400 hover:text-blue-600 transition-colors border-r dark:border-slate-800"
                             disabled={entry.is_billed}
                           >
                             <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" className="bi bi-currency-exchange" viewBox="0 0 16 16">
@@ -608,7 +616,7 @@ export default function Page() {
                       <DayTimeline
                         startTime={new Date(entry.start_time)}
                         endTime={entry.end_time ? new Date(entry.end_time) : null}
-                        breaks={(entry as any).breaks}
+                        breaks={(entry as any).time_entry_breaks}
                       />
                     </div>
                   </div>
@@ -729,8 +737,8 @@ export default function Page() {
                 </div>
 
                 <div className="space-y-2">
-                  {editingEntry?.breaks?.length > 0 ? (
-                    editingEntry.breaks.map((b: any) => {
+                  {editingEntry?.time_entry_breaks?.length > 0 ? (
+                    editingEntry.time_entry_breaks.map((b: any) => {
                       const breakVal = breakFormValues[b.id] ?? {
                         start: formatTime24(new Date(b.start_time)),
                         end: b.end_time ? formatTime24(new Date(b.end_time)) : "",

@@ -21,7 +21,7 @@ async function reproduce() {
                 id: { in: data.time_entry_ids },
             },
             include: {
-                task: true,
+                tasks: true,
             },
         });
 
@@ -80,7 +80,7 @@ async function reproduce() {
                         data: {
                             invoice_id: invoice.id,
                             time_entry_id: entry.id,
-                            description: entry.description || entry.task.name || "Trabajo",
+                            description: entry.description || entry.tasks.name || "Trabajo",
                             quantity: (entry.duration_neto || 0) / 60,
                             rate: Number(entry.rate_applied || 0),
                             amount: Number(entry.amount || 0),

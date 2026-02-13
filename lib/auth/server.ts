@@ -74,12 +74,12 @@ export const getClientContext = cache(async (): Promise<{ clientId: string; role
     // 2. Verificar si está vinculado a través de client_users (accesos compartidos)
     const clientUser = await prisma.client_users.findFirst({
         where: { user_id: user.id },
-        include: { client: { select: { name: true } } }
+        include: { clients: { select: { name: true } } }
     });
 
     if (clientUser) {
         console.log(`[AUTH] User ${user.id} matched client ${clientUser.client_id} (client_users link)`);
-        return { clientId: clientUser.client_id, role: "CLIENT", name: clientUser.client.name };
+        return { clientId: clientUser.client_id, role: "CLIENT", name: clientUser.clients.name };
     }
 
     console.log(`[AUTH] User ${user.id} is NOT a portal client.`);

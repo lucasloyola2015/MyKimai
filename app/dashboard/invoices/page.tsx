@@ -39,7 +39,7 @@ import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 
 interface InvoiceWithClient extends invoices {
-  client: clients;
+  clients: clients;
   payments?: any[];
 }
 
@@ -126,7 +126,7 @@ export default function InvoicesPage() {
     }
 
     try {
-      const clientEntries = timeEntries.filter((e: any) => e.task?.project?.client?.id === targetClientId);
+      const clientEntries = timeEntries.filter((e: any) => e.tasks?.projects?.clients?.id === targetClientId);
       if (clientEntries.length === 0) {
         toast({ title: "Error", description: "No hay horas pendientes", variant: "destructive" });
         return;
@@ -349,7 +349,7 @@ export default function InvoicesPage() {
                           </span>
                         )}
                       </div>
-                      <p className="text-sm text-foreground/80 font-medium">{invoice.client.name}</p>
+                      <p className="text-sm text-foreground/80 font-medium">{invoice.clients.name}</p>
                       <p className="text-[10px] text-muted-foreground uppercase">Emitida: {format(new Date(invoice.issue_date), "dd/MM/yyyy")}</p>
                     </div>
                   </div>
@@ -383,7 +383,7 @@ export default function InvoicesPage() {
                       </Button>
                     )}
 
-                    {invoice.billing_type === 'INTERNAL' && (
+                    {invoice.status === 'draft' && (
                       <Button
                         size="sm"
                         variant="ghost"
@@ -392,6 +392,7 @@ export default function InvoicesPage() {
                           setSelectedInvoice(invoice);
                           setIsDeleteDialogOpen(true);
                         }}
+                        aria-label="Eliminar factura"
                       >
                         <Trash2 className="h-4 w-4" />
                       </Button>

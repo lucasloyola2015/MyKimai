@@ -22,24 +22,25 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Plus, Pencil, Trash2 } from "lucide-react";
+import { Plus, Pencil, Trash2, ShieldCheck } from "lucide-react";
 import Link from "next/link";
+import { Checkbox } from "@/components/ui/checkbox";
 import { getClients } from "@/lib/actions/clients";
 import { getProjects } from "@/lib/actions/projects";
 import {
-    getTasks,
-    createTask,
-    updateTask,
-    deleteTask,
+  getTasks,
+  createTask,
+  updateTask,
+  deleteTask,
 } from "@/lib/actions/tasks";
 import type { tasks, projects, clients } from "@prisma/client";
 import { toast } from "@/hooks/use-toast";
 
 export default function TasksPage() {
-  const [tasks, setTasks] = useState<(tasks & { project: projects & { client: clients } })[]>([]);
+  const [tasks, setTasks] = useState<(tasks & { projects: projects & { clients: clients } })[]>([]);
   const [clients, setClients] = useState<clients[]>([]);
-  const [projects, setProjects] = useState<(projects & { client: clients })[]>([]);
-  const [filteredProjects, setFilteredProjects] = useState<(projects & { client: clients })[]>([]);
+  const [projects, setProjects] = useState<(projects & { clients: clients })[]>([]);
+  const [filteredProjects, setFilteredProjects] = useState<(projects & { clients: clients })[]>([]);
   const [loading, setLoading] = useState(true);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingTask, setEditingTask] = useState<tasks | null>(null);
@@ -50,6 +51,7 @@ export default function TasksPage() {
     name: "",
     description: "",
     rate: "",
+    is_billable: true,
   });
 
   useEffect(() => {
@@ -90,6 +92,7 @@ export default function TasksPage() {
         name: formData.name,
         description: formData.description || null,
         rate: formData.rate ? parseFloat(formData.rate) : null,
+        is_billable: formData.is_billable,
       };
 
       let result;
@@ -98,6 +101,7 @@ export default function TasksPage() {
           name: taskData.name,
           description: taskData.description,
           rate: taskData.rate,
+          is_billable: taskData.is_billable,
         });
       } else {
         result = await createTask(taskData);
@@ -128,7 +132,7 @@ export default function TasksPage() {
   const handleEdit = async (task: tasks) => {
     // Get the project to find the client
     const project = projects.find((p) => p.id === task.project_id);
-    const clientId = project?.client?.id || "";
+    const clientId = project?.clients?.id || "";
 
     setEditingTask(task);
     setFormData({
@@ -137,14 +141,15 @@ export default function TasksPage() {
       name: task.name,
       description: task.description || "",
       rate: task.rate?.toString() || "",
+      is_billable: (task as any).is_billable ?? true,
     });
-    
+
     // Filter projects for the selected client
     if (clientId) {
-      const filtered = projects.filter((p) => p.client?.id === clientId);
+      const filtered = projects.filter((p) => p.clients?.id === clientId);
       setFilteredProjects(filtered);
     }
-    
+
     setIsDialogOpen(true);
   };
 
@@ -178,6 +183,7 @@ export default function TasksPage() {
       name: "",
       description: "",
       rate: "",
+      is_billable: true,
     });
     setEditingTask(null);
     setFilteredProjects([]);
@@ -186,7 +192,7 @@ export default function TasksPage() {
   const handleClientChange = (clientId: string) => {
     setFormData({ ...formData, client_id: clientId, project_id: "" });
     // Filter projects for the selected client
-    const filtered = projects.filter((p) => p.client?.id === clientId);
+    const filtered = projects.filter((p) => p.clients?.id === clientId);
     setFilteredProjects(filtered);
   };
 
@@ -287,16 +293,41 @@ export default function TasksPage() {
                 </div>
                 <div className="grid gap-2">
                   <Label htmlFor="rate">Tarifa</Label>
-                  <Input
-                    id="rate"
-                    type="number"
-                    step="0.01"
-                    value={formData.rate}
-                    onChange={(e) =>
-                      setFormData({ ...formData, rate: e.target.value })
-                    }
-                    placeholder="0.00 (opcional, usa tarifa del proyecto/cliente si está vacío)"
-                  />
+                </div>
+
+                <div className="flex items-center space-x-2 bg-muted/30 p-4 rounded-lg border">
+                  {(() => {
+                    const project = projects.find(p => p.id === formData.project_id);
+                    const client = clients.find(c => c.id === formData.client_id);
+                    const isInheritedNonBillable = (client && !(client as any).is_billable) || (project && !(project as any).is_billable);
+                    const effectiveBillable = isInheritedNonBillable ? false : formData.is_billable;
+
+                    return (
+                      <>
+                        <Checkbox
+                          id="is_billable"
+                          checked={effectiveBillable}
+                          onCheckedChange={(checked) =>
+                            setFormData({ ...formData, is_billable: checked === true })
+                          }
+                          disabled={isInheritedNonBillable}
+                        />
+                        <div className="grid gap-1.5 leading-none">
+                          <Label
+                            htmlFor="is_billable"
+                            className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
+                          >
+                            Tarea Facturable
+                          </Label>
+                          <p className="text-xs text-muted-foreground">
+                            {isInheritedNonBillable
+                              ? "Heredado: El cliente o proyecto no es facturable."
+                              : "Si se desactiva, las entradas de tiempo para esta tarea no se cobrarán."}
+                          </p>
+                        </div>
+                      </>
+                    );
+                  })()}
                 </div>
               </div>
               <DialogFooter>
@@ -332,7 +363,7 @@ export default function TasksPage() {
 
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
         {tasks.map((task) => {
-          const project = task.project;
+          const project = task.projects;
           return (
             <Card key={task.id}>
               <CardHeader>
@@ -371,6 +402,15 @@ export default function TasksPage() {
                       <strong>Tarifa:</strong> {Number(task.rate)}/h
                     </p>
                   )}
+                  <div className="pt-1">
+                    <div className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-medium border ${(task as any).is_billable && (task.projects as any).is_billable && (task.projects.clients as any).is_billable
+                      ? "bg-blue-500/10 text-blue-500 border-blue-500/20"
+                      : "bg-orange-500/10 text-orange-500 border-orange-500/20"
+                      }`}>
+                      <ShieldCheck className="h-3 w-3" />
+                      {(task as any).is_billable && (task.projects as any).is_billable && (task.projects.clients as any).is_billable ? "Facturable" : "No Facturable"}
+                    </div>
+                  </div>
                 </div>
               </CardContent>
             </Card>

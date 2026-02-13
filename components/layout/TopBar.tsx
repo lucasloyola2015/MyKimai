@@ -72,9 +72,9 @@ export function TopBar() {
       // Obtener la última entrada completada usando Server Action
       const lastEntry = await getLastCompletedEntry();
 
-      if (lastEntry && lastEntry.task) {
-        const clientId = lastEntry.task.project?.client?.id;
-        const projectId = lastEntry.task.project_id;
+      if (lastEntry && lastEntry.tasks) {
+        const clientId = lastEntry.tasks.projects?.clients?.id;
+        const projectId = lastEntry.tasks.project_id;
         const taskId = lastEntry.task_id;
 
         // Redirigir al Time Tracker con los datos precargados
