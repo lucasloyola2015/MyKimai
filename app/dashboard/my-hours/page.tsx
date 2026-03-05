@@ -526,7 +526,7 @@ export default function Page() {
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 mb-0.5">
                           <h3 className="font-bold text-slate-900 dark:text-slate-100 truncate uppercase tracking-tight text-sm">
-                            {task?.name || "Tarea eliminada"}
+                            {format(new Date(entry.start_time), "dd/MM")} - {task?.name || "Tarea eliminada"}
                           </h3>
                           {!entry.end_time && (
                             <span className="flex h-2 w-2 rounded-full bg-emerald-500 animate-pulse shrink-0" title="En curso" />

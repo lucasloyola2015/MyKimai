@@ -14,7 +14,8 @@ import {
 } from "@/components/ui/select";
 import { FileText, Clock, Folder, BarChart3, FileSearch } from "lucide-react";
 import { format } from "date-fns";
-import { formatDateTime24 } from "@/lib/date-format";
+import { formatDateTime24, formatTime24 } from "@/lib/date-format";
+import { DayTimeline } from "@/components/dashboard/DayTimeline";
 import { getProjects } from "@/lib/actions/projects";
 import { getTimeEntries } from "@/lib/actions/time-entries";
 import { getClientReportAnalytics, getClientBranding } from "@/lib/actions/reports";
@@ -313,6 +314,25 @@ export default function ClientReportsPage() {
                                         {entry.description}
                                     </div>
                                 )}
+                                {/* Línea de tiempo: trabajo (azul) y descansos (naranja) */}
+                                {(() => {
+                                    const start = new Date(entry.start_time);
+                                    const endTime = entry.end_time ? new Date(entry.end_time) : null;
+                                    const breaks = ((entry as any).time_entry_breaks ?? []).map((b: any) => ({
+                                        start_time: b.start_time instanceof Date ? b.start_time : new Date(b.start_time),
+                                        end_time: b.end_time ? (b.end_time instanceof Date ? b.end_time : new Date(b.end_time)) : null,
+                                    }));
+                                    return (
+                                        <div className="mt-3">
+                                            <DayTimeline
+                                                startTime={start}
+                                                endTime={endTime}
+                                                breaks={breaks}
+                                                compact
+                                            />
+                                        </div>
+                                    );
+                                })()}
                             </div>
                         )) : (
                             <div className="text-center py-20 bg-muted/5 rounded-xl border-2 border-dashed flex flex-col items-center justify-center">
