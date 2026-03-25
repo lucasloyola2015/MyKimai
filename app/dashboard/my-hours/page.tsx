@@ -24,6 +24,7 @@ import {
 import { Pencil, Trash2, Plus, Coffee, X, Wrench, ChevronRight, ShieldCheck } from "lucide-react";
 import { getClients } from "@/lib/actions/clients";
 import { getProjects } from "@/lib/actions/projects";
+import { getTasks } from "@/lib/actions/tasks";
 import {
   getTimeEntries,
   updateTimeEntry,
@@ -60,7 +61,12 @@ export default function Page() {
     start_time: "",
     end_date: "",
     end_time: "",
+    client_id: "",
+    project_id: "",
+    task_id: "",
   });
+  const [modalProjects, setModalProjects] = useState<projects[]>([]);
+  const [modalTasks, setModalTasks] = useState<any[]>([]);
   const [recalculatingIds, setRecalculatingIds] = useState<Set<string>>(new Set());
   /** Estado controlado por descanso: start/end en "HH:mm" para envío atómico (ambos siempre al servidor) */
   const [breakFormValues, setBreakFormValues] = useState<Record<string, { start: string; end: string }>>({});
@@ -81,6 +87,18 @@ export default function Page() {
   useEffect(() => {
     loadEntries();
   }, [selectedClient, selectedProject]);
+
+  useEffect(() => {
+    if (isDialogOpen && formData.client_id) {
+      loadModalProjects(formData.client_id);
+    }
+  }, [formData.client_id, isDialogOpen]);
+
+  useEffect(() => {
+    if (isDialogOpen && formData.project_id) {
+      loadModalTasks(formData.project_id);
+    }
+  }, [formData.project_id, isDialogOpen]);
 
   const loadData = async () => {
     try {
@@ -118,6 +136,24 @@ export default function Page() {
     }
   };
 
+  const loadModalProjects = async (clientId: string) => {
+    try {
+      const data = await getProjects(clientId);
+      setModalProjects(data);
+    } catch (error) {
+      console.error("Error loading modal projects:", error);
+    }
+  };
+
+  const loadModalTasks = async (projectId: string) => {
+    try {
+      const data = await getTasks(projectId);
+      setModalTasks(data);
+    } catch (error) {
+      console.error("Error loading modal tasks:", error);
+    }
+  };
+
   const filteredProjects = selectedClient
     ? projects.filter((p) => p.client_id === selectedClient)
     : [];
@@ -127,12 +163,19 @@ export default function Page() {
     const startDate = new Date(entry.start_time);
     const endDate = entry.end_time ? new Date(entry.end_time) : new Date();
 
+    const task = entry.tasks;
+    const project = task?.projects;
+    const client = project?.clients;
+
     setFormData({
       description: entry.description || "",
       start_date: format(startDate, "yyyy-MM-dd"),
       start_time: formatTime24(startDate),
       end_date: format(endDate, "yyyy-MM-dd"),
       end_time: entry.end_time ? formatTime24(endDate) : "",
+      client_id: client?.id || "",
+      project_id: project?.id || "",
+      task_id: task?.id || "",
     });
     const breakValues: Record<string, { start: string; end: string }> = {};
     (entry.time_entry_breaks || []).forEach((b: any) => {
@@ -207,6 +250,7 @@ export default function Page() {
         description: formData.description || null,
         start_time: startDateTime,
         end_time: endDateTime,
+        task_id: formData.task_id,
       });
 
       if (!result.success) {
@@ -331,7 +375,12 @@ export default function Page() {
       start_time: "",
       end_date: "",
       end_time: "",
+      client_id: "",
+      project_id: "",
+      task_id: "",
     });
+    setModalProjects([]);
+    setModalTasks([]);
     setBreakFormValues({});
     setEditingEntry(null);
   };
@@ -648,6 +697,60 @@ export default function Page() {
           </DialogHeader>
           <form onSubmit={handleSubmit} className="space-y-6">
             <div className="grid gap-4">
+              <div className="grid gap-2">
+                <Label htmlFor="modal_client">Cliente</Label>
+                <Select
+                  value={formData.client_id}
+                  onValueChange={(value) => setFormData({ ...formData, client_id: value, project_id: "", task_id: "" })}
+                >
+                  <SelectTrigger id="modal_client">
+                    <SelectValue placeholder="Seleccionar cliente" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {clients.map((c) => (
+                      <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="grid gap-2">
+                  <Label htmlFor="modal_project">Proyecto</Label>
+                  <Select
+                    value={formData.project_id}
+                    onValueChange={(value) => setFormData({ ...formData, project_id: value, task_id: "" })}
+                    disabled={!formData.client_id}
+                  >
+                    <SelectTrigger id="modal_project">
+                      <SelectValue placeholder="Seleccionar proyecto" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {modalProjects.map((p) => (
+                        <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="modal_task">Tarea</Label>
+                  <Select
+                    value={formData.task_id}
+                    onValueChange={(value) => setFormData({ ...formData, task_id: value })}
+                    disabled={!formData.project_id}
+                  >
+                    <SelectTrigger id="modal_task">
+                      <SelectValue placeholder="Seleccionar tarea" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {modalTasks.map((t) => (
+                        <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
               <div className="grid gap-2">
                 <Label htmlFor="description">Descripción</Label>
                 <Textarea

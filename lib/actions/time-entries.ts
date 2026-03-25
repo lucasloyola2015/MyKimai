@@ -510,6 +510,7 @@ export async function updateTimeEntry(
         billable?: boolean;
         rate_applied?: number | null;
         amount?: number | null;
+        task_id?: string;
     }
 ): Promise<ActionResponse<time_entries>> {
     const user = await getAuthUser();
@@ -536,7 +537,7 @@ export async function updateTimeEntry(
     // Si se actualiza start_time o end_time, recalcular duración y monto considerando las pausas
     let updateData = { ...data };
 
-    if (data.start_time || data.end_time !== undefined || data.rate_applied !== undefined) {
+    if (data.start_time || data.end_time !== undefined || data.rate_applied !== undefined || data.task_id !== undefined) {
         // El trigger DB se encargará de recalcular todo si detecta cambios o updated_at
         (updateData as any).updated_at = new Date();
     }
