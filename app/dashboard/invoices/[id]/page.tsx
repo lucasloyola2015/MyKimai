@@ -12,6 +12,7 @@ import { getUserFiscalSettings } from "@/lib/actions/user-settings";
 import { toast } from "@/hooks/use-toast";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
+import { InvoicePDFDownloadLink } from "@/components/invoices/invoice-pdf-download-link";
 
 export default function InvoiceDetailPage() {
   const params = useParams();
@@ -131,18 +132,21 @@ export default function InvoiceDetailPage() {
           </Button>
           <h1 className="text-2xl font-black uppercase tracking-tighter">Detalle de Factura</h1>
         </div>
-        {invoice.status === "draft" && (
-          <Button
-            variant="ghost"
-            size="icon"
-            className="text-muted-foreground hover:text-red-600 hover:bg-red-50"
-            onClick={handleDeleteDraft}
-            disabled={deleteLoading}
-            aria-label="Eliminar factura"
-          >
-            {deleteLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
-          </Button>
-        )}
+        <div className="flex items-center gap-1">
+          <InvoicePDFDownloadLink invoice={invoice} />
+          {invoice.status === "draft" && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="text-muted-foreground hover:text-red-600 hover:bg-red-50"
+              onClick={handleDeleteDraft}
+              disabled={deleteLoading}
+              aria-label="Eliminar factura"
+            >
+              {deleteLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+            </Button>
+          )}
+        </div>
       </div>
 
       <div className="grid md:grid-cols-3 gap-6">
