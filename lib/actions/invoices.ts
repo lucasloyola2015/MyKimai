@@ -312,57 +312,48 @@ export async function createInvoiceFromTimeEntries(data: {
                 },
             });
 
-            // Crear items de factura con montos dinámicos y congelar rate_applied/amount en los entries
-            await Promise.all(
-                entriesWithDynamicAmount.map(async (entry) => {
-                    let itemAmount = entry._dynamicAmount;
-                    let itemRate = entry._dynamicRate;
+            // Congelar rate_applied/amount y marcar como facturados en un solo updateMany por entry
+            // (no se puede hacer con un solo updateMany porque cada entry tiene valores distintos)
+            for (const entry of entriesWithDynamicAmount) {
+                await tx.time_entries.update({
+                    where: { id: entry.id },
+                    data: {
+                        rate_applied: entry._dynamicRate,
+                        amount: entry._dynamicAmount,
+                        is_billed: true,
+                        updated_at: new Date(),
+                    },
+                });
+            }
 
-                    // Si la factura es en ARS, convertir los montos de cada item
-                    if (billingCurrency === "ARS") {
-                        const xRate = strategy === "CURRENT"
-                            ? currentExchangeRate
-                            : Number(entry.usd_exchange_rate || 1050);
-                        itemAmount = itemAmount * xRate;
-                        itemRate = itemRate * xRate;
-                    }
+            // Crear items de factura con montos dinámicos
+            for (const entry of entriesWithDynamicAmount) {
+                let itemAmount = entry._dynamicAmount;
+                let itemRate = entry._dynamicRate;
 
-                    // Congelar rate_applied y amount en el time entry al facturar
-                    await tx.time_entries.update({
-                        where: { id: entry.id },
-                        data: {
-                            rate_applied: entry._dynamicRate,
-                            amount: entry._dynamicAmount,
-                            updated_at: new Date(),
-                        },
-                    });
-
-                    return tx.invoice_items.create({
-                        data: {
-                            invoice_id: invoice.id,
-                            time_entry_id: entry.id,
-                            description: entry.description || entry.tasks.name || "Trabajo",
-                            quantity: (entry.duration_neto || 0) / 60,
-                            rate: itemRate,
-                            amount: itemAmount,
-                            type: "time",
-                        },
-                    });
-                })
-            );
-
-            // Marcar time entries como facturados
-            await tx.time_entries.updateMany({
-                where: {
-                    id: { in: data.time_entry_ids }
-                },
-                data: {
-                    is_billed: true
+                if (billingCurrency === "ARS") {
+                    const xRate = strategy === "CURRENT"
+                        ? currentExchangeRate
+                        : Number(entry.usd_exchange_rate || 1050);
+                    itemAmount = itemAmount * xRate;
+                    itemRate = itemRate * xRate;
                 }
-            });
+
+                await tx.invoice_items.create({
+                    data: {
+                        invoice_id: invoice.id,
+                        time_entry_id: entry.id,
+                        description: entry.description || entry.tasks.name || "Trabajo",
+                        quantity: (entry.duration_neto || 0) / 60,
+                        rate: itemRate,
+                        amount: itemAmount,
+                        type: "time",
+                    },
+                });
+            }
 
             return invoice;
-            });
+            }, { timeout: 15000 });
 
             revalidatePath("/dashboard/invoices");
             revalidatePath("/dashboard");
