@@ -6,6 +6,7 @@ import { revalidatePath } from "next/cache";
 import type { invoices, invoice_items, InvoiceStatus, billing_type_invoice } from "@prisma/client";
 import { getUsdExchangeRate } from "./exchange";
 import { PUNTO_VENTA_DEFAULT } from "@/lib/fiscal-config";
+import { resolveRate } from "@/lib/utils/rates";
 
 export type ActionResponse<T> =
     | { success: true; data: T }
@@ -222,7 +223,13 @@ export async function createInvoiceFromTimeEntries(data: {
             },
         },
         include: {
-            tasks: true,
+            tasks: {
+                include: {
+                    projects: {
+                        include: { clients: true },
+                    },
+                },
+            },
         },
     });
 
@@ -232,6 +239,15 @@ export async function createInvoiceFromTimeEntries(data: {
             error: "No hay períodos de trabajo válidos para facturar.",
         };
     }
+
+    // Calcular monto dinámico por entry usando resolveRate (SSOT)
+    const entriesWithDynamicAmount = timeEntries.map((e: any) => {
+        const { rate } = resolveRate({ task: e.tasks, project: e.tasks.projects, client: e.tasks.projects.clients });
+        const effectiveRate = rate ?? Number(e.rate_applied || 0);
+        const hours = (e.duration_neto || 0) / 60;
+        const dynamicAmount = Number((hours * effectiveRate).toFixed(2));
+        return { ...e, _dynamicAmount: dynamicAmount, _dynamicRate: effectiveRate };
+    });
 
     // Calcular totales basados en moneda y estrategia
     const billingCurrency = data.currency || client.currency;
@@ -243,19 +259,16 @@ export async function createInvoiceFromTimeEntries(data: {
     if (billingCurrency === "ARS") {
         if (strategy === "CURRENT") {
             currentExchangeRate = await getUsdExchangeRate();
-            const totalUsd = timeEntries.reduce((sum, e) => sum + Number(e.amount || 0), 0);
+            const totalUsd = entriesWithDynamicAmount.reduce((sum, e) => sum + e._dynamicAmount, 0);
             subtotal = totalUsd * currentExchangeRate;
         } else {
-            // Histórico: suma de pesificaciones individuales
-            subtotal = timeEntries.reduce((sum, e) => {
-                const amountUsd = Number(e.amount || 0);
-                const rate = Number(e.usd_exchange_rate || 1050);
-                return sum + (amountUsd * rate);
+            subtotal = entriesWithDynamicAmount.reduce((sum, e) => {
+                const xRate = Number(e.usd_exchange_rate || 1050);
+                return sum + (e._dynamicAmount * xRate);
             }, 0);
         }
     } else {
-        // USD o moneda base: suma directa
-        subtotal = timeEntries.reduce((sum, e) => sum + Number(e.amount || 0), 0);
+        subtotal = entriesWithDynamicAmount.reduce((sum, e) => sum + e._dynamicAmount, 0);
     }
 
     const taxRate = data.tax_rate || 0;
@@ -299,20 +312,30 @@ export async function createInvoiceFromTimeEntries(data: {
                 },
             });
 
-            // Crear items de factura
+            // Crear items de factura con montos dinámicos y congelar rate_applied/amount en los entries
             await Promise.all(
-                timeEntries.map((entry) => {
-                    let itemAmount = Number(entry.amount || 0);
-                    let itemRate = Number(entry.rate_applied || 0);
+                entriesWithDynamicAmount.map(async (entry) => {
+                    let itemAmount = entry._dynamicAmount;
+                    let itemRate = entry._dynamicRate;
 
                     // Si la factura es en ARS, convertir los montos de cada item
                     if (billingCurrency === "ARS") {
-                        const rate = strategy === "CURRENT"
+                        const xRate = strategy === "CURRENT"
                             ? currentExchangeRate
                             : Number(entry.usd_exchange_rate || 1050);
-                        itemAmount = itemAmount * rate;
-                        itemRate = itemRate * rate;
+                        itemAmount = itemAmount * xRate;
+                        itemRate = itemRate * xRate;
                     }
+
+                    // Congelar rate_applied y amount en el time entry al facturar
+                    await tx.time_entries.update({
+                        where: { id: entry.id },
+                        data: {
+                            rate_applied: entry._dynamicRate,
+                            amount: entry._dynamicAmount,
+                            updated_at: new Date(),
+                        },
+                    });
 
                     return tx.invoice_items.create({
                         data: {
@@ -566,7 +589,12 @@ export async function getClientBillingSummary() {
             0
         );
         const unbilledAmount = clientUnbilledEntries.reduce(
-            (sum, entry) => sum + Number(entry.amount || 0),
+            (sum, entry: any) => {
+                const { rate } = resolveRate({ task: entry.tasks, project: entry.tasks.projects, client: entry.tasks.projects.clients });
+                const effectiveRate = rate ?? Number(entry.rate_applied || 0);
+                const hours = (entry.duration_neto || 0) / 60;
+                return sum + Number((hours * effectiveRate).toFixed(2));
+            },
             0
         );
 

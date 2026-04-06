@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma/client";
 import { getAuthUser } from "@/lib/auth/server";
 import { revalidatePath } from "next/cache";
 import type { tasks } from "@prisma/client";
+import { recalculateUnbilledEntries } from "./time-entries";
 
 export type ActionResponse<T> =
     | { success: true; data: T }
@@ -189,6 +190,11 @@ export async function updateTask(
                 },
             },
         });
+
+        // Recalcular entries no facturados si cambió la tarifa o facturabilidad
+        if (data.rate !== undefined || data.is_billable !== undefined) {
+            await recalculateUnbilledEntries({ taskId: id });
+        }
 
         revalidatePath("/dashboard/tasks");
 

@@ -1,5 +1,7 @@
 import type { tasks, projects, clients } from "@prisma/client";
 
+export type RateSource = "Tarea" | "Proyecto" | "Cliente" | "Usuario" | null;
+
 export interface RateContext {
   task?: tasks | null;
   project?: projects | null;
@@ -7,12 +9,16 @@ export interface RateContext {
   defaultRate?: number | null;
 }
 
+export interface RateResult {
+  rate: number | null;
+  source: RateSource;
+}
+
 /**
  * Convierte un valor Decimal de Prisma a number
  */
 function decimalToNumber(value: any): number | null {
   if (value == null) return null;
-  // Prisma Decimal tiene método toNumber()
   if (typeof value === "object" && value !== null && "toNumber" in value && typeof value.toNumber === "function") {
     return value.toNumber();
   }
@@ -20,24 +26,28 @@ function decimalToNumber(value: any): number | null {
 }
 
 /**
- * Resuelve la tarifa aplicable usando el sistema de cascada:
+ * SSOT: Resuelve la tarifa aplicable usando el sistema de cascada:
  * tarea > proyecto > cliente > tarifa general
- * Esta es una función pura que puede ejecutarse en el cliente
+ * Retorna tanto la tarifa como su origen.
  */
-export function resolveRate(context: RateContext): number | null {
+export function resolveRate(context: RateContext): RateResult {
   if (context.task?.rate != null) {
-    return decimalToNumber(context.task.rate);
+    return { rate: decimalToNumber(context.task.rate), source: "Tarea" };
   }
 
   if (context.project?.rate != null) {
-    return decimalToNumber(context.project.rate);
+    return { rate: decimalToNumber(context.project.rate), source: "Proyecto" };
   }
 
   if (context.client?.default_rate != null) {
-    return decimalToNumber(context.client.default_rate);
+    return { rate: decimalToNumber(context.client.default_rate), source: "Cliente" };
   }
 
-  return context.defaultRate ?? null;
+  if (context.defaultRate != null) {
+    return { rate: context.defaultRate, source: "Usuario" };
+  }
+
+  return { rate: null, source: null };
 }
 
 // Re-exportar getRateContext desde lib/actions/rates

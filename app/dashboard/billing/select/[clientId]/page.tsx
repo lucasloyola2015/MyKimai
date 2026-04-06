@@ -13,6 +13,7 @@ import { getUnbilledTimeEntries, createInvoiceFromTimeEntries } from "@/lib/acti
 import { getClients } from "@/lib/actions/clients";
 import { getUserFiscalSettings } from "@/lib/actions/user-settings";
 import type { time_entries, clients } from "@prisma/client";
+import { resolveRate } from "@/lib/utils/rates";
 import { getUsdExchangeRateInfo, type UsdExchangeInfo } from "@/lib/actions/exchange";
 import { es } from "date-fns/locale";
 import { toast } from "@/hooks/use-toast";
@@ -105,27 +106,43 @@ export default function PartialBillingPage() {
 
     const summary = useMemo(() => {
         const totalMinutes = selectedEntries.reduce((sum, e) => sum + (e.duration_neto || 0), 0);
-        const totalUsdFromDb = selectedEntries.reduce((sum, e) => sum + Number(e.amount || 0), 0);
+
+        // Cálculo dinámico: usar tarifa actual de la cascada, no entry.amount congelado
+        const totalUsdDynamic = selectedEntries.reduce((sum, e) => {
+            const task = e.tasks;
+            const project = task?.projects ?? (task as any)?.project;
+            const client = project?.clients;
+            const { rate } = resolveRate({ task, project, client });
+            const effectiveRate = rate ?? Number(e.rate_applied || 0);
+            const hours = (e.duration_neto || 0) / 60;
+            return sum + Number((hours * effectiveRate).toFixed(2));
+        }, 0);
 
         let totalToInvoice = 0;
 
         if (billingCurrency === "ARS") {
             if (exchangeStrategy === "CURRENT") {
-                totalToInvoice = totalUsdFromDb * (currentRate || 1050);
+                totalToInvoice = totalUsdDynamic * (currentRate || 1050);
             } else {
                 totalToInvoice = selectedEntries.reduce((sum, e) => {
-                    const amountUsd = Number(e.amount || 0);
-                    const rate = Number(e.usd_exchange_rate || 1050);
-                    return sum + (amountUsd * rate);
+                    const task = e.tasks;
+                    const project = task?.projects ?? (task as any)?.project;
+                    const client = project?.clients;
+                    const { rate } = resolveRate({ task, project, client });
+                    const effectiveRate = rate ?? Number(e.rate_applied || 0);
+                    const hours = (e.duration_neto || 0) / 60;
+                    const amountUsd = Number((hours * effectiveRate).toFixed(2));
+                    const xRate = Number(e.usd_exchange_rate || 1050);
+                    return sum + (amountUsd * xRate);
                 }, 0);
             }
         } else {
-            totalToInvoice = totalUsdFromDb;
+            totalToInvoice = totalUsdDynamic;
         }
 
         return {
             hours: (totalMinutes / 60).toFixed(2),
-            totalUsdFromDb,
+            totalUsdFromDb: totalUsdDynamic,
             total: totalToInvoice,
         };
     }, [selectedEntries, billingCurrency, exchangeStrategy, currentRate]);
@@ -221,13 +238,15 @@ export default function PartialBillingPage() {
         const items = selectedEntries.map(entry => {
             const task = entry.tasks;
             const project = task?.projects ?? (task as any)?.project;
+            const client = project?.clients;
             const projectName = project?.name ?? "—";
             const taskName = task?.name ?? "—";
             const description = entry.description || `${projectName} - ${taskName}`;
             const hours = (entry.duration_neto || 0) / 60;
-            
-            let amount = Number(entry.amount || 0);
-            let rate = Number(entry.rate_applied || 0);
+
+            const { rate: dynamicRate } = resolveRate({ task, project, client });
+            let rate = dynamicRate ?? Number(entry.rate_applied || 0);
+            let amount = Number((hours * rate).toFixed(2));
 
             let exchangeRateUsed: number | undefined;
             let exchangeRateDate: Date | undefined;
@@ -373,9 +392,13 @@ export default function PartialBillingPage() {
                                 {timeEntries.map((entry) => {
                                     const task = entry.tasks;
                                     const project = task?.projects ?? (task as any)?.project;
+                                    const client = project?.clients;
                                     const projectName = project?.name ?? "—";
                                     const taskName = task?.name ?? "—";
                                     const durationNeto = entry.duration_neto ?? 0;
+                                    const { rate: resolvedRate, source: rateSource } = resolveRate({ task, project, client });
+                                    const rateDisplay = resolvedRate ?? Number(entry.rate_applied ?? 0);
+                                    const dynamicAmount = Number(((durationNeto / 60) * rateDisplay).toFixed(2));
                                     if (!entry?.id) return null;
                                     return (
                                     <div
@@ -398,15 +421,15 @@ export default function PartialBillingPage() {
                                                     <span className="font-mono text-sm font-bold whitespace-nowrap">
                                                         {billingCurrency === "ARS"
                                                             ? (exchangeStrategy === "CURRENT"
-                                                                ? Number(entry.amount || 0) * (currentRate || 1050)
-                                                                : Number(entry.amount || 0) * Number(entry.usd_exchange_rate || 1050)
+                                                                ? dynamicAmount * (currentRate || 1050)
+                                                                : dynamicAmount * Number(entry.usd_exchange_rate || 1050)
                                                             ).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-                                                            : Number(entry.amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                                                            : dynamicAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
                                                         } {billingCurrency}
                                                     </span>
                                                     {billingCurrency === "ARS" && (
                                                         <span className="text-[9px] text-muted-foreground font-mono">
-                                                            USD {Number(entry.amount ?? 0).toFixed(2)} @ {exchangeStrategy === "CURRENT" ? (currentRate || 1050).toFixed(0) : Number(entry.usd_exchange_rate || 1050).toFixed(0)}
+                                                            USD {dynamicAmount.toFixed(2)} @ {exchangeStrategy === "CURRENT" ? (currentRate || 1050).toFixed(0) : Number(entry.usd_exchange_rate || 1050).toFixed(0)}
                                                             {exchangeStrategy === "CURRENT" ? " (Hoy)" : ""}
                                                         </span>
                                                     )}
@@ -418,6 +441,7 @@ export default function PartialBillingPage() {
                                                 <span>{format(new Date(entry.start_time), "dd MMM, yyyy")}</span>
                                                 <span>•</span>
                                                 <span className="bg-muted px-1.5 py-0.5 rounded text-[10px] uppercase font-bold">{projectName}</span>
+                                                <span className="bg-blue-500/15 text-blue-400 px-1.5 py-0.5 rounded text-[10px] font-bold">USD {rateDisplay}/h · {rateSource}</span>
                                             </div>
                                         </div>
                                     </div>

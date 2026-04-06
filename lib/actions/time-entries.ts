@@ -8,6 +8,7 @@ import type { time_entries } from "@prisma/client";
 import { calculateNetDurationMinutes, computeEntryTotals } from "@/lib/utils";
 import { formatTime24 } from "@/lib/date-format";
 import { getUsdExchangeRate } from "./exchange";
+import { resolveRate } from "@/lib/utils/rates";
 
 export type ActionResponse<T> =
     | { success: true; data: T }
@@ -114,6 +115,10 @@ export async function getLastCompletedEntry() {
  * Calcula la tarifa aplicable para una tarea
  * Cascada: task.rate → project.rate → client.default_rate → 0
  */
+/**
+ * Calcula la tarifa aplicable para una tarea usando resolveRate (SSOT).
+ * Aplica el blindaje de facturabilidad antes de la cascada.
+ */
 async function calculateRate(taskId: string): Promise<number> {
     const task = await prisma.tasks.findUnique({
         where: { id: taskId },
@@ -128,25 +133,16 @@ async function calculateRate(taskId: string): Promise<number> {
 
     if (!task) return 0;
 
-    // SSOT de Facturabilidad: Si no es facturable en la jerarquía, la tarifa es obligatoriamente 0.
-    const isBillableTask = !!(task as any).is_billable;
-    const isBillableProject = !!(task.projects as any).is_billable;
-    const isBillableClient = !!(task.projects.clients as any).is_billable;
-
-    const isBillable = isBillableTask && isBillableProject && isBillableClient;
-
-    // Si no es facturable, la tarifa es 0 sin importar lo que diga el campo rate
+    const isBillable = !!(task as any).is_billable && !!(task.projects as any).is_billable && !!(task.projects.clients as any).is_billable;
     if (!isBillable) return 0;
 
-    // Cascada de tarifas: Tarea -> Proyecto -> Cliente
-    const taskRate = task.rate ? Number(task.rate) : 0;
-    if (taskRate > 0) return taskRate;
+    const { rate } = resolveRate({
+        task,
+        project: task.projects,
+        client: task.projects.clients,
+    });
 
-    const projectRate = task.projects.rate ? Number(task.projects.rate) : 0;
-    if (projectRate > 0) return projectRate;
-
-    const clientRate = task.projects.clients.default_rate ? Number(task.projects.clients.default_rate) : 0;
-    return clientRate;
+    return rate ?? 0;
 }
 
 /**
@@ -1047,6 +1043,67 @@ export async function calculateEntryAmount(entryId: string): Promise<ActionRespo
     }
 }
 
-// Mantener el nombre anterior por compatibilidad con la UI si es necesario, 
+// Mantener el nombre anterior por compatibilidad con la UI si es necesario,
 // pero redirigir a la nueva función centralizada.
 export const recalculateTimeEntryRate = calculateEntryAmount;
+
+/**
+ * Recalcula rate_applied y amount de todos los time entries no facturados
+ * que estén afectados por un cambio de tarifa.
+ * Filtros opcionales: por taskId, projectId, o clientId.
+ */
+export async function recalculateUnbilledEntries(filter: {
+    taskId?: string;
+    projectId?: string;
+    clientId?: string;
+}) {
+    const user = await getAuthUser();
+
+    const entries = await prisma.time_entries.findMany({
+        where: {
+            user_id: user.id,
+            is_billed: false,
+            end_time: { not: null },
+            ...(filter.taskId && { task_id: filter.taskId }),
+            ...(filter.projectId && { tasks: { project_id: filter.projectId } }),
+            ...(filter.clientId && { tasks: { projects: { client_id: filter.clientId } } }),
+        },
+        include: {
+            tasks: {
+                include: {
+                    projects: {
+                        include: { clients: true },
+                    },
+                },
+            },
+        },
+    });
+
+    for (const entry of entries) {
+        const task = entry.tasks;
+        const project = task.projects;
+        const client = project.clients;
+
+        const isBillable = !!(task as any).is_billable && !!(project as any).is_billable && !!(client as any).is_billable;
+        const { rate } = resolveRate({ task, project, client });
+        const effectiveRate = isBillable ? (rate ?? 0) : 0;
+        const durationNeto = entry.duration_neto || 0;
+        const amount = effectiveRate === 0 ? 0 : Number(((durationNeto / 60) * effectiveRate).toFixed(2));
+
+        await prisma.time_entries.update({
+            where: { id: entry.id },
+            data: {
+                rate_applied: effectiveRate,
+                amount,
+                billable: effectiveRate > 0,
+                updated_at: new Date(),
+            },
+        });
+    }
+
+    revalidatePath("/dashboard/my-hours");
+    revalidatePath("/dashboard/billing");
+    revalidatePath("/dashboard/time-tracker");
+
+    return entries.length;
+}

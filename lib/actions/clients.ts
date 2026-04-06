@@ -6,6 +6,7 @@ import { revalidatePath } from "next/cache";
 import type { clients } from "@prisma/client";
 
 import { createAdminClient } from "@/lib/supabase/admin";
+import { recalculateUnbilledEntries } from "./time-entries";
 
 export type ActionResponse<T> =
     | { success: true; data: T }
@@ -185,6 +186,11 @@ export async function updateClient(
             where: { id },
             data: dbData,
         });
+
+        // Recalcular entries no facturados si cambió la tarifa o facturabilidad
+        if (data.default_rate !== undefined || data.is_billable !== undefined) {
+            await recalculateUnbilledEntries({ clientId: id });
+        }
 
         revalidatePath("/dashboard/clients");
 

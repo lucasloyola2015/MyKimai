@@ -5,6 +5,7 @@ import { getAuthUser, getClientContext } from "@/lib/auth/server";
 import { revalidatePath } from "next/cache";
 import type { BillingType, ProjectStatus, projects } from "@prisma/client";
 import { computeEntryTotals } from "@/lib/utils";
+import { recalculateUnbilledEntries } from "./time-entries";
 
 export type ActionResponse<T> =
     | { success: true; data: T }
@@ -196,6 +197,11 @@ export async function updateProject(
                 clients: true,
             },
         });
+
+        // Recalcular entries no facturados si cambió la tarifa o facturabilidad
+        if (data.rate !== undefined || data.is_billable !== undefined) {
+            await recalculateUnbilledEntries({ projectId: id });
+        }
 
         revalidatePath("/dashboard/projects");
 
