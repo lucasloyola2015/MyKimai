@@ -3,6 +3,7 @@
 import { prisma } from "@/lib/prisma/client";
 import { getAuthUser, getClientContext } from "@/lib/auth/server";
 import { revalidatePath } from "next/cache";
+import { format } from "date-fns";
 import type { invoices, invoice_items, InvoiceStatus, billing_type_invoice } from "@prisma/client";
 import { getUsdExchangeRate } from "./exchange";
 import { PUNTO_VENTA_DEFAULT } from "@/lib/fiscal-config";
@@ -321,32 +322,77 @@ export async function createInvoiceFromTimeEntries(data: {
                         rate_applied: entry._dynamicRate,
                         amount: entry._dynamicAmount,
                         is_billed: true,
+                        invoice_id: invoice.id,
                         updated_at: new Date(),
                     },
                 });
             }
 
-            // Crear items de factura con montos dinámicos
+            // Agrupar entries por proyecto para crear 1 item por proyecto
+            const projectGroups = new Map<string, {
+                projectName: string;
+                totalHours: number;
+                totalAmountUsd: number;
+                rate: number;
+                minDate: Date;
+                maxDate: Date;
+            }>();
+
             for (const entry of entriesWithDynamicAmount) {
-                let itemAmount = entry._dynamicAmount;
-                let itemRate = entry._dynamicRate;
+                const projectId = (entry as any).tasks.projects.id;
+                const projectName = (entry as any).tasks.projects.name || "Trabajo";
+                const hours = (entry.duration_neto || 0) / 60;
+                const entryDate = new Date(entry.start_time);
+
+                const existing = projectGroups.get(projectId);
+                if (existing) {
+                    existing.totalHours += hours;
+                    existing.totalAmountUsd += entry._dynamicAmount;
+                    if (entryDate < existing.minDate) existing.minDate = entryDate;
+                    if (entryDate > existing.maxDate) existing.maxDate = entryDate;
+                } else {
+                    projectGroups.set(projectId, {
+                        projectName,
+                        totalHours: hours,
+                        totalAmountUsd: entry._dynamicAmount,
+                        rate: entry._dynamicRate,
+                        minDate: entryDate,
+                        maxDate: entryDate,
+                    });
+                }
+            }
+
+            // Crear 1 invoice_item por proyecto
+            for (const [, group] of projectGroups) {
+                const dateRange = `${format(group.minDate, "dd/MM")} - ${format(group.maxDate, "dd/MM/yyyy")}`;
+                const description = `${group.projectName} (${dateRange})`;
+
+                let itemRate = group.rate;
+                let itemAmount = group.totalAmountUsd;
 
                 if (billingCurrency === "ARS") {
+                    // Para ARS, usar tasa de cambio uniforme (CURRENT o promedio histórico)
                     const xRate = strategy === "CURRENT"
                         ? currentExchangeRate
-                        : Number(entry.usd_exchange_rate || 1050);
-                    itemAmount = itemAmount * xRate;
+                        : (() => {
+                            // Promedio ponderado de tasas históricas del grupo
+                            const totalWeighted = entriesWithDynamicAmount
+                                .filter((e: any) => e.tasks.projects.id === Array.from(projectGroups.entries()).find(([, g]) => g === group)?.[0])
+                                .reduce((sum, e) => sum + (e._dynamicAmount * Number(e.usd_exchange_rate || 1050)), 0);
+                            return group.totalAmountUsd > 0 ? totalWeighted / group.totalAmountUsd : 1050;
+                        })();
                     itemRate = itemRate * xRate;
+                    itemAmount = itemAmount * xRate;
                 }
 
                 await tx.invoice_items.create({
                     data: {
                         invoice_id: invoice.id,
-                        time_entry_id: entry.id,
-                        description: entry.description || entry.tasks.name || "Trabajo",
-                        quantity: (entry.duration_neto || 0) / 60,
-                        rate: itemRate,
-                        amount: itemAmount,
+                        time_entry_id: null,
+                        description,
+                        quantity: Number(group.totalHours.toFixed(2)),
+                        rate: Number(itemRate.toFixed(2)),
+                        amount: Number(itemAmount.toFixed(2)),
                         type: "time",
                     },
                 });
@@ -423,23 +469,19 @@ export async function deleteInvoice(id: string): Promise<ActionResponse<void>> {
 
     try {
         await prisma.$transaction(async (tx) => {
-            // A. Obtener los IDs de time_entries vinculados
-            const timeEntryIds = invoice.invoice_items
-                .map(item => item.time_entry_id)
-                .filter((id): id is string => id !== null);
-
-            // B. Liberar las TimeEntries
-            if (timeEntryIds.length > 0) {
-                await tx.time_entries.updateMany({
-                    where: {
-                        id: { in: timeEntryIds }
-                    },
-                    data: {
-                        is_billed: false,
-                        invoice_id: null
-                    }
-                });
-            }
+            // A. Liberar todas las TimeEntries vinculadas a esta factura
+            // (busca por invoice_id directo, no por invoice_items.time_entry_id
+            //  ya que los items agrupados por proyecto tienen time_entry_id = null)
+            await tx.time_entries.updateMany({
+                where: {
+                    is_billed: true,
+                    invoice_id: id,
+                },
+                data: {
+                    is_billed: false,
+                    invoice_id: null,
+                },
+            });
 
             // C. Eliminar la factura (items se borran por cascade en DB)
             await tx.invoices.delete({
@@ -572,7 +614,7 @@ export async function getClientBillingSummary() {
         // Entradas sin facturar de este cliente
         const clientUnbilledEntries = unbilledEntries.filter(
             (entry: any) =>
-                entry.tasks.projects.clients.id === client.id
+                entry.tasks?.projects?.clients?.id === client.id
         );
 
         const unbilledMinutes = clientUnbilledEntries.reduce(
@@ -581,7 +623,10 @@ export async function getClientBillingSummary() {
         );
         const unbilledAmount = clientUnbilledEntries.reduce(
             (sum, entry: any) => {
-                const { rate } = resolveRate({ task: entry.tasks, project: entry.tasks.projects, client: entry.tasks.projects.clients });
+                const task = entry.tasks;
+                const project = task?.projects;
+                const cl = project?.clients;
+                const { rate } = resolveRate({ task, project, client: cl });
                 const effectiveRate = rate ?? Number(entry.rate_applied || 0);
                 const hours = (entry.duration_neto || 0) / 60;
                 return sum + Number((hours * effectiveRate).toFixed(2));

@@ -24,15 +24,15 @@ interface InvoiceWithDetails {
 }
 
 /**
- * Enlace de descarga del PDF de la factura.
- * Obtiene el HTML desde la API (plantilla rellenada) y lo convierte a PDF en el cliente con html2pdf.js.
+ * Botón de descarga/impresión del PDF de la factura.
+ * Abre el HTML renderizado en una ventana nueva y lanza el diálogo de impresión
+ * del navegador, que permite guardar como PDF con renderizado nativo perfecto.
  */
 export function InvoicePDFDownloadLink({ invoice }: { invoice: InvoiceWithDetails }) {
   const [loading, setLoading] = useState(false);
 
   const handleDownload = async () => {
     setLoading(true);
-    let container: HTMLDivElement | null = null;
     try {
       const res = await fetch(`/api/invoices/${invoice.id}/pdf-html`);
       if (!res.ok) {
@@ -40,29 +40,31 @@ export function InvoicePDFDownloadLink({ invoice }: { invoice: InvoiceWithDetail
         throw new Error(res.status === 401 ? "No autorizado" : text || "Error al obtener la factura");
       }
       const html = await res.text();
-      container = document.createElement("div");
-      container.innerHTML = html;
-      container.style.position = "absolute";
-      container.style.left = "-9999px";
-      container.style.top = "0";
-      container.style.width = "210mm";
-      document.body.appendChild(container);
 
-      // Esperar a que fuentes e imágenes externas carguen (QR)
-      await new Promise((r) => setTimeout(r, 800));
+      // Abrir ventana nueva con el HTML y lanzar impresión nativa
+      const printWindow = window.open("", "_blank", "width=800,height=1100");
+      if (!printWindow) {
+        throw new Error("El navegador bloqueó la ventana emergente. Permitir pop-ups para este sitio.");
+      }
 
-      const html2pdf = (await import("html2pdf.js")).default;
-      await html2pdf()
-        .set({
-          margin: 0,
-          filename: `${invoice.invoice_number}.pdf`,
-          image: { type: "jpeg", quality: 1 },
-          html2canvas: { scale: 2, useCORS: true, logging: false },
-          jsPDF: { unit: "mm", format: "a4", orientation: "portrait" },
-          pagebreak: { mode: ["avoid-all", "css", "legacy"] },
-        } as any)
-        .from(container)
-        .save();
+      printWindow.document.open();
+      printWindow.document.write(html);
+      printWindow.document.close();
+
+      // Esperar a que carguen fuentes e imágenes, luego imprimir
+      printWindow.onload = () => {
+        setTimeout(() => {
+          printWindow.print();
+        }, 500);
+      };
+
+      // Fallback si onload no dispara (algunas versiones de Chrome)
+      setTimeout(() => {
+        if (!printWindow.closed) {
+          printWindow.print();
+        }
+      }, 2000);
+
     } catch (err: any) {
       console.error("[InvoicePDFDownloadLink]", err);
       toast({
@@ -71,9 +73,6 @@ export function InvoicePDFDownloadLink({ invoice }: { invoice: InvoiceWithDetail
         variant: "destructive",
       });
     } finally {
-      if (container?.parentNode) {
-        document.body.removeChild(container);
-      }
       setLoading(false);
     }
   };

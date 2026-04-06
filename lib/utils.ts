@@ -7,6 +7,29 @@ export function cn(...inputs: ClassValue[]) {
 }
 
 /**
+ * Convierte recursivamente objetos Prisma Decimal a number.
+ * Necesario para pasar datos de Server Actions a Client Components sin warnings.
+ */
+export function serializeDecimal<T>(obj: T): T {
+  if (obj === null || obj === undefined) return obj;
+  if (typeof obj === "object" && "toNumber" in (obj as any) && typeof (obj as any).toNumber === "function") {
+    return (obj as any).toNumber() as unknown as T;
+  }
+  if (Array.isArray(obj)) {
+    return obj.map(serializeDecimal) as unknown as T;
+  }
+  if (obj instanceof Date) return obj;
+  if (typeof obj === "object") {
+    const result: any = {};
+    for (const key of Object.keys(obj as any)) {
+      result[key] = serializeDecimal((obj as any)[key]);
+    }
+    return result as T;
+  }
+  return obj;
+}
+
+/**
  * Calcula la duración neta en minutos restando las pausas del intervalo total.
  * Regla de Ingeniería: Horas Facturables = (Hora Fin - Hora Inicio) - Tiempo Total de Pausas
  */

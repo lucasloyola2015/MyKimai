@@ -8,10 +8,8 @@ import { PUNTO_VENTA_DEFAULT } from "@/lib/fiscal-config";
  */
 
 export interface InvoiceTemplateItem {
-  codigo?: string;
   descripcion: string;
   cantidad: number;
-  unidadMedida: string;
   precioUnitario: string;
   subtotal: string;
 }
@@ -41,6 +39,9 @@ export interface InvoiceTemplateData {
   DataQR: string;
   CAE: string;
   VtoCAE: string;
+  DocLetra: string;
+  DocCodigo: string;
+  DocTitulo: string;
   /** Si es true, no se muestran QR, logos ARCA ni bloque CAE (comprobante interno). */
   EsInterno?: boolean;
 }
@@ -60,18 +61,16 @@ function buildItemsRows(items: InvoiceTemplateItem[]): string {
   const rows = items.map(
     (item) =>
       `<tr>
-        <td class="t-left">${escapeHtml(item.codigo ?? "—")}</td>
         <td class="t-left">${escapeHtml(item.descripcion)}</td>
         <td class="t-center">${Number(item.cantidad).toFixed(2)}</td>
-        <td class="t-center">${escapeHtml(item.unidadMedida)}</td>
         <td class="t-right">${escapeHtml(item.precioUnitario)}</td>
         <td class="t-right text-bold">${escapeHtml(item.subtotal)}</td>
       </tr>`
   );
-  const emptyRows = Math.max(0, 4 - items.length);
+  const emptyRows = Math.max(0, 3 - items.length);
   for (let i = 0; i < emptyRows; i++) {
     rows.push(
-      '<tr><td class="t-left">&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td></tr>'
+      '<tr><td class="t-left">&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td></tr>'
     );
   }
   return rows.join("\n");
@@ -115,6 +114,14 @@ export function fillInvoiceTemplate(templateHtml: string, data: InvoiceTemplateD
   html = html.replace(/\{QR_BLOCK\}/g, buildQrBlock(data.DataQR ?? "", esInterno));
   html = html.replace(/\{ARCA_DISCLAIMER_BLOCK\}/g, esInterno ? "" : ARCA_DISCLAIMER_HTML);
   html = html.replace(/\{CAE_BLOCK\}/g, buildCaeBlock(data.CAE ?? "—", data.VtoCAE ?? "—", esInterno));
+  const invoiceNumbersBlock = esInterno
+    ? `<div class="invoice-numbers-row"><div><span class="text-bold">Nro:</span> ${escapeHtml(data.CompNro)}</div></div>`
+    : `<div class="invoice-numbers-row"><div><span class="text-bold">Punto de Venta:</span> ${escapeHtml(data.PtoVta)}</div><div><span class="text-bold">Comp. Nro:</span> ${escapeHtml(data.CompNro)}</div></div>`;
+  html = html.replace(/\{INVOICE_NUMBERS_BLOCK\}/g, invoiceNumbersBlock);
+  const emisorDetailsBlock = esInterno
+    ? `<strong>Razón Social:</strong> ${escapeHtml(data.RazonSocialEmisor)}<br><strong>Condición frente al IVA:</strong> ${escapeHtml(data.CondicionIVAEmisor)}`
+    : `<strong>Razón Social:</strong> ${escapeHtml(data.RazonSocialEmisor)}<br><strong>Domicilio Comercial:</strong> ${escapeHtml(data.DomicilioEmisor)}<br><strong>Condición frente al IVA:</strong> ${escapeHtml(data.CondicionIVAEmisor)}`;
+  html = html.replace(/\{EMISOR_DETAILS_BLOCK\}/g, emisorDetailsBlock);
   const placeholders: (keyof InvoiceTemplateData)[] = [
     "RazonSocialEmisor",
     "DomicilioEmisor",
@@ -139,6 +146,9 @@ export function fillInvoiceTemplate(templateHtml: string, data: InvoiceTemplateD
     "DataQR",
     "CAE",
     "VtoCAE",
+    "DocLetra",
+    "DocCodigo",
+    "DocTitulo",
   ];
   for (const key of placeholders) {
     if (key === "items") continue;
@@ -163,6 +173,7 @@ function formatActivityStartDate(d: Date | string | null | undefined): string {
 
 /** Factura de BD con client e items (como getInvoiceWithItems) */
 export interface InvoiceForTemplate {
+  invoice_number?: string | null;
   issue_date: Date | string;
   due_date?: Date | string | null;
   currency?: string | null;
@@ -215,13 +226,23 @@ export function invoiceToTemplateData(
   const iibb = issuer?.gross_income ?? "Exento";
   const inicioAct = formatActivityStartDate(issuer?.activity_start_date ?? null);
   const cuitEmisor = invoice.issuer_tax_id ?? issuer?.tax_id ?? "—";
-  const ptoVta = String(invoice.punto_venta ?? PUNTO_VENTA_DEFAULT).padStart(5, "0");
-  const compNro = String(invoice.cbte_nro ?? 0).padStart(8, "0");
+  const esInterno = (invoice as { billing_type?: string }).billing_type === "INTERNAL";
+  const ptoVta = esInterno
+    ? "—"
+    : String(invoice.punto_venta ?? PUNTO_VENTA_DEFAULT).padStart(5, "0");
+  const compNro = esInterno && invoice.invoice_number
+    ? invoice.invoice_number
+    : String(invoice.cbte_nro ?? 0).padStart(8, "0");
   const fechaEmision = format(new Date(invoice.issue_date), "dd/MM/yyyy");
-  const periodoDesde = format(new Date(invoice.issue_date), "dd/MM/yyyy");
-  const periodoHasta = invoice.due_date
-    ? format(new Date(invoice.due_date), "dd/MM/yyyy")
-    : "—";
+  const invAny = invoice as any;
+  const periodoDesde = invAny._periodStart
+    ? format(new Date(invAny._periodStart), "dd/MM/yyyy")
+    : format(new Date(invoice.issue_date), "dd/MM/yyyy");
+  const periodoHasta = invAny._periodEnd
+    ? format(new Date(invAny._periodEnd), "dd/MM/yyyy")
+    : invoice.due_date
+      ? format(new Date(invoice.due_date), "dd/MM/yyyy")
+      : "—";
   const fechaVtoPago = invoice.due_date
     ? format(new Date(invoice.due_date), "dd/MM/yyyy")
     : "—";
@@ -236,10 +257,8 @@ export function invoiceToTemplateData(
   const fmt = (n: number | string) =>
     `${Number(n).toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${currency}`;
   const items: InvoiceTemplateItem[] = invoice.invoice_items.map((item) => ({
-    codigo: undefined,
     descripcion: item.description ?? "—",
     cantidad: Number(item.quantity),
-    unidadMedida: item.type === "time" ? "Horas" : "unidades",
     precioUnitario: fmt(Number(item.rate)),
     subtotal: fmt(Number(item.amount)),
   }));
@@ -288,7 +307,10 @@ export function invoiceToTemplateData(
     DataQR: dataQrEncoded,
     CAE: String(cae),
     VtoCAE: vtoCae,
-    EsInterno: (invoice as { billing_type?: string }).billing_type === "INTERNAL",
+    DocLetra: esInterno ? "X" : "C",
+    DocCodigo: esInterno ? "REMITO" : "COD. 011",
+    DocTitulo: esInterno ? "REMITO" : "FACTURA",
+    EsInterno: esInterno,
   };
 }
 
@@ -357,10 +379,8 @@ export function previewDataToTemplateData(preview: InvoicePreviewDataForTemplate
   const fmt = (n: number) =>
     `${n.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${currency}`;
   const items: InvoiceTemplateItem[] = preview.items.map((item) => ({
-    codigo: undefined,
     descripcion: item.description || "—",
     cantidad: item.quantity,
-    unidadMedida: item.type === "time" ? "Horas" : "unidades",
     precioUnitario: fmt(item.rate),
     subtotal: fmt(item.amount),
   }));
@@ -389,6 +409,9 @@ export function previewDataToTemplateData(preview: InvoicePreviewDataForTemplate
     DataQR: "",
     CAE: "—",
     VtoCAE: "—",
+    DocLetra: preview.billingType === "INTERNAL" ? "X" : "C",
+    DocCodigo: preview.billingType === "INTERNAL" ? "REMITO" : "COD. 011",
+    DocTitulo: preview.billingType === "INTERNAL" ? "REMITO" : "FACTURA",
     EsInterno: preview.billingType === "INTERNAL",
   };
 }

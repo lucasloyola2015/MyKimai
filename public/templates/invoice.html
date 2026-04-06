@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Factura Electrónica - Lucas Loyola</title>
+    <title>Factura - {CompNro}</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;700&family=Montserrat:wght@600;700;800&display=swap" rel="stylesheet">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/qrious/4.0.2/qrious.min.js"></script>
     <style>
@@ -109,8 +109,8 @@
     <div class="header-container">
         <div class="header-center-box">
             <div class="doc-type-label">ORIGINAL</div>
-            <div class="letter-square">C</div>
-            <div class="code-text">COD. 011</div>
+            <div class="letter-square">{DocLetra}</div>
+            <div class="code-text">{DocCodigo}</div>
         </div>
         <div class="header-divider"></div>
         <div class="header-left">
@@ -122,17 +122,12 @@
             <h1 class="emisor-title brand-font">{RazonSocialEmisor}</h1>
             <div class="emisor-subtitle">INGENIERÍA • ROBÓTICA • AUTOMATIZACIÓN</div>
             <div class="emisor-details">
-                <strong>Razón Social:</strong> {RazonSocialEmisor}<br>
-                <strong>Domicilio Comercial:</strong> {DomicilioEmisor}<br>
-                <strong>Condición frente al IVA:</strong> {CondicionIVAEmisor}
+                {EMISOR_DETAILS_BLOCK}
             </div>
         </div>
         <div class="header-right">
-            <h2 class="factura-title brand-font">FACTURA</h2>
-            <div class="invoice-numbers-row">
-                <div><span class="text-bold">Punto de Venta:</span> {PtoVta}</div>
-                <div><span class="text-bold">Comp. Nro:</span> {CompNro}</div>
-            </div>
+            <h2 class="factura-title brand-font">{DocTitulo}</h2>
+            {INVOICE_NUMBERS_BLOCK}
             <div style="font-size: 11px;">
                 <span class="text-bold">Fecha de Emisión:</span> <span class="text-bold text-azul">{FechaEmision}</span>
             </div>
@@ -146,7 +141,6 @@
     <div class="info-bar">
         <div><strong>Período Facturado Desde:</strong> {PeriodoDesde}</div>
         <div><strong>Hasta:</strong> {PeriodoHasta}</div>
-        <div><strong>Fecha de Vto. para el pago:</strong> {FechaVtoPago}</div>
     </div>
     <div class="client-container">
         <div class="client-grid">
@@ -160,12 +154,10 @@
     <table class="items-table">
         <thead>
             <tr>
-                <th width="10%">Código</th>
-                <th width="45%">Producto / Servicio</th>
-                <th width="10%">Cantidad</th>
-                <th width="10%">U. Medida</th>
-                <th width="12%">Precio Unit.</th>
-                <th width="13%">Subtotal</th>
+                <th width="50%">Producto / Servicio</th>
+                <th width="15%">Cantidad</th>
+                <th width="15%">Precio Unit.</th>
+                <th width="20%">Subtotal</th>
             </tr>
         </thead>
         <tbody>
@@ -191,8 +183,8 @@
     <div class="header-container">
         <div class="header-center-box">
             <div class="doc-type-label">DUPLICADO</div>
-            <div class="letter-square">C</div>
-            <div class="code-text">COD. 011</div>
+            <div class="letter-square">{DocLetra}</div>
+            <div class="code-text">{DocCodigo}</div>
         </div>
         <div class="header-divider"></div>
         <div class="header-left">
@@ -204,17 +196,12 @@
             <h1 class="emisor-title brand-font">{RazonSocialEmisor}</h1>
             <div class="emisor-subtitle">INGENIERÍA • ROBÓTICA • AUTOMATIZACIÓN</div>
             <div class="emisor-details">
-                <strong>Razón Social:</strong> {RazonSocialEmisor}<br>
-                <strong>Domicilio Comercial:</strong> {DomicilioEmisor}<br>
-                <strong>Condición frente al IVA:</strong> {CondicionIVAEmisor}
+                {EMISOR_DETAILS_BLOCK}
             </div>
         </div>
         <div class="header-right">
-            <h2 class="factura-title brand-font">FACTURA</h2>
-            <div class="invoice-numbers-row">
-                <div><span class="text-bold">Punto de Venta:</span> {PtoVta}</div>
-                <div><span class="text-bold">Comp. Nro:</span> {CompNro}</div>
-            </div>
+            <h2 class="factura-title brand-font">{DocTitulo}</h2>
+            {INVOICE_NUMBERS_BLOCK}
             <div style="font-size: 11px;">
                 <span class="text-bold">Fecha de Emisión:</span> <span class="text-bold text-azul">{FechaEmision}</span>
             </div>
@@ -228,7 +215,6 @@
     <div class="info-bar">
         <div><strong>Período Facturado Desde:</strong> {PeriodoDesde}</div>
         <div><strong>Hasta:</strong> {PeriodoHasta}</div>
-        <div><strong>Fecha de Vto. para el pago:</strong> {FechaVtoPago}</div>
     </div>
     <div class="client-container">
         <div class="client-grid">
@@ -269,8 +255,8 @@
     <div class="header-container">
         <div class="header-center-box">
             <div class="doc-type-label">TRIPLICADO</div>
-            <div class="letter-square">C</div>
-            <div class="code-text">COD. 011</div>
+            <div class="letter-square">{DocLetra}</div>
+            <div class="code-text">{DocCodigo}</div>
         </div>
         <div class="header-divider"></div>
         <div class="header-left">
@@ -282,17 +268,12 @@
             <h1 class="emisor-title brand-font">{RazonSocialEmisor}</h1>
             <div class="emisor-subtitle">INGENIERÍA • ROBÓTICA • AUTOMATIZACIÓN</div>
             <div class="emisor-details">
-                <strong>Razón Social:</strong> {RazonSocialEmisor}<br>
-                <strong>Domicilio Comercial:</strong> {DomicilioEmisor}<br>
-                <strong>Condición frente al IVA:</strong> {CondicionIVAEmisor}
+                {EMISOR_DETAILS_BLOCK}
             </div>
         </div>
         <div class="header-right">
-            <h2 class="factura-title brand-font">FACTURA</h2>
-            <div class="invoice-numbers-row">
-                <div><span class="text-bold">Punto de Venta:</span> {PtoVta}</div>
-                <div><span class="text-bold">Comp. Nro:</span> {CompNro}</div>
-            </div>
+            <h2 class="factura-title brand-font">{DocTitulo}</h2>
+            {INVOICE_NUMBERS_BLOCK}
             <div style="font-size: 11px;">
                 <span class="text-bold">Fecha de Emisión:</span> <span class="text-bold text-azul">{FechaEmision}</span>
             </div>
@@ -306,7 +287,6 @@
     <div class="info-bar">
         <div><strong>Período Facturado Desde:</strong> {PeriodoDesde}</div>
         <div><strong>Hasta:</strong> {PeriodoHasta}</div>
-        <div><strong>Fecha de Vto. para el pago:</strong> {FechaVtoPago}</div>
     </div>
     <div class="client-container">
         <div class="client-grid">

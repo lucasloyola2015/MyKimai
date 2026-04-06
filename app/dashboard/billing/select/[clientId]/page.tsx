@@ -235,50 +235,72 @@ export default function PartialBillingPage() {
     const previewData = useMemo(() => {
         if (!client || selectedEntries.length === 0) return null;
 
-        const items = selectedEntries.map(entry => {
+        // Agrupar entries por proyecto
+        const projectGroups = new Map<string, {
+            projectName: string;
+            totalHours: number;
+            totalAmountUsd: number;
+            rateUsd: number;
+            minDate: Date;
+            maxDate: Date;
+        }>();
+
+        for (const entry of selectedEntries) {
             const task = entry.tasks;
             const project = task?.projects ?? (task as any)?.project;
-            const client = project?.clients;
+            const clientRef = project?.clients;
+            const projectId = project?.id ?? "unknown";
             const projectName = project?.name ?? "—";
-            const taskName = task?.name ?? "—";
-            const description = entry.description || `${projectName} - ${taskName}`;
             const hours = (entry.duration_neto || 0) / 60;
+            const { rate: dynamicRate } = resolveRate({ task, project, client: clientRef });
+            const rateUsd = dynamicRate ?? Number(entry.rate_applied || 0);
+            const amountUsd = Number((hours * rateUsd).toFixed(2));
+            const entryDate = new Date(entry.start_time);
 
-            const { rate: dynamicRate } = resolveRate({ task, project, client });
-            let rate = dynamicRate ?? Number(entry.rate_applied || 0);
-            let amount = Number((hours * rate).toFixed(2));
+            const existing = projectGroups.get(projectId);
+            if (existing) {
+                existing.totalHours += hours;
+                existing.totalAmountUsd += amountUsd;
+                if (entryDate < existing.minDate) existing.minDate = entryDate;
+                if (entryDate > existing.maxDate) existing.maxDate = entryDate;
+            } else {
+                projectGroups.set(projectId, {
+                    projectName,
+                    totalHours: hours,
+                    totalAmountUsd: amountUsd,
+                    rateUsd,
+                    minDate: entryDate,
+                    maxDate: entryDate,
+                });
+            }
+        }
 
-            let exchangeRateUsed: number | undefined;
-            let exchangeRateDate: Date | undefined;
+        const items = Array.from(projectGroups.values()).map(group => {
+            const dateRange = `${format(group.minDate, "dd/MM")} - ${format(group.maxDate, "dd/MM/yyyy")}`;
+            const description = `${group.projectName} (${dateRange})`;
+
+            let rate = group.rateUsd;
+            let amount = group.totalAmountUsd;
+
             if (billingCurrency === "ARS") {
                 if (exchangeStrategy === "CURRENT") {
-                    const exchangeRate = currentRate || 1050;
-                    exchangeRateUsed = exchangeRate;
-                    exchangeRateDate = new Date();
-                    amount = amount * exchangeRate;
-                    rate = rate * exchangeRate;
+                    const xRate = currentRate || 1050;
+                    amount = amount * xRate;
+                    rate = rate * xRate;
                 } else {
-                    const entryRate = Number(entry.usd_exchange_rate || 1050);
-                    exchangeRateUsed = entryRate;
-                    exchangeRateDate = entry.start_time ? new Date(entry.start_time) : new Date();
-                    amount = amount * entryRate;
-                    rate = rate * entryRate;
+                    // Para preview histórico, usar tasa actual como aproximación
+                    const xRate = currentRate || 1050;
+                    amount = amount * xRate;
+                    rate = rate * xRate;
                 }
-            }
-
-            // Si no hay rate aplicado, calcularlo desde el amount y las horas
-            if (rate === 0 && hours > 0) {
-                rate = amount / hours;
             }
 
             return {
                 description,
-                quantity: hours,
+                quantity: group.totalHours,
                 rate,
                 amount,
                 type: "time" as const,
-                exchangeRateUsed,
-                exchangeRateDate,
             };
         });
 

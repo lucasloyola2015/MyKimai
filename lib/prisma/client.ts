@@ -44,7 +44,47 @@ function createPrisma() {
             log: isProduction ? ["error"] : ["query", "error", "warn"],
         });
 
-        return client;
+        // Extensión: convierte Prisma Decimal a number en todos los resultados
+        // Evita warnings de Next.js "Decimal objects are not supported" en Client Components
+        const extended = client.$extends({
+            result: {
+                time_entries: {
+                    amount: { compute: (entry) => entry.amount != null ? Number(entry.amount) : null },
+                    rate_applied: { compute: (entry) => entry.rate_applied != null ? Number(entry.rate_applied) : null },
+                    usd_exchange_rate: { compute: (entry) => entry.usd_exchange_rate != null ? Number(entry.usd_exchange_rate) : null },
+                },
+                tasks: {
+                    rate: { compute: (task) => task.rate != null ? Number(task.rate) : null },
+                },
+                projects: {
+                    rate: { compute: (project) => project.rate != null ? Number(project.rate) : null },
+                },
+                clients: {
+                    default_rate: { compute: (client) => client.default_rate != null ? Number(client.default_rate) : null },
+                },
+                invoices: {
+                    subtotal: { compute: (inv) => Number(inv.subtotal) },
+                    tax_rate: { compute: (inv) => inv.tax_rate != null ? Number(inv.tax_rate) : null },
+                    tax_amount: { compute: (inv) => inv.tax_amount != null ? Number(inv.tax_amount) : null },
+                    total_amount: { compute: (inv) => Number(inv.total_amount) },
+                },
+                invoice_items: {
+                    quantity: { compute: (item) => Number(item.quantity) },
+                    rate: { compute: (item) => Number(item.rate) },
+                    amount: { compute: (item) => Number(item.amount) },
+                },
+                hour_packages: {
+                    hours: { compute: (pkg) => Number(pkg.hours) },
+                    hours_used: { compute: (pkg) => Number(pkg.hours_used) },
+                    price: { compute: (pkg) => Number(pkg.price) },
+                },
+                payments: {
+                    amount: { compute: (p) => Number(p.amount) },
+                },
+            },
+        });
+
+        return extended as unknown as PrismaClient;
     } catch (error) {
         console.error("FATAL PRISMA ADAPTER INITIALIZATION:", error);
         throw error;
