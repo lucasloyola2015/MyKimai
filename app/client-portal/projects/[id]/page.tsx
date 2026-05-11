@@ -16,6 +16,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { DayTimeline } from "@/components/dashboard/DayTimeline";
+import { MilestonesPanel } from "./milestones-panel";
 import Link from "next/link";
 import { format } from "date-fns";
 import { formatTime24 } from "@/lib/date-format";
@@ -158,6 +159,9 @@ export default function ProjectDetailPage({ params }: { params: { id: string } }
                     ))}
                 </div>
             </div>
+
+            {/* §7 IMPROVEMENT_PLAN — Hitos del proyecto (solo visibles al cliente) */}
+            <MilestonesPanel projectId={id} />
 
             {/* Historial de Registros: cada jornada en un card con barra alineada a la derecha */}
             <div className="space-y-4">

@@ -543,6 +543,34 @@ Reglas mínimas a aplicar en cada Server Action:
 
 ## 6. Gap arquitectónico B: multi-stakeholder del lado del cliente
 
+> **Estado:** 🟡 Implementado en código (F4 — 2026-05-11). Falta aplicar
+> la migración SQL en Supabase y crear los client_users granulares en la
+> UI.
+>
+> **SQL pendiente de aplicar en producción:**
+> - `supabase/migrations/2026-05-11_project_access.sql`
+>
+> **Implementación entregada:**
+> - Schema: `project_access` (project_id, client_user_id, role,
+>   granted_at, granted_by, revoked_at) + enum `project_access_role`
+>   (viewer, manager). `client_users.sees_all_projects` (default TRUE
+>   para legacy). `hour_packages.reserved_for_client_user_id`.
+> - SQL migration: tabla, RLS propia y REEMPLAZO de policies SELECT del
+>   portal en projects/tasks/time_entries/hour_packages/invoices para
+>   respetar sees_all_projects + project_access. Para invoices, regla
+>   estricta (ve solo si tiene acceso a TODOS los proyectos de sus items).
+> - Helper `lib/auth/portal-context.ts`: `getPortalProjectFilter()` con
+>   modo `all` o `restricted` (lista de project_ids accesibles).
+> - Server Actions: `getProjectStakeholders`, `grantProjectAccess`,
+>   `updateProjectAccess`, `revokeProjectAccess`,
+>   `updateClientUserVisibility`.
+> - Refactor de queries del portal (projects.ts + portal.ts) para
+>   filtrar por `restrictedProjectIds` cuando aplica.
+> - Validación al crear invoice: rechaza invoice multi-proyecto cuando
+>   los proyectos tienen distintos conjuntos de stakeholders activos.
+> - UI: `/dashboard/projects/[id]/stakeholders` con tabla, toggle
+>   sees_all_projects, asignación granular, selector de rol.
+
 ### 6.1. El problema (caso Illinois)
 
 Hoy `client_users` permite que varios mails accedan al portal de un mismo `client`. Pero el acceso es **all-or-nothing**: ven TODO lo del cliente.
@@ -713,6 +741,29 @@ Cuando un client_user comenta sobre un proyecto/hito (feature futura), el coment
 ---
 
 ## 7. Hitos / Milestones
+
+> **Estado:** 🟡 Implementado en código (F5 — 2026-05-11). Falta aplicar
+> la migración SQL en Supabase.
+>
+> **SQL pendiente:** `supabase/migrations/2026-05-11_milestones.sql`
+>
+> **Implementación entregada:**
+> - Schema: modelo `milestones` con `budget_hours`, `budget_amount`,
+>   `actual_hours`, `actual_amount`, `target_date`, `status` (enum
+>   `milestone_status`), `visible_to_client`. `time_entries.milestone_id`
+>   con FK opcional y ON DELETE SET NULL.
+> - SQL migration con RLS: owner/team_member ven todos, client_user con
+>   acceso al proyecto ve hitos con `visible_to_client = true`. Solo el
+>   owner muta.
+> - Server Actions: `getProjectMilestones` (admin),
+>   `getPortalProjectMilestones` (portal), `createMilestone`,
+>   `updateMilestone`, `deleteMilestone`, `assignTimeEntryMilestone`.
+>   Al cambiar `status` a "completed", snapshot automático de
+>   `actual_hours` y `actual_amount`.
+> - UI admin: `/dashboard/projects/[id]/milestones` con tabla, dialog
+>   CRUD, barras de progreso y badges de status.
+> - UI cliente: `<MilestonesPanel>` integrado en el detalle de proyecto
+>   del portal — barra global, lista de hitos con progreso por hito.
 
 ### 7.1. Por qué
 
