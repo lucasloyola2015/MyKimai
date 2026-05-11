@@ -1,7 +1,7 @@
 "use server";
 
 import { prisma } from "@/lib/prisma/client";
-import { getAuthUser } from "@/lib/auth/server";
+import { getOwnerContext, canManageWorkspace } from "@/lib/auth/owner-context";
 import { revalidatePath } from "next/cache";
 
 export type ActionResponse<T> =
@@ -18,15 +18,21 @@ export async function recordPayment(data: {
     method?: string;
     notes?: string;
 }): Promise<ActionResponse<any>> {
-    const user = await getAuthUser();
+    const ctx = await getOwnerContext();
+    if (!canManageWorkspace(ctx)) {
+        return {
+            success: false,
+            error: "Solo el dueño del workspace puede registrar pagos.",
+        };
+    }
 
     try {
-        // Verificar factura y pertenencia
+        // Verificar factura y pertenencia al workspace
         const invoice = await prisma.invoices.findFirst({
             where: {
                 id: data.invoice_id,
                 clients: {
-                    user_id: user.id
+                    user_id: ctx.ownerId
                 }
             },
             include: {

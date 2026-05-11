@@ -1,7 +1,7 @@
 "use server";
 
 import { prisma } from "@/lib/prisma/client";
-import { getAuthUser } from "@/lib/auth/server";
+import { getOwnerContext, canManageWorkspace } from "@/lib/auth/owner-context";
 import { revalidatePath } from "next/cache";
 import type { tasks } from "@prisma/client";
 import { recalculateUnbilledEntries } from "./time-entries";
@@ -14,13 +14,13 @@ export type ActionResponse<T> =
  * Obtiene todas las tareas del usuario
  */
 export async function getTasks(projectId?: string) {
-    const user = await getAuthUser();
+    const ctx = await getOwnerContext();
 
     const tasks = await prisma.tasks.findMany({
         where: {
             projects: {
                 clients: {
-                    user_id: user.id,
+                    user_id: ctx.ownerId,
                 },
             },
             ...(projectId && { project_id: projectId }),
@@ -44,14 +44,14 @@ export async function getTasks(projectId?: string) {
  * Obtiene una tarea con todas sus relaciones
  */
 export async function getTaskWithRelations(id: string) {
-    const user = await getAuthUser();
+    const ctx = await getOwnerContext();
 
     const task = await prisma.tasks.findFirst({
         where: {
             id,
             projects: {
                 clients: {
-                    user_id: user.id,
+                    user_id: ctx.ownerId,
                 },
             },
         },
@@ -76,14 +76,20 @@ export async function createTask(data: {
     rate?: number | null;
     is_billable?: boolean;
 }): Promise<ActionResponse<tasks>> {
-    const user = await getAuthUser();
+    const ctx = await getOwnerContext();
+    if (!canManageWorkspace(ctx)) {
+        return {
+            success: false,
+            error: "Solo el dueño del workspace puede crear tareas.",
+        };
+    }
 
-    // Verificar que el proyecto pertenece al usuario
+    // Verificar que el proyecto pertenece al workspace
     const project = await prisma.projects.findFirst({
         where: {
             id: data.project_id,
             clients: {
-                user_id: user.id,
+                user_id: ctx.ownerId,
             },
         },
     });
@@ -143,15 +149,21 @@ export async function updateTask(
         is_billable?: boolean;
     }
 ): Promise<ActionResponse<tasks>> {
-    const user = await getAuthUser();
+    const ctx = await getOwnerContext();
+    if (!canManageWorkspace(ctx)) {
+        return {
+            success: false,
+            error: "Solo el dueño del workspace puede editar tareas.",
+        };
+    }
 
-    // Verificar que la tarea pertenece al usuario
+    // Verificar que la tarea pertenece al workspace
     const existing = await prisma.tasks.findFirst({
         where: {
             id,
             projects: {
                 clients: {
-                    user_id: user.id,
+                    user_id: ctx.ownerId,
                 },
             },
         },
@@ -214,15 +226,21 @@ export async function updateTask(
  * Elimina una tarea
  */
 export async function deleteTask(id: string) {
-    const user = await getAuthUser();
+    const ctx = await getOwnerContext();
+    if (!canManageWorkspace(ctx)) {
+        return {
+            success: false,
+            error: "Solo el dueño del workspace puede eliminar tareas.",
+        };
+    }
 
-    // Verificar que la tarea pertenece al usuario
+    // Verificar que la tarea pertenece al workspace
     const existing = await prisma.tasks.findFirst({
         where: {
             id,
             projects: {
                 clients: {
-                    user_id: user.id,
+                    user_id: ctx.ownerId,
                 },
             },
         },

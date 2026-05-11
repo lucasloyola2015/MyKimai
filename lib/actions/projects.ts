@@ -1,7 +1,8 @@
 "use server";
 
 import { prisma } from "@/lib/prisma/client";
-import { getAuthUser, getClientContext } from "@/lib/auth/server";
+import { getClientContext } from "@/lib/auth/server";
+import { getOwnerContext, canManageWorkspace } from "@/lib/auth/owner-context";
 import { revalidatePath } from "next/cache";
 import type { billing_type, project_status, projects } from "@prisma/client";
 import { computeEntryTotals } from "@/lib/utils";
@@ -15,15 +16,15 @@ export type ActionResponse<T> =
  * Obtiene todos los proyectos del usuario
  */
 export async function getProjects(clientId?: string) {
-    const user = await getAuthUser();
     const clientContext = await getClientContext();
 
     const where: any = {};
     if (clientContext) {
         where.client_id = clientContext.clientId;
     } else {
+        const ctx = await getOwnerContext();
         where.clients = {
-            user_id: user.id,
+            user_id: ctx.ownerId,
         };
         if (clientId) where.client_id = clientId;
     }
@@ -45,15 +46,15 @@ export async function getProjects(clientId?: string) {
  * Obtiene un proyecto con todas sus relaciones
  */
 export async function getProjectWithRelations(id: string) {
-    const user = await getAuthUser();
     const clientContext = await getClientContext();
 
     const where: any = { id };
     if (clientContext) {
         where.client_id = clientContext.clientId;
     } else {
+        const ctx = await getOwnerContext();
         where.clients = {
-            user_id: user.id,
+            user_id: ctx.ownerId,
         };
     }
 
@@ -83,13 +84,19 @@ export async function createProject(data: {
     end_date?: Date | null;
     is_billable?: boolean;
 }): Promise<ActionResponse<projects>> {
-    const user = await getAuthUser();
+    const ctx = await getOwnerContext();
+    if (!canManageWorkspace(ctx)) {
+        return {
+            success: false,
+            error: "Solo el dueño del workspace puede crear proyectos.",
+        };
+    }
 
-    // Verificar que el cliente pertenece al usuario
+    // Verificar que el cliente pertenece al workspace
     const client = await prisma.clients.findFirst({
         where: {
             id: data.client_id,
-            user_id: user.id,
+            user_id: ctx.ownerId,
         },
     });
 
@@ -149,14 +156,20 @@ export async function updateProject(
         is_billable?: boolean;
     }
 ): Promise<ActionResponse<projects>> {
-    const user = await getAuthUser();
+    const ctx = await getOwnerContext();
+    if (!canManageWorkspace(ctx)) {
+        return {
+            success: false,
+            error: "Solo el dueño del workspace puede editar proyectos.",
+        };
+    }
 
-    // Verificar que el proyecto pertenece al usuario
+    // Verificar que el proyecto pertenece al workspace
     const existing = await prisma.projects.findFirst({
         where: {
             id,
             clients: {
-                user_id: user.id,
+                user_id: ctx.ownerId,
             },
         },
     });
@@ -221,14 +234,20 @@ export async function updateProject(
  * Elimina un proyecto
  */
 export async function deleteProject(id: string) {
-    const user = await getAuthUser();
+    const ctx = await getOwnerContext();
+    if (!canManageWorkspace(ctx)) {
+        return {
+            success: false,
+            error: "Solo el dueño del workspace puede eliminar proyectos.",
+        };
+    }
 
-    // Verificar que el proyecto pertenece al usuario
+    // Verificar que el proyecto pertenece al workspace
     const existing = await prisma.projects.findFirst({
         where: {
             id,
             clients: {
-                user_id: user.id,
+                user_id: ctx.ownerId,
             },
         },
     });

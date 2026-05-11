@@ -417,6 +417,23 @@ export async function startTimeEntry(input: z.input<typeof startTimeEntrySchema>
 
 ## 5. Gap arquitectónico A: multi-user del lado del proveedor
 
+> **Estado:** 🟡 Implementado en código (F2 — 2026-05-11). Falta aplicar
+> las 2 migraciones SQL en Supabase y un paso de onboarding (F3).
+>
+> **SQL pendiente de aplicar en producción:**
+> 1. `supabase/migrations/2026-05-11_team_members.sql`
+> 2. `supabase/migrations/2026-05-11_team_members_rls_extension.sql`
+>
+> **Implementación entregada:**
+> - Schema Prisma con `team_members` + enum `team_role` (`collaborator`, `admin`).
+> - `lib/auth/owner-context.ts` con `getOwnerContext()`, `canManageWorkspace()`, `canSeeFinancials()`.
+> - Refactor de todas las Server Actions:
+>   - **clients / projects / tasks**: solo el owner muta; team_members leen.
+>   - **time_entries**: el actor carga sus horas, el owner puede operar las de cualquier miembro; `recalculateUnbilledEntries` es workspace-wide.
+>   - **invoices / payments**: solo el owner emite; un collaborator NO ve facturas (gate `canSeeFinancials`).
+>   - **reports / stats**: filtros por workspace; horas del actor.
+> - RLS extendida (no reemplaza nada existente): team_members con rol `admin` ven invoices/payments; collaborators no.
+
 ### El problema
 
 MyKimai está diseñado **single-user**. El README lo dice explícito: *"El sistema está diseñado para un solo usuario por cuenta"*.

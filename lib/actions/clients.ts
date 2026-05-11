@@ -1,7 +1,7 @@
 "use server";
 
 import { prisma } from "@/lib/prisma/client";
-import { getAuthUser } from "@/lib/auth/server";
+import { getOwnerContext, canManageWorkspace } from "@/lib/auth/owner-context";
 import { revalidatePath } from "next/cache";
 import type { clients } from "@prisma/client";
 
@@ -13,14 +13,16 @@ export type ActionResponse<T> =
     | { success: false; error: string };
 
 /**
- * Obtiene todos los clientes del usuario autenticado
+ * Obtiene todos los clientes del workspace efectivo del usuario.
+ * - Owner: ve sus propios clientes.
+ * - Team member: ve los clientes del owner que lo invitó.
  */
 export async function getClients() {
-    const user = await getAuthUser();
+    const ctx = await getOwnerContext();
 
     const clients = await prisma.clients.findMany({
         where: {
-            user_id: user.id,
+            user_id: ctx.ownerId,
         },
         orderBy: {
             created_at: "desc",
@@ -31,15 +33,15 @@ export async function getClients() {
 }
 
 /**
- * Obtiene un cliente por ID
+ * Obtiene un cliente por ID dentro del workspace efectivo.
  */
 export async function getClient(id: string) {
-    const user = await getAuthUser();
+    const ctx = await getOwnerContext();
 
     const client = await prisma.clients.findFirst({
         where: {
             id,
-            user_id: user.id,
+            user_id: ctx.ownerId,
         },
     });
 
@@ -65,13 +67,19 @@ export async function createClient(data: {
     legal_address?: string | null;
     tax_condition?: string | null;
 }): Promise<ActionResponse<clients>> {
-    const user = await getAuthUser();
+    const ctx = await getOwnerContext();
+    if (!canManageWorkspace(ctx)) {
+        return {
+            success: false,
+            error: "Solo el dueño del workspace puede crear clientes.",
+        };
+    }
 
     try {
         const client = await prisma.clients.create({
             data: {
                 ...data,
-                user_id: user.id,
+                user_id: ctx.ownerId,
                 currency: data.currency || "USD",
             },
         });
@@ -117,12 +125,18 @@ export async function updateClient(
         newPassword?: string;
     }
 ): Promise<ActionResponse<clients>> {
-    const user = await getAuthUser();
+    const ctx = await getOwnerContext();
+    if (!canManageWorkspace(ctx)) {
+        return {
+            success: false,
+            error: "Solo el dueño del workspace puede editar clientes.",
+        };
+    }
 
     const existing = await prisma.clients.findFirst({
         where: {
             id,
-            user_id: user.id,
+            user_id: ctx.ownerId,
         },
     });
 
@@ -210,13 +224,19 @@ export async function updateClient(
  * Elimina un cliente
  */
 export async function deleteClient(id: string) {
-    const user = await getAuthUser();
+    const ctx = await getOwnerContext();
+    if (!canManageWorkspace(ctx)) {
+        return {
+            success: false,
+            error: "Solo el dueño del workspace puede eliminar clientes.",
+        };
+    }
 
-    // Verificar que el cliente pertenece al usuario
+    // Verificar que el cliente pertenece al workspace
     const existing = await prisma.clients.findFirst({
         where: {
             id,
-            user_id: user.id,
+            user_id: ctx.ownerId,
         },
     });
 
@@ -246,13 +266,19 @@ export async function toggleClientWebAccess(
     enabled: boolean,
     password?: string
 ): Promise<ActionResponse<clients>> {
-    const user = await getAuthUser();
+    const ctx = await getOwnerContext();
+    if (!canManageWorkspace(ctx)) {
+        return {
+            success: false,
+            error: "Solo el dueño del workspace puede gestionar accesos web.",
+        };
+    }
 
-    // 1. Verificar que el cliente pertenece al usuario admin
+    // 1. Verificar que el cliente pertenece al workspace
     const client = await prisma.clients.findFirst({
         where: {
             id: clientId,
-            user_id: user.id,
+            user_id: ctx.ownerId,
         },
     });
 

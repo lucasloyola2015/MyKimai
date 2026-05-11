@@ -1,7 +1,8 @@
 "use server";
 
 import { prisma } from "@/lib/prisma/client";
-import { getAuthUser, getClientContext } from "@/lib/auth/server";
+import { getClientContext } from "@/lib/auth/server";
+import { getOwnerContext, canManageWorkspace } from "@/lib/auth/owner-context";
 
 /**
  * Obtiene la configuración de branding (logo) del cliente actual
@@ -33,7 +34,6 @@ export async function getClientReportAnalytics(filters: {
     startDate?: Date;
     endDate?: Date;
 }) {
-    const user = await getAuthUser();
     const clientContext = await getClientContext();
 
     const where: any = {
@@ -42,12 +42,14 @@ export async function getClientReportAnalytics(filters: {
         }
     };
 
-    // Si es cliente, forzar su clientId. Si es cliente interno, filtrar por sus proyectos.
+    // Si es cliente del portal, forzar su clientId. Si es team/owner, filtrar
+    // por todos los proyectos del workspace efectivo.
     if (clientContext) {
         where.tasks.projects.client_id = clientContext.clientId;
     } else {
+        const ctx = await getOwnerContext();
         where.tasks.projects.clients = {
-            user_id: user.id
+            user_id: ctx.ownerId
         };
         if (filters.clientId) {
             where.tasks.projects.client_id = filters.clientId;
@@ -110,16 +112,22 @@ export async function getClientReportAnalytics(filters: {
  * Actualiza la descripción de una entrada de tiempo (Solo Root)
  */
 export async function updateEntryDescription(entryId: string, description: string | null) {
-    const user = await getAuthUser();
+    const ctx = await getOwnerContext();
+    if (!canManageWorkspace(ctx)) {
+        return {
+            success: false,
+            error: "Solo el dueño del workspace puede editar descripciones de registros.",
+        };
+    }
 
-    // Verificar que el entry pertenece al administrador (dueño del workspace)
+    // Verificar que el entry pertenece al workspace
     const entry = await prisma.time_entries.findFirst({
         where: {
             id: entryId,
             tasks: {
                 projects: {
                     clients: {
-                        user_id: user.id
+                        user_id: ctx.ownerId
                     }
                 }
             }

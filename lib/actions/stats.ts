@@ -1,20 +1,27 @@
 "use server";
 
 import { prisma } from "@/lib/prisma/client";
-import { getAuthUser, getClientContext } from "@/lib/auth/server";
+import { getClientContext } from "@/lib/auth/server";
+import {
+    getOwnerContext,
+    canSeeFinancials,
+} from "@/lib/auth/owner-context";
 import { startOfDay, endOfDay, startOfWeek, endOfWeek } from "date-fns";
 
 /**
- * Obtiene estadísticas para el sidebar/navegación
- * Migrado de Supabase a Prisma
+ * Estadísticas para el sidebar/navegación.
+ *
+ * Para un usuario interno (owner o team_member):
+ * - `activeProjects`, `pendingInvoices`: workspace-wide (filtra por ownerId).
+ * - `activeTimeEntry`, `todayHours`: del actor (mi timer / mis horas).
+ *
+ * §F2.D — collaborator no ve `pendingInvoices` (queda en 0).
  */
 export async function getNavStats() {
     try {
-        const user = await getAuthUser();
         const clientContext = await getClientContext();
-        const role: "ADMIN" | "CLIENT" = clientContext ? "CLIENT" : "ADMIN";
 
-        // Si es cliente, las stats son diferentes o nulas para el dashboard principal
+        // Cliente del portal: las stats del dashboard interno no aplican
         if (clientContext) {
             return {
                 activeProjects: 0,
@@ -25,59 +32,56 @@ export async function getNavStats() {
             };
         }
 
-        // Queries en paralelo para mejor performance
-        // Usando $queryRaw temporalmente para evitar problemas con ENUMs hasta que las columnas se alteren
+        const ctx = await getOwnerContext();
+        const showInvoices = canSeeFinancials(ctx);
+
         const [activeProjectsCountResult, pendingInvoicesCountResult, activeEntry, todayEntries] =
             await Promise.all([
-                // Proyectos activos del usuario - usando queryRaw para evitar problema con ENUMs
+                // Proyectos activos del workspace
                 prisma.$queryRaw<Array<{ count: bigint }>>`
                     SELECT COUNT(*)::int as count
                     FROM projects p
                     INNER JOIN clients c ON p.client_id = c.id
-                    WHERE c.user_id = ${user.id}::uuid
+                    WHERE c.user_id = ${ctx.ownerId}::uuid
                     AND p.status::text = 'active'
                 `,
 
-                // Facturas pendientes (draft + sent) - usando queryRaw para evitar problema con ENUMs
-                prisma.$queryRaw<Array<{ count: bigint }>>`
-                SELECT COUNT(*)::int as count
-                FROM invoices i
-                INNER JOIN clients c ON i.client_id = c.id
-                WHERE c.user_id = ${user.id}::uuid
-                AND i.status::text IN ('draft', 'sent')
-            `,
+                // Facturas pendientes (solo si tiene permiso financiero)
+                showInvoices
+                    ? prisma.$queryRaw<Array<{ count: bigint }>>`
+                        SELECT COUNT(*)::int as count
+                        FROM invoices i
+                        INNER JOIN clients c ON i.client_id = c.id
+                        WHERE c.user_id = ${ctx.ownerId}::uuid
+                        AND i.status::text IN ('draft', 'sent')
+                    `
+                    : Promise.resolve([{ count: BigInt(0) }] as Array<{ count: bigint }>),
 
-                // Timer activo (time entry sin end_time)
+                // Timer activo (del actor)
                 prisma.time_entries.findFirst({
                     where: {
-                        user_id: user.id,
+                        user_id: ctx.actorId,
                         end_time: null,
                     },
-                    select: {
-                        id: true,
-                    },
+                    select: { id: true },
                 }),
 
-                // Horas trabajadas hoy
+                // Horas trabajadas hoy (del actor)
                 prisma.time_entries.findMany({
                     where: {
-                        user_id: user.id,
+                        user_id: ctx.actorId,
                         start_time: {
                             gte: startOfDay(new Date()),
                             lte: endOfDay(new Date()),
                         },
                     },
-                    select: {
-                        duration_neto: true,
-                    },
+                    select: { duration_neto: true },
                 }),
             ]);
 
-        // Extraer counts de los resultados de queryRaw
         const activeProjectsCount = Number(activeProjectsCountResult[0]?.count || 0);
         const pendingInvoicesCount = Number(pendingInvoicesCountResult[0]?.count || 0);
 
-        // Calcular total de minutos trabajados hoy
         const todayMinutes = todayEntries.reduce(
             (sum, entry) => sum + (entry.duration_neto || 0),
             0
@@ -92,7 +96,6 @@ export async function getNavStats() {
         };
     } catch (error) {
         console.error("Error in getNavStats:", error);
-        // Retornar valores por defecto en caso de error
         return {
             activeProjects: 0,
             pendingInvoices: 0,
@@ -104,17 +107,15 @@ export async function getNavStats() {
 }
 
 /**
- * Estadísticas del Dashboard principal del usuario.
+ * Estadísticas del Dashboard principal.
  *
- * Resuelve los bugs §3.1 y §3.2 del IMPROVEMENT_PLAN:
- * - §3.1: filtra siempre por user_id (directo o vía clients.user_id) para no
- *   exponer datos de otros usuarios si la RLS tuviera un hueco.
- * - §3.2: agrupa los ingresos por moneda, en lugar de sumar USD+ARS como un
- *   único total incorrecto.
+ * Bugs resueltos:
+ * - §3.1 — filtra siempre por workspace (ownerId vía clients.user_id).
+ * - §3.2 — ingresos agrupados por moneda.
+ * - §4.1 — Server Action en lugar de supabase-js cliente.
  *
- * Además, §4.1: este reemplaza el código `"use client"` con queries directos
- * de supabase-js en `app/dashboard/page.tsx`, alineándolo con el patrón
- * Server Actions + Prisma del resto del proyecto.
+ * §F2.D — un collaborator ve `revenueByCurrency = []` y `pendingInvoices = 0`.
+ * Horas (today / week) son del actor.
  */
 export interface DashboardRevenueByCurrency {
     currency: string;
@@ -132,7 +133,8 @@ export interface DashboardStats {
 }
 
 export async function getDashboardStats(): Promise<DashboardStats> {
-    const user = await getAuthUser();
+    const ctx = await getOwnerContext();
+    const showFinancials = canSeeFinancials(ctx);
 
     const today = new Date();
     const todayStart = startOfDay(today);
@@ -140,7 +142,6 @@ export async function getDashboardStats(): Promise<DashboardStats> {
     const weekStart = startOfWeek(today);
     const weekEnd = endOfWeek(today);
 
-    // Queries en paralelo - todas filtran explícitamente por user_id o clients.user_id
     const [
         todayEntries,
         weekEntries,
@@ -149,49 +150,52 @@ export async function getDashboardStats(): Promise<DashboardStats> {
         pendingInvoicesCountResult,
         paidInvoices,
     ] = await Promise.all([
-        // Horas hoy
+        // Horas hoy del actor
         prisma.time_entries.findMany({
             where: {
-                user_id: user.id,
+                user_id: ctx.actorId,
                 start_time: { gte: todayStart, lte: todayEnd },
             },
             select: { duration_neto: true },
         }),
-        // Horas esta semana
+        // Horas esta semana del actor
         prisma.time_entries.findMany({
             where: {
-                user_id: user.id,
+                user_id: ctx.actorId,
                 start_time: { gte: weekStart, lte: weekEnd },
             },
             select: { duration_neto: true },
         }),
-        // Proyectos activos del usuario - queryRaw para evitar conflicto de ENUMs
+        // Proyectos activos del workspace
         prisma.$queryRaw<Array<{ count: bigint }>>`
             SELECT COUNT(*)::int as count
             FROM projects p
             INNER JOIN clients c ON p.client_id = c.id
-            WHERE c.user_id = ${user.id}::uuid
+            WHERE c.user_id = ${ctx.ownerId}::uuid
               AND p.status::text = 'active'
         `,
-        // Total de clientes
-        prisma.clients.count({ where: { user_id: user.id } }),
-        // Facturas pendientes (draft + sent)
-        prisma.$queryRaw<Array<{ count: bigint }>>`
-            SELECT COUNT(*)::int as count
-            FROM invoices i
-            INNER JOIN clients c ON i.client_id = c.id
-            WHERE c.user_id = ${user.id}::uuid
-              AND i.status::text IN ('draft', 'sent')
-        `,
-        // Ingresos pagados - SOLO del usuario logueado (fix §3.1)
-        // y con currency para agrupar (fix §3.2)
-        prisma.invoices.findMany({
-            where: {
-                status: "paid",
-                clients: { user_id: user.id },
-            },
-            select: { total_amount: true, currency: true },
-        }),
+        // Total de clientes del workspace
+        prisma.clients.count({ where: { user_id: ctx.ownerId } }),
+        // Facturas pendientes (solo si tiene permiso financiero)
+        showFinancials
+            ? prisma.$queryRaw<Array<{ count: bigint }>>`
+                SELECT COUNT(*)::int as count
+                FROM invoices i
+                INNER JOIN clients c ON i.client_id = c.id
+                WHERE c.user_id = ${ctx.ownerId}::uuid
+                  AND i.status::text IN ('draft', 'sent')
+            `
+            : Promise.resolve([{ count: BigInt(0) }] as Array<{ count: bigint }>),
+        // Ingresos pagados del workspace (solo si tiene permiso financiero)
+        showFinancials
+            ? prisma.invoices.findMany({
+                  where: {
+                      status: "paid",
+                      clients: { user_id: ctx.ownerId },
+                  },
+                  select: { total_amount: true, currency: true },
+              })
+            : Promise.resolve([] as Array<{ total_amount: any; currency: string }>),
     ]);
 
     const hoursTodayMinutes = todayEntries.reduce(
@@ -203,7 +207,6 @@ export async function getDashboardStats(): Promise<DashboardStats> {
         0
     );
 
-    // Agrupar ingresos por moneda (fix §3.2)
     const revenueMap = new Map<string, { total: number; count: number }>();
     for (const inv of paidInvoices) {
         const currency = inv.currency || "USD";
@@ -222,7 +225,6 @@ export async function getDashboardStats(): Promise<DashboardStats> {
             total: Math.round(total * 100) / 100,
             count,
         }))
-        // Orden estable: USD primero, después ARS, después resto alfabético
         .sort((a, b) => {
             const order = (c: string) => (c === "USD" ? 0 : c === "ARS" ? 1 : 2);
             return order(a.currency) - order(b.currency) || a.currency.localeCompare(b.currency);

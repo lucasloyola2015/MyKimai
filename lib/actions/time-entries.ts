@@ -2,6 +2,7 @@
 
 import { prisma } from "@/lib/prisma/client";
 import { getAuthUser, getClientContext } from "@/lib/auth/server";
+import { getOwnerContext, canManageWorkspace } from "@/lib/auth/owner-context";
 import { revalidatePath } from "next/cache";
 import { differenceInMinutes, format } from "date-fns";
 import type { time_entries } from "@prisma/client";
@@ -28,6 +29,55 @@ function zodErrorMessage(err: ZodError): string {
     return err.issues
         .map((i) => `${i.path.join(".") || "input"}: ${i.message}`)
         .join("; ");
+}
+
+/**
+ * §5 IMPROVEMENT_PLAN — verifica si el usuario puede operar sobre una
+ * time_entry que ya existe.
+ *
+ * Permite la operación si:
+ *   (a) el usuario es el autor original de la entrada, o
+ *   (b) el usuario es owner del workspace al que pertenece la tarea
+ *       (típicamente Lucas corrigiendo una entrada de Lucio).
+ *
+ * Devuelve `null` si tiene permiso, o un ActionResponse de error si no.
+ */
+async function ensureCanOperateEntry(
+    entryId: string
+): Promise<
+    | { ok: true; entry: NonNullable<Awaited<ReturnType<typeof prisma.time_entries.findUnique>>>; ctx: Awaited<ReturnType<typeof getOwnerContext>> }
+    | { ok: false; response: { success: false; error: string } }
+> {
+    const ctx = await getOwnerContext();
+    const entry = await prisma.time_entries.findUnique({
+        where: { id: entryId },
+        include: {
+            tasks: {
+                include: { projects: { include: { clients: true } } },
+            },
+            time_entry_breaks: true,
+        },
+    });
+
+    if (!entry) {
+        return {
+            ok: false,
+            response: { success: false, error: "Time entry no encontrado." },
+        };
+    }
+
+    const isAuthor = entry.user_id === ctx.actorId;
+    const isWorkspaceOwner =
+        canManageWorkspace(ctx) &&
+        (entry as any).tasks.projects.clients.user_id === ctx.ownerId;
+    if (!isAuthor && !isWorkspaceOwner) {
+        return {
+            ok: false,
+            response: { success: false, error: "No autorizado." },
+        };
+    }
+
+    return { ok: true, entry, ctx };
 }
 
 
@@ -175,12 +225,12 @@ export async function startTimeEntry(
     }
     ({ taskId, description } = { ...parsed.data, description: parsed.data.description ?? undefined });
 
-    const user = await getAuthUser();
+    const ctx = await getOwnerContext();
 
-    // Verificar que no haya un timer activo
+    // Verificar que no haya un timer activo (por usuario actor)
     const existingActive = await prisma.time_entries.findFirst({
         where: {
-            user_id: user.id,
+            user_id: ctx.actorId,
             end_time: null,
         },
     });
@@ -192,9 +242,18 @@ export async function startTimeEntry(
         };
     }
 
-    // Verificar que la tarea existe y obtener su jerarquía de facturación
-    const task = await prisma.tasks.findUnique({
-        where: { id: taskId },
+    // Verificar que la tarea existe Y pertenece al workspace efectivo.
+    // §5 IMPROVEMENT_PLAN — un team member no puede registrar horas en
+    // tareas fuera del workspace del owner que lo invitó.
+    const task = await prisma.tasks.findFirst({
+        where: {
+            id: taskId,
+            projects: {
+                clients: {
+                    user_id: ctx.ownerId,
+                },
+            },
+        },
         include: {
             projects: {
                 include: {
@@ -207,7 +266,7 @@ export async function startTimeEntry(
     if (!task) {
         return {
             success: false,
-            error: "Tarea no encontrada.",
+            error: "Tarea no encontrada o fuera de tu workspace.",
         };
     }
 
@@ -217,10 +276,10 @@ export async function startTimeEntry(
     const rate = await calculateRate(taskId);
 
     try {
-        // Crear time entry
+        // Crear time entry — autoría por el actor real (puede ser team_member)
         const entry = await prisma.time_entries.create({
             data: {
-                user_id: user.id,
+                user_id: ctx.actorId,
                 task_id: taskId,
                 description: description || null,
                 start_time: new Date(),
@@ -271,11 +330,16 @@ export async function stopTimeEntry(
         return { success: false, error: zodErrorMessage(parsed.error) };
     }
 
-    const user = await getAuthUser();
+    const ctx = await getOwnerContext();
 
-    // Obtener el entry
+    // Obtener el entry junto a su jerarquía de workspace
     const entry = await prisma.time_entries.findUnique({
         where: { id: entryId },
+        include: {
+            tasks: {
+                include: { projects: { include: { clients: true } } },
+            },
+        },
     });
 
     if (!entry) {
@@ -285,7 +349,13 @@ export async function stopTimeEntry(
         };
     }
 
-    if (entry.user_id !== user.id) {
+    // §5 — el actor puede operar su propia entrada SIEMPRE, el owner del
+    // workspace puede operar entradas de cualquier team member.
+    const isAuthor = entry.user_id === ctx.actorId;
+    const isWorkspaceOwner =
+        canManageWorkspace(ctx) &&
+        entry.tasks.projects.clients.user_id === ctx.ownerId;
+    if (!isAuthor && !isWorkspaceOwner) {
         return {
             success: false,
             error: "No autorizado.",
@@ -364,11 +434,16 @@ export async function deleteTimeEntry(entryId: string) {
         return { success: false, error: zodErrorMessage(parsed.error) };
     }
 
-    const user = await getAuthUser();
+    const ctx = await getOwnerContext();
 
-    // Verificar que el entry pertenece al usuario
+    // Verificar que el entry pertenece al workspace
     const entry = await prisma.time_entries.findUnique({
         where: { id: entryId },
+        include: {
+            tasks: {
+                include: { projects: { include: { clients: true } } },
+            },
+        },
     });
 
     if (!entry) {
@@ -378,7 +453,11 @@ export async function deleteTimeEntry(entryId: string) {
         };
     }
 
-    if (entry.user_id !== user.id) {
+    const isAuthor = entry.user_id === ctx.actorId;
+    const isWorkspaceOwner =
+        canManageWorkspace(ctx) &&
+        entry.tasks.projects.clients.user_id === ctx.ownerId;
+    if (!isAuthor && !isWorkspaceOwner) {
         return {
             success: false,
             error: "No autorizado.",
@@ -402,13 +481,13 @@ export async function deleteTimeEntry(entryId: string) {
  * Obtiene las tareas disponibles para el time tracker
  */
 export async function getAvailableTasks() {
-    const user = await getAuthUser();
+    const ctx = await getOwnerContext();
 
     const tasks = await prisma.tasks.findMany({
         where: {
             projects: {
                 clients: {
-                    user_id: user.id,
+                    user_id: ctx.ownerId,
                 },
                 status: "active",
             },
@@ -438,7 +517,6 @@ export async function getTimeEntries(filters?: {
     endDate?: Date;
     onlyCompleted?: boolean; // Solo entradas con end_time
 }) {
-    const user = await getAuthUser();
     const clientContext = await getClientContext();
 
     const where: any = {};
@@ -450,11 +528,12 @@ export async function getTimeEntries(filters?: {
             },
         };
     } else {
-        // Para admin, ver todas las entradas de sus clientes
+        // Para admin/team_member, ver todas las entradas del workspace efectivo.
+        const ctx = await getOwnerContext();
         where.tasks = {
             projects: {
                 clients: {
-                    user_id: user.id
+                    user_id: ctx.ownerId
                 }
             }
         };
@@ -550,11 +629,16 @@ export async function updateTimeEntry(
         return { success: false, error: zodErrorMessage(parsed.error) };
     }
 
-    const user = await getAuthUser();
+    const ctx = await getOwnerContext();
 
-    // Verificar que el entry pertenece al usuario
+    // Verificar que el entry pertenece al workspace
     const entry = await prisma.time_entries.findUnique({
         where: { id: entryId },
+        include: {
+            tasks: {
+                include: { projects: { include: { clients: true } } },
+            },
+        },
     });
 
     if (!entry) {
@@ -564,7 +648,11 @@ export async function updateTimeEntry(
         };
     }
 
-    if (entry.user_id !== user.id) {
+    const isAuthor = entry.user_id === ctx.actorId;
+    const isWorkspaceOwner =
+        canManageWorkspace(ctx) &&
+        entry.tasks.projects.clients.user_id === ctx.ownerId;
+    if (!isAuthor && !isWorkspaceOwner) {
         return {
             success: false,
             error: "No autorizado.",
@@ -638,20 +726,13 @@ export async function updateTimeEntryDescription(
 export async function pauseTimeEntry(
     entryId: string
 ): Promise<ActionResponse<any>> {
-    const user = await getAuthUser();
-
     try {
-        const entry = await prisma.time_entries.findUnique({
-            where: { id: entryId },
-            include: { time_entry_breaks: true }
-        });
-
-        if (!entry || entry.user_id !== user.id) {
-            return { success: false, error: "No autorizado o no encontrado" };
-        }
+        const check = await ensureCanOperateEntry(entryId);
+        if (!check.ok) return check.response;
+        const { entry } = check;
 
         // Verificar si ya hay una pausa activa
-        const activeBreak = entry.time_entry_breaks.find(b => b.end_time === null);
+        const activeBreak = (entry as any).time_entry_breaks.find((b: any) => b.end_time === null);
         if (activeBreak) {
             return { success: false, error: "Ya existe una pausa activa" };
         }
@@ -679,19 +760,12 @@ export async function pauseTimeEntry(
 export async function resumeTimeEntry(
     entryId: string
 ): Promise<ActionResponse<any>> {
-    const user = await getAuthUser();
-
     try {
-        const entry = await prisma.time_entries.findUnique({
-            where: { id: entryId },
-            include: { time_entry_breaks: true }
-        });
+        const check = await ensureCanOperateEntry(entryId);
+        if (!check.ok) return check.response;
+        const { entry } = check;
 
-        if (!entry || entry.user_id !== user.id) {
-            return { success: false, error: "No autorizado o no encontrado" };
-        }
-
-        const activeBreak = entry.time_entry_breaks.find(b => b.end_time === null);
+        const activeBreak = (entry as any).time_entry_breaks.find((b: any) => b.end_time === null);
         if (!activeBreak) {
             return { success: false, error: "No hay ninguna pausa activa" };
         }
@@ -737,10 +811,9 @@ export async function addTimeEntryBreak(
     startTime: Date,
     endTime: Date | null
 ): Promise<ActionResponse<any>> {
-    const user = await getAuthUser();
     try {
-        const entry = await prisma.time_entries.findUnique({ where: { id: entryId } });
-        if (!entry || entry.user_id !== user.id) return { success: false, error: "No autorizado" };
+        const check = await ensureCanOperateEntry(entryId);
+        if (!check.ok) return check.response;
 
         const newBreak = await prisma.time_entry_breaks.create({
             data: { time_entry_id: entryId, start_time: startTime, end_time: endTime }
@@ -763,15 +836,29 @@ export async function updateTimeEntryBreak(
     startTime: Date,
     endTime: Date | null
 ): Promise<ActionResponse<any>> {
-    const user = await getAuthUser();
     try {
         const breakNode = await prisma.time_entry_breaks.findUnique({
             where: { id: breakId },
-            include: { time_entries: true }
+            include: {
+                time_entries: {
+                    include: {
+                        tasks: { include: { projects: { include: { clients: true } } } },
+                    },
+                },
+            },
         });
 
-        if (!breakNode || breakNode.time_entries.user_id !== user.id) {
-            return { success: false, error: "No autorizado" };
+        if (!breakNode) {
+            return { success: false, error: "Pausa no encontrada." };
+        }
+
+        const ctx = await getOwnerContext();
+        const isAuthor = breakNode.time_entries.user_id === ctx.actorId;
+        const isWorkspaceOwner =
+            canManageWorkspace(ctx) &&
+            (breakNode.time_entries as any).tasks.projects.clients.user_id === ctx.ownerId;
+        if (!isAuthor && !isWorkspaceOwner) {
+            return { success: false, error: "No autorizado." };
         }
 
         const updatePayload = {
@@ -795,15 +882,29 @@ export async function updateTimeEntryBreak(
  * Elimina una pausa
  */
 export async function deleteTimeEntryBreak(breakId: string): Promise<ActionResponse<any>> {
-    const user = await getAuthUser();
     try {
         const breakNode = await prisma.time_entry_breaks.findUnique({
             where: { id: breakId },
-            include: { time_entries: true }
+            include: {
+                time_entries: {
+                    include: {
+                        tasks: { include: { projects: { include: { clients: true } } } },
+                    },
+                },
+            },
         });
 
-        if (!breakNode || breakNode.time_entries.user_id !== user.id) {
-            return { success: false, error: "No autorizado" };
+        if (!breakNode) {
+            return { success: false, error: "Pausa no encontrada." };
+        }
+
+        const ctx = await getOwnerContext();
+        const isAuthor = breakNode.time_entries.user_id === ctx.actorId;
+        const isWorkspaceOwner =
+            canManageWorkspace(ctx) &&
+            (breakNode.time_entries as any).tasks.projects.clients.user_id === ctx.ownerId;
+        if (!isAuthor && !isWorkspaceOwner) {
+            return { success: false, error: "No autorizado." };
         }
 
         await prisma.time_entry_breaks.delete({ where: { id: breakId } });
@@ -1098,16 +1199,25 @@ export async function recalculateUnbilledEntries(filter: {
     projectId?: string;
     clientId?: string;
 }) {
-    const user = await getAuthUser();
+    // §5 — recalcular afecta TODAS las entradas del workspace, no solo
+    // las del actor. Cuando el owner cambia una tarifa, las entradas
+    // cargadas por team members también se deben actualizar.
+    const ctx = await getOwnerContext();
 
     const entries = await prisma.time_entries.findMany({
         where: {
-            user_id: user.id,
+            tasks: {
+                ...(filter.taskId && { id: filter.taskId }),
+                ...(filter.projectId && { project_id: filter.projectId }),
+                projects: {
+                    ...(filter.clientId && { client_id: filter.clientId }),
+                    clients: {
+                        user_id: ctx.ownerId,
+                    },
+                },
+            },
             is_billed: false,
             end_time: { not: null },
-            ...(filter.taskId && { task_id: filter.taskId }),
-            ...(filter.projectId && { tasks: { project_id: filter.projectId } }),
-            ...(filter.clientId && { tasks: { projects: { client_id: filter.clientId } } }),
         },
         include: {
             tasks: {

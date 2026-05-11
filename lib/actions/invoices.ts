@@ -1,7 +1,12 @@
 "use server";
 
 import { prisma } from "@/lib/prisma/client";
-import { getAuthUser, getClientContext } from "@/lib/auth/server";
+import { getClientContext } from "@/lib/auth/server";
+import {
+    getOwnerContext,
+    canManageWorkspace,
+    canSeeFinancials,
+} from "@/lib/auth/owner-context";
 import { revalidatePath } from "next/cache";
 import { format } from "date-fns";
 import type { invoices, invoice_items, invoice_status, billing_type_invoice } from "@prisma/client";
@@ -32,15 +37,19 @@ function zodErrorMessage(err: ZodError): string {
  * Obtiene todas las facturas del usuario autenticado
  */
 export async function getInvoices() {
-    const user = await getAuthUser();
     const clientContext = await getClientContext();
 
     const where: any = {};
     if (clientContext) {
         where.client_id = clientContext.clientId;
     } else {
+        const ctx = await getOwnerContext();
+        // §5/F2.D — collaborator NO ve invoices del workspace
+        if (!canSeeFinancials(ctx)) {
+            return [];
+        }
         where.clients = {
-            user_id: user.id,
+            user_id: ctx.ownerId,
         };
     }
 
@@ -62,15 +71,18 @@ export async function getInvoices() {
  * Obtiene una factura con todos sus items
  */
 export async function getInvoiceWithItems(id: string) {
-    const user = await getAuthUser();
     const clientContext = await getClientContext();
 
     const where: any = { id };
     if (clientContext) {
         where.client_id = clientContext.clientId;
     } else {
+        const ctx = await getOwnerContext();
+        if (!canSeeFinancials(ctx)) {
+            return null;
+        }
         where.clients = {
-            user_id: user.id,
+            user_id: ctx.ownerId,
         };
     }
 
@@ -105,20 +117,25 @@ export async function getInvoiceWithItems(id: string) {
  * Obtiene los períodos de tiempo sin facturar del usuario
  */
 export async function getUnbilledTimeEntries(clientId?: string) {
-    const user = await getAuthUser();
+    // §5 — workspace-wide: Lucas factura entradas cargadas por él Y por
+    // sus team members. Filtramos por la propiedad del cliente del task.
+    const ctx = await getOwnerContext();
+    if (!canSeeFinancials(ctx)) {
+        return [];
+    }
 
     return await prisma.time_entries.findMany({
         where: {
-            user_id: user.id,
-            billable: true,
-            is_billed: false,
-            ...(clientId && {
-                tasks: {
-                    projects: {
-                        client_id: clientId,
+            tasks: {
+                projects: {
+                    ...(clientId && { client_id: clientId }),
+                    clients: {
+                        user_id: ctx.ownerId,
                     },
                 },
-            }),
+            },
+            billable: true,
+            is_billed: false,
         },
         include: {
             tasks: {
@@ -141,13 +158,13 @@ export async function getUnbilledTimeEntries(clientId?: string) {
  * Obtiene los IDs de time entries ya facturados
  */
 export async function getBilledTimeEntryIds() {
-    const user = await getAuthUser();
+    const ctx = await getOwnerContext();
 
     const billedItems = await prisma.invoice_items.findMany({
         where: {
             invoices: {
                 clients: {
-                    user_id: user.id,
+                    user_id: ctx.ownerId,
                 },
             },
             time_entry_id: {
@@ -213,13 +230,19 @@ export async function createInvoiceFromTimeEntries(data: {
         return { success: false, error: zodErrorMessage(parsed.error) };
     }
 
-    const user = await getAuthUser();
+    const ctx = await getOwnerContext();
+    if (!canManageWorkspace(ctx)) {
+        return {
+            success: false,
+            error: "Solo el dueño del workspace puede emitir facturas.",
+        };
+    }
 
-    // Verificar que el cliente pertenece al usuario
+    // Verificar que el cliente pertenece al workspace
     const client = await prisma.clients.findFirst({
         where: {
             id: data.client_id,
-            user_id: user.id,
+            user_id: ctx.ownerId,
         },
     });
 
@@ -230,17 +253,20 @@ export async function createInvoiceFromTimeEntries(data: {
         };
     }
 
-    // Obtener los time entries
+    // Obtener los time entries del workspace (cualquier autor: el owner
+    // factura entradas suyas Y las de sus team members).
     const timeEntries = await prisma.time_entries.findMany({
         where: {
             id: {
                 in: data.time_entry_ids,
             },
-            user_id: user.id,
             billable: true,
             tasks: {
                 projects: {
                     client_id: data.client_id,
+                    clients: {
+                        user_id: ctx.ownerId,
+                    },
                 },
             },
         },
@@ -462,14 +488,20 @@ export async function deleteInvoice(id: string): Promise<ActionResponse<void>> {
         return { success: false, error: zodErrorMessage(parsed.error) };
     }
 
-    const user = await getAuthUser();
+    const ctx = await getOwnerContext();
+    if (!canManageWorkspace(ctx)) {
+        return {
+            success: false,
+            error: "Solo el dueño del workspace puede eliminar facturas.",
+        };
+    }
 
-    // 1. Obtener la factura y validar que pertenece al usuario
+    // 1. Obtener la factura y validar que pertenece al workspace
     const invoice = await prisma.invoices.findFirst({
         where: {
             id,
             clients: {
-                user_id: user.id,
+                user_id: ctx.ownerId,
             },
         },
         include: {
@@ -543,14 +575,20 @@ export async function updateInvoiceStatus(
         return { success: false, error: zodErrorMessage(parsed.error) };
     }
 
-    const user = await getAuthUser();
+    const ctx = await getOwnerContext();
+    if (!canManageWorkspace(ctx)) {
+        return {
+            success: false,
+            error: "Solo el dueño del workspace puede cambiar el estado de facturas.",
+        };
+    }
 
-    // Verificar que la factura pertenece al usuario
+    // Verificar que la factura pertenece al workspace
     const existing = await prisma.invoices.findFirst({
         where: {
             id,
             clients: {
-                user_id: user.id,
+                user_id: ctx.ownerId,
             },
         },
     });
@@ -604,21 +642,31 @@ export async function updateInvoiceStatus(
  * Obtiene resumen de facturación por cliente
  */
 export async function getClientBillingSummary() {
-    const user = await getAuthUser();
+    const ctx = await getOwnerContext();
+    // §F2.D — collaborator no ve resumen financiero por cliente
+    if (!canSeeFinancials(ctx)) {
+        return [];
+    }
 
     const clients = await prisma.clients.findMany({
         where: {
-            user_id: user.id,
+            user_id: ctx.ownerId,
         },
         include: {
             invoices: true,
         },
     });
 
-    // Obtener todos los time entries facturables
+    // Obtener todos los time entries facturables (workspace-wide)
     const allEntries = await prisma.time_entries.findMany({
         where: {
-            user_id: user.id,
+            tasks: {
+                projects: {
+                    clients: {
+                        user_id: ctx.ownerId,
+                    },
+                },
+            },
             billable: true,
             is_billed: false,
         },
