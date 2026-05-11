@@ -3,7 +3,7 @@
 import { prisma } from "@/lib/prisma/client";
 import { getAuthUser, getClientContext } from "@/lib/auth/server";
 import { revalidatePath } from "next/cache";
-import type { BillingType, ProjectStatus, projects } from "@prisma/client";
+import type { billing_type, project_status, projects } from "@prisma/client";
 import { computeEntryTotals } from "@/lib/utils";
 import { recalculateUnbilledEntries } from "./time-entries";
 
@@ -77,8 +77,8 @@ export async function createProject(data: {
     description?: string | null;
     currency?: string;
     rate?: number | null;
-    billing_type?: BillingType;
-    status?: ProjectStatus;
+    billing_type?: billing_type;
+    status?: project_status;
     start_date?: Date | null;
     end_date?: Date | null;
     is_billable?: boolean;
@@ -142,8 +142,8 @@ export async function updateProject(
         description?: string | null;
         currency?: string;
         rate?: number | null;
-        billing_type?: BillingType;
-        status?: ProjectStatus;
+        billing_type?: billing_type;
+        status?: project_status;
         start_date?: Date | null;
         end_date?: Date | null;
         is_billable?: boolean;

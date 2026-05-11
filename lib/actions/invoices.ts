@@ -4,7 +4,7 @@ import { prisma } from "@/lib/prisma/client";
 import { getAuthUser, getClientContext } from "@/lib/auth/server";
 import { revalidatePath } from "next/cache";
 import { format } from "date-fns";
-import type { invoices, invoice_items, InvoiceStatus, billing_type_invoice } from "@prisma/client";
+import type { invoices, invoice_items, invoice_status, billing_type_invoice } from "@prisma/client";
 import { getUsdExchangeRate } from "./exchange";
 import { PUNTO_VENTA_DEFAULT } from "@/lib/fiscal-config";
 import { resolveRate } from "@/lib/utils/rates";
@@ -508,7 +508,7 @@ export async function deleteInvoice(id: string): Promise<ActionResponse<void>> {
  */
 export async function updateInvoiceStatus(
     id: string,
-    status: InvoiceStatus
+    status: invoice_status
 ): Promise<ActionResponse<invoices>> {
     const user = await getAuthUser();
 
@@ -531,7 +531,7 @@ export async function updateInvoiceStatus(
 
     try {
         const updateData: {
-            status: InvoiceStatus;
+            status: invoice_status;
             paid_at?: Date;
         } = {
             status,

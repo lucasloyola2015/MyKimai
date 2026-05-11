@@ -2,7 +2,7 @@
 
 import { prisma } from "@/lib/prisma/client";
 import { getAuthUser, getClientContext } from "@/lib/auth/server";
-import { startOfDay, endOfDay } from "date-fns";
+import { startOfDay, endOfDay, startOfWeek, endOfWeek } from "date-fns";
 
 /**
  * Obtiene estadísticas para el sidebar/navegación
@@ -101,4 +101,139 @@ export async function getNavStats() {
             role: "ADMIN" as const,
         };
     }
+}
+
+/**
+ * Estadísticas del Dashboard principal del usuario.
+ *
+ * Resuelve los bugs §3.1 y §3.2 del IMPROVEMENT_PLAN:
+ * - §3.1: filtra siempre por user_id (directo o vía clients.user_id) para no
+ *   exponer datos de otros usuarios si la RLS tuviera un hueco.
+ * - §3.2: agrupa los ingresos por moneda, en lugar de sumar USD+ARS como un
+ *   único total incorrecto.
+ *
+ * Además, §4.1: este reemplaza el código `"use client"` con queries directos
+ * de supabase-js en `app/dashboard/page.tsx`, alineándolo con el patrón
+ * Server Actions + Prisma del resto del proyecto.
+ */
+export interface DashboardRevenueByCurrency {
+    currency: string;
+    total: number;
+    count: number;
+}
+
+export interface DashboardStats {
+    hoursTodayMinutes: number;
+    hoursThisWeekMinutes: number;
+    activeProjects: number;
+    totalClients: number;
+    pendingInvoices: number;
+    revenueByCurrency: DashboardRevenueByCurrency[];
+}
+
+export async function getDashboardStats(): Promise<DashboardStats> {
+    const user = await getAuthUser();
+
+    const today = new Date();
+    const todayStart = startOfDay(today);
+    const todayEnd = endOfDay(today);
+    const weekStart = startOfWeek(today);
+    const weekEnd = endOfWeek(today);
+
+    // Queries en paralelo - todas filtran explícitamente por user_id o clients.user_id
+    const [
+        todayEntries,
+        weekEntries,
+        activeProjectsCountResult,
+        clientsCount,
+        pendingInvoicesCountResult,
+        paidInvoices,
+    ] = await Promise.all([
+        // Horas hoy
+        prisma.time_entries.findMany({
+            where: {
+                user_id: user.id,
+                start_time: { gte: todayStart, lte: todayEnd },
+            },
+            select: { duration_neto: true },
+        }),
+        // Horas esta semana
+        prisma.time_entries.findMany({
+            where: {
+                user_id: user.id,
+                start_time: { gte: weekStart, lte: weekEnd },
+            },
+            select: { duration_neto: true },
+        }),
+        // Proyectos activos del usuario - queryRaw para evitar conflicto de ENUMs
+        prisma.$queryRaw<Array<{ count: bigint }>>`
+            SELECT COUNT(*)::int as count
+            FROM projects p
+            INNER JOIN clients c ON p.client_id = c.id
+            WHERE c.user_id = ${user.id}::uuid
+              AND p.status::text = 'active'
+        `,
+        // Total de clientes
+        prisma.clients.count({ where: { user_id: user.id } }),
+        // Facturas pendientes (draft + sent)
+        prisma.$queryRaw<Array<{ count: bigint }>>`
+            SELECT COUNT(*)::int as count
+            FROM invoices i
+            INNER JOIN clients c ON i.client_id = c.id
+            WHERE c.user_id = ${user.id}::uuid
+              AND i.status::text IN ('draft', 'sent')
+        `,
+        // Ingresos pagados - SOLO del usuario logueado (fix §3.1)
+        // y con currency para agrupar (fix §3.2)
+        prisma.invoices.findMany({
+            where: {
+                status: "paid",
+                clients: { user_id: user.id },
+            },
+            select: { total_amount: true, currency: true },
+        }),
+    ]);
+
+    const hoursTodayMinutes = todayEntries.reduce(
+        (sum, e) => sum + (e.duration_neto || 0),
+        0
+    );
+    const hoursThisWeekMinutes = weekEntries.reduce(
+        (sum, e) => sum + (e.duration_neto || 0),
+        0
+    );
+
+    // Agrupar ingresos por moneda (fix §3.2)
+    const revenueMap = new Map<string, { total: number; count: number }>();
+    for (const inv of paidInvoices) {
+        const currency = inv.currency || "USD";
+        const amount = Number(inv.total_amount) || 0;
+        const entry = revenueMap.get(currency) ?? { total: 0, count: 0 };
+        entry.total += amount;
+        entry.count += 1;
+        revenueMap.set(currency, entry);
+    }
+
+    const revenueByCurrency: DashboardRevenueByCurrency[] = Array.from(
+        revenueMap.entries()
+    )
+        .map(([currency, { total, count }]) => ({
+            currency,
+            total: Math.round(total * 100) / 100,
+            count,
+        }))
+        // Orden estable: USD primero, después ARS, después resto alfabético
+        .sort((a, b) => {
+            const order = (c: string) => (c === "USD" ? 0 : c === "ARS" ? 1 : 2);
+            return order(a.currency) - order(b.currency) || a.currency.localeCompare(b.currency);
+        });
+
+    return {
+        hoursTodayMinutes,
+        hoursThisWeekMinutes,
+        activeProjects: Number(activeProjectsCountResult[0]?.count || 0),
+        totalClients: clientsCount,
+        pendingInvoices: Number(pendingInvoicesCountResult[0]?.count || 0),
+        revenueByCurrency,
+    };
 }

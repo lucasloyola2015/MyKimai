@@ -759,45 +759,12 @@ enum one_time_token_type {
   @@schema("auth")
 }
 
-enum AccessLevel {
-  read
-  read_write
-
-  @@schema("public")
-}
-
-enum BillingType {
-  fixed
-  hourly
-
-  @@schema("public")
-}
-
-enum InvoiceItemType {
-  time
-  fixed
-
-  @@schema("public")
-}
-
-enum InvoiceStatus {
-  draft
-  sent
-  paid
-  overdue
-  partial
-
-  @@schema("public")
-}
-
-enum ProjectStatus {
-  active
-  paused
-  completed
-  cancelled
-
-  @@schema("public")
-}
+// Los enums PascalCase (`AccessLevel`, `BillingType`, `InvoiceItemType`,
+// `InvoiceStatus`, `ProjectStatus`) fueron removidos: eran huérfanos
+// (ninguna columna del schema los referenciaba) pero generaban tipos
+// duplicados en TypeScript y diff ruidoso en migraciones. Las únicas
+// definiciones válidas son las `snake_case` que están enlazadas a las
+// columnas reales (ver §3.3 del IMPROVEMENT_PLAN).
 
 enum access_level {
   read

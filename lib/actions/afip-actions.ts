@@ -37,6 +37,26 @@ async function generateCreditNoteNumber(tx?: any): Promise<string> {
  * Incorporates logging and business logic for total calculation.
  */
 export async function generateFiscalInvoice(invoiceId: string) {
+    // §3.5 IMPROVEMENT_PLAN — Idempotencia AFIP:
+    //
+    // Tomamos un advisory lock derivado del invoiceId ANTES de leer/llamar a AFIP.
+    // Si otro request está procesando la misma invoice (doble click, retry de
+    // timeout, etc.), `pg_try_advisory_lock` retorna false y abortamos sin
+    // tocar AFIP. El lock se libera explícitamente en el `finally`.
+    //
+    // Como segunda barrera, al persistir el CAE usamos `updateMany WHERE cae = null`
+    // para que sea imposible sobreescribir un CAE ya emitido aunque hubiera una
+    // race condition residual.
+    const lockResult = await prisma.$queryRaw<Array<{ locked: boolean }>>`
+        SELECT pg_try_advisory_lock(hashtext('afip:' || ${invoiceId}::text)::bigint) as locked
+    `;
+    if (!lockResult[0]?.locked) {
+        return {
+            success: false as const,
+            error: "Otra solicitud de CAE para esta factura está en curso. Esperá a que termine.",
+        };
+    }
+
     try {
         const invoice = await prisma.invoices.findUnique({
             where: { id: invoiceId },
@@ -101,9 +121,12 @@ export async function generateFiscalInvoice(invoiceId: string) {
 
         const issuerSettingsForUpdate = await getUserFiscalSettings();
 
-        // Persistencia: CAE + datos para QR AFIP (issuer_tax_id)
-        await prisma.invoices.update({
-            where: { id: invoiceId },
+        // Persistencia: CAE + datos para QR AFIP (issuer_tax_id).
+        // §3.5 — UPDATE atómico con `WHERE cae IS NULL` como segunda barrera
+        // contra escritura duplicada (defensa en profundidad sobre el advisory
+        // lock).
+        const persisted = await prisma.invoices.updateMany({
+            where: { id: invoiceId, cae: null },
             data: {
                 cae: res.CAE,
                 cae_due_date: parseAfipDate(res.CAE_FchVto),
@@ -115,6 +138,20 @@ export async function generateFiscalInvoice(invoiceId: string) {
                 afip_error: null,
             }
         });
+
+        if (persisted.count === 0) {
+            // Edge case extremo: el advisory lock impide que llegue aquí en
+            // condiciones normales. Si lo hace, AFIP ya emitió un CAE válido
+            // que NO pudimos persistir. Logueamos con prioridad alta para
+            // reconciliar manualmente (riesgo fiscal).
+            console.error(
+                "[AFIP][CRITICAL] CAE emitido por AFIP pero invoice ya tenía CAE en DB.",
+                "invoiceId:", invoiceId,
+                "| CAE recibido:", res.CAE,
+                "| CbteNro:", cbteNro,
+                "| Reconciliar manualmente con AFIP."
+            );
+        }
 
         revalidatePath("/dashboard/invoices");
         revalidatePath(`/dashboard/invoices/${invoiceId}`);
@@ -167,6 +204,17 @@ export async function generateFiscalInvoice(invoiceId: string) {
             };
         }
         return failResult;
+    } finally {
+        // §3.5 — liberar el advisory lock SIEMPRE (éxito o error).
+        // El lock es session-scoped: si la sesión muere antes del unlock,
+        // PostgreSQL lo libera al cerrar la conexión.
+        try {
+            await prisma.$queryRaw`
+                SELECT pg_advisory_unlock(hashtext('afip:' || ${invoiceId}::text)::bigint)
+            `;
+        } catch (unlockError) {
+            console.error("[AFIP] Error al liberar advisory lock:", unlockError);
+        }
     }
 }
 
