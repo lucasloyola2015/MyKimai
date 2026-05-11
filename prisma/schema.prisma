@@ -433,8 +433,16 @@ model client_users {
   invited_at   DateTime     @default(now()) @db.Timestamptz(6)
   accepted_at  DateTime?    @db.Timestamptz(6)
   created_at   DateTime     @default(now()) @db.Timestamptz(6)
+  /// §F4 — Si true, el client_user ve TODOS los proyectos del cliente
+  /// (rol contable/transversal). Si false, solo los proyectos a los que
+  /// fue asignado vía `project_access`.
+  /// Default true para preservar el comportamiento legacy. Nuevos
+  /// stakeholders se crean con false (deny by default).
+  sees_all_projects Boolean  @default(true)
   clients      clients      @relation(fields: [client_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
   users        users?       @relation(fields: [user_id], references: [id], onUpdate: NoAction)
+  project_access project_access[]
+  reserved_hour_packages hour_packages[] @relation("hour_packages_reserved_for")
 
   @@unique([client_id, email])
   @@index([client_id], map: "idx_client_users_client_id")
@@ -495,12 +503,19 @@ model hour_packages {
   notes        String?
   created_at   DateTime  @default(now()) @db.Timestamptz(6)
   updated_at   DateTime  @default(now()) @db.Timestamptz(6)
+  /// §F4 — Si está seteado, el paquete pertenece a un stakeholder
+  /// específico del cliente (caso Illinois: 80hs de Jeremías, 120hs de
+  /// Agustín). Si es NULL, el paquete es del cliente como conjunto y
+  /// solo es visible a client_users con `sees_all_projects = true`.
+  reserved_for_client_user_id String? @db.Uuid
   clients      clients   @relation(fields: [client_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
   projects     projects? @relation(fields: [project_id], references: [id], onUpdate: NoAction)
+  reserved_for client_users? @relation("hour_packages_reserved_for", fields: [reserved_for_client_user_id], references: [id], onUpdate: NoAction)
 
   @@index([client_id], map: "idx_hour_packages_client_id")
   @@index([expires_at], map: "idx_hour_packages_expires_at")
   @@index([project_id], map: "idx_hour_packages_project_id")
+  @@index([reserved_for_client_user_id], map: "idx_hour_packages_reserved_for")
   @@schema("public")
 }
 
@@ -600,6 +615,8 @@ model projects {
   hour_packages hour_packages[]
   clients       clients         @relation(fields: [client_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
   tasks         tasks[]
+  project_access project_access[]
+  milestones    milestones[]
 
   @@index([client_id], map: "idx_projects_client_id")
   @@index([name], map: "idx_projects_name")
@@ -650,10 +667,14 @@ model time_entries {
   /// Duración neta en MINUTOS enteros: `duration_total` − suma de pausas.
   /// SSOT para reportes, dashboards y cálculo de `amount`.
   duration_neto     Int?                @default(0)
+  /// §7 IMPROVEMENT_PLAN — Asociación opcional a un hito del proyecto.
+  /// Permite reportar progreso por hito al cliente.
+  milestone_id      String?             @db.Uuid
   invoice_items     invoice_items[]
   invoices          invoices?           @relation(fields: [invoice_id], references: [id], onUpdate: NoAction)
   tasks             tasks               @relation(fields: [task_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
   users             users               @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  milestones        milestones?         @relation(fields: [milestone_id], references: [id], onUpdate: NoAction)
   time_entry_breaks time_entry_breaks[]
 
   @@index([billable], map: "idx_time_entries_billable")
@@ -662,6 +683,8 @@ model time_entries {
   @@index([task_id], map: "idx_time_entries_task_id")
   /// §4.7 IMPROVEMENT_PLAN — acelera queries de "horas no facturadas".
   @@index([is_billed, billable], map: "idx_time_entries_unbilled")
+  /// §7 — lookup de time_entries por milestone para cálculo de progreso.
+  @@index([milestone_id], map: "idx_time_entries_milestone_id")
   @@index([user_id, start_time(sort: Desc)], map: "idx_time_entries_user_date")
   @@index([user_id], map: "idx_time_entries_user_id")
   @@schema("public")
@@ -871,6 +894,88 @@ enum team_role {
   collaborator
   /// Como collaborator + lee invoices/payments. No los emite.
   admin
+
+  @@schema("public")
+}
+
+/// §6 IMPROVEMENT_PLAN — Multi-stakeholder del lado del cliente.
+///
+/// `project_access` modela qué `client_users` (stakeholders del cliente)
+/// pueden ver qué `projects` del cliente al que pertenecen. Necesario
+/// cuando un cliente legal único tiene varios responsables internos que
+/// no deben verse entre sí (caso Illinois: Jeremías ≠ Agustín).
+///
+/// Filas con `revoked_at IS NOT NULL` se consideran inactivas (auditoría
+/// histórica preservada).
+model project_access {
+  id              String                @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  project_id      String                @db.Uuid
+  client_user_id  String                @db.Uuid
+  role            project_access_role   @default(viewer)
+  granted_at      DateTime              @default(now()) @db.Timestamptz(6)
+  granted_by      String?               @db.Uuid
+  revoked_at      DateTime?             @db.Timestamptz(6)
+  projects        projects              @relation(fields: [project_id], references: [id], onDelete: Cascade)
+  client_user     client_users          @relation(fields: [client_user_id], references: [id], onDelete: Cascade)
+
+  @@unique([project_id, client_user_id])
+  @@index([project_id])
+  @@index([client_user_id])
+  @@schema("public")
+}
+
+enum project_access_role {
+  /// Ve progreso e invoices del proyecto.
+  viewer
+  /// Viewer + puede aprobar hitos y comentar formalmente.
+  manager
+
+  @@schema("public")
+}
+
+/// §7 IMPROVEMENT_PLAN — Hitos / Milestones.
+///
+/// Permite reportar progreso al cliente: avance %, hitos completados,
+/// hitos planificados con target_date. Cada `time_entry` puede asociarse
+/// opcionalmente a un milestone (vía `time_entries.milestone_id`).
+///
+/// Cuando un milestone se marca `completed`, se calcula y persiste
+/// `actual_hours` y `actual_amount` (suma de time_entries vinculados al
+/// momento del cierre).
+model milestones {
+  id                String              @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  project_id        String              @db.Uuid
+  name              String              @db.VarChar(255)
+  description       String?
+  target_date       DateTime?           @db.Date
+  status            milestone_status    @default(planned)
+  completed_at      DateTime?           @db.Timestamptz(6)
+  completion_notes  String?
+  budget_hours      Decimal?            @db.Decimal(10, 2)
+  budget_amount     Decimal?            @db.Decimal(10, 2)
+  budget_currency   String?             @db.VarChar(3)
+  /// Snapshot de horas acumuladas al cerrar el hito.
+  actual_hours      Decimal?            @db.Decimal(10, 2)
+  /// Snapshot de monto acumulado al cerrar el hito.
+  actual_amount     Decimal?            @db.Decimal(10, 2)
+  display_order     Int                 @default(0)
+  visible_to_client Boolean             @default(true)
+  created_at        DateTime            @default(now()) @db.Timestamptz(6)
+  updated_at        DateTime            @default(now()) @db.Timestamptz(6)
+  projects          projects            @relation(fields: [project_id], references: [id], onDelete: Cascade)
+  time_entries      time_entries[]
+
+  @@index([project_id, display_order])
+  @@index([status])
+  @@schema("public")
+}
+
+enum milestone_status {
+  planned
+  in_progress
+  completed
+  blocked
+  cancelled
 
   @@schema("public")
 }

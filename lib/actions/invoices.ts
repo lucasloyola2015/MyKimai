@@ -288,6 +288,54 @@ export async function createInvoiceFromTimeEntries(data: {
         };
     }
 
+    // §F4.5 — Validar que NO se mezclen proyectos con stakeholders distintos.
+    // Si el cliente tiene client_users con visibilidad granular
+    // (`sees_all_projects = false`) y los items vienen de varios proyectos,
+    // todos los proyectos deben tener exactamente el mismo conjunto de
+    // stakeholders activos. Caso contrario, alguno de los stakeholders
+    // vería un total que mezcla horas que NO le pertenecen.
+    const distinctProjectIds = Array.from(
+        new Set(timeEntries.map((e: any) => e.tasks.project_id as string))
+    );
+    if (distinctProjectIds.length > 1) {
+        // Hay stakeholders con visibilidad granular?
+        const granularStakeholders = await prisma.client_users.findMany({
+            where: { client_id: data.client_id, sees_all_projects: false },
+            select: { id: true },
+        });
+        if (granularStakeholders.length > 0) {
+            // Para cada proyecto, traer el conjunto de client_user_ids con acceso activo
+            const accessByProject = await prisma.project_access.findMany({
+                where: {
+                    project_id: { in: distinctProjectIds },
+                    revoked_at: null,
+                },
+                select: { project_id: true, client_user_id: true },
+            });
+            const setsByProject = new Map<string, Set<string>>();
+            for (const pid of distinctProjectIds) setsByProject.set(pid, new Set());
+            for (const a of accessByProject) {
+                setsByProject.get(a.project_id)?.add(a.client_user_id);
+            }
+            // Comparar todos los conjuntos contra el primero
+            const sets = Array.from(setsByProject.values());
+            const reference = sets[0];
+            const allEqual = sets.every(
+                (s) =>
+                    s.size === reference.size &&
+                    [...s].every((id) => reference.has(id))
+            );
+            if (!allEqual) {
+                return {
+                    success: false,
+                    error:
+                        "No se puede emitir una factura que mezcla proyectos con stakeholders distintos. " +
+                        "Generá una factura por proyecto (o conjunto de proyectos con los mismos stakeholders).",
+                };
+            }
+        }
+    }
+
     // Calcular monto dinámico por entry usando resolveRate (SSOT)
     const entriesWithDynamicAmount = timeEntries.map((e: any) => {
         const { rate } = resolveRate({ task: e.tasks, project: e.tasks.projects, client: e.tasks.projects.clients });

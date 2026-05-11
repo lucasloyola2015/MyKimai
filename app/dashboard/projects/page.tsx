@@ -23,7 +23,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Plus, Pencil, Trash2, ShieldCheck } from "lucide-react";
+import { Plus, Pencil, Trash2, ShieldCheck, Users } from "lucide-react";
 import type { Database } from "@/lib/types/database";
 import Link from "next/link";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -454,6 +454,15 @@ export default function ProjectsPage() {
                 <CardTitle className="flex items-center justify-between">
                   <span>{project.name}</span>
                   <div className="flex space-x-2">
+                    <Link href={`/dashboard/projects/${project.id}/stakeholders`}>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        title="Stakeholders"
+                      >
+                        <Users className="h-4 w-4" />
+                      </Button>
+                    </Link>
                     <Button
                       variant="ghost"
                       size="icon"

@@ -274,12 +274,16 @@ export async function deleteProject(id: string) {
  * Obtiene proyectos para el portal de clientes con resumen de horas y montos
  */
 export async function getPortalProjects() {
-    const context = await getClientContext();
-    if (!context) return [];
+    const { getPortalProjectFilter } = await import("@/lib/auth/portal-context");
+    const filter = await getPortalProjectFilter();
+    if (!filter) return [];
 
     const projects = await prisma.projects.findMany({
         where: {
-            client_id: context.clientId,
+            client_id: filter.clientId,
+            ...(filter.kind === "restricted"
+                ? { id: { in: filter.projectIds } }
+                : {}),
         },
         include: {
             tasks: {
@@ -329,13 +333,19 @@ export async function getPortalProjects() {
  * Obtiene el detalle de un proyecto específico para el portal de clientes
  */
 export async function getPortalProjectDetail(projectId: string) {
-    const context = await getClientContext();
-    if (!context) throw new Error("Acceso no autorizado");
+    const { getPortalProjectFilter } = await import("@/lib/auth/portal-context");
+    const filter = await getPortalProjectFilter();
+    if (!filter) throw new Error("Acceso no autorizado");
+
+    // Si está restringido, validar que el proyecto esté en su lista.
+    if (filter.kind === "restricted" && !filter.projectIds.includes(projectId)) {
+        return null;
+    }
 
     const project = await prisma.projects.findUnique({
         where: {
             id: projectId,
-            client_id: context.clientId,
+            client_id: filter.clientId,
         },
         include: {
             tasks: {

@@ -2,6 +2,7 @@
 
 import { prisma } from "@/lib/prisma/client";
 import { getClientContext } from "@/lib/auth/server";
+import { getPortalProjectFilter } from "@/lib/auth/portal-context";
 import {
     startOfMonth,
     subMonths,
@@ -30,6 +31,11 @@ export async function getPortalDashboardData() {
     const context = await getClientContext();
     if (!context) throw new Error("Acceso no autorizado al portal");
 
+    // §F4 — Si el client_user es restricted, filtrar las queries por su
+    // lista de proyectos accesibles (los demás se omiten silenciosamente).
+    const portalFilter = await getPortalProjectFilter();
+    const restrictedProjectIds = portalFilter?.kind === "restricted" ? portalFilter.projectIds : null;
+
     const now = new Date();
     const firstDayOfMonth = startOfMonth(now);
     const firstDayPrevMonth = startOfMonth(subMonths(now, 1));
@@ -52,6 +58,7 @@ export async function getPortalDashboardData() {
             tasks: {
                 projects: {
                     client_id: context.clientId,
+                    ...(restrictedProjectIds && { id: { in: restrictedProjectIds } }),
                 }
             },
             start_time: { gte: firstDayOfMonth }
@@ -67,6 +74,7 @@ export async function getPortalDashboardData() {
             tasks: {
                 projects: {
                     client_id: context.clientId,
+                    ...(restrictedProjectIds && { id: { in: restrictedProjectIds } }),
                 }
             },
             start_time: {
@@ -137,6 +145,9 @@ export async function getPortalUnbilledSummary(): Promise<
 > {
     const context = await getClientContext();
     if (!context) return [];
+
+    const portalFilter = await getPortalProjectFilter();
+    const restrictedProjectIds = portalFilter?.kind === "restricted" ? portalFilter.projectIds : null;
 
     const entries = await prisma.time_entries.findMany({
         where: {
@@ -209,6 +220,9 @@ export async function getPortalChartData(
     const context = await getClientContext();
     if (!context) return { data: [], dateRange: { start: "", end: "" } };
 
+    const portalFilter = await getPortalProjectFilter();
+    const restrictedProjectIds = portalFilter?.kind === "restricted" ? portalFilter.projectIds : null;
+
     const now = new Date();
     const ROLLING_PERIODS = 7;
     let startDate: Date;
@@ -245,7 +259,7 @@ export async function getPortalChartData(
 
     const entries = await prisma.time_entries.findMany({
         where: {
-            tasks: { projects: { client_id: context.clientId } },
+            tasks: { projects: { client_id: context.clientId, ...(restrictedProjectIds && { id: { in: restrictedProjectIds } }) } },
             start_time: { gte: startDate, lte: endDate },
         },
         include: { time_entry_breaks: true, tasks: { include: { projects: { select: { name: true } } } } },
@@ -332,12 +346,15 @@ export async function getPortalChartDataHourly(
     const context = await getClientContext();
     if (!context) return { data: [], dateRange: { start: "", end: "" } };
 
+    const portalFilter = await getPortalProjectFilter();
+    const restrictedProjectIds = portalFilter?.kind === "restricted" ? portalFilter.projectIds : null;
+
     const dayStart = startOfDay(new Date(dayStartIso));
     const dayEnd = endOfDay(dayStart);
 
     const entries = await prisma.time_entries.findMany({
         where: {
-            tasks: { projects: { client_id: context.clientId } },
+            tasks: { projects: { client_id: context.clientId, ...(restrictedProjectIds && { id: { in: restrictedProjectIds } }) } },
             start_time: { gte: dayStart, lte: dayEnd },
         },
         include: { time_entry_breaks: true, tasks: { include: { projects: { select: { name: true } } } } },
@@ -374,12 +391,15 @@ export async function getPortalChartDataInRange(
     const context = await getClientContext();
     if (!context) return { data: [], dateRange: { start: "", end: "" } };
 
+    const portalFilter = await getPortalProjectFilter();
+    const restrictedProjectIds = portalFilter?.kind === "restricted" ? portalFilter.projectIds : null;
+
     const startDate = startOfDay(new Date(rangeStart));
     const endDate = endOfDay(new Date(rangeEnd));
 
     const entries = await prisma.time_entries.findMany({
         where: {
-            tasks: { projects: { client_id: context.clientId } },
+            tasks: { projects: { client_id: context.clientId, ...(restrictedProjectIds && { id: { in: restrictedProjectIds } }) } },
             start_time: { gte: startDate, lte: endDate },
         },
         include: { time_entry_breaks: true, tasks: { include: { projects: { select: { name: true } } } } },
@@ -449,7 +469,17 @@ export async function getPortalProjectDistribution(options?: {
     const context = await getClientContext();
     if (!context) return [];
 
-    const where: any = { tasks: { projects: { client_id: context.clientId } } };
+    const portalFilter = await getPortalProjectFilter();
+    const restrictedProjectIds = portalFilter?.kind === "restricted" ? portalFilter.projectIds : null;
+
+    const where: any = {
+        tasks: {
+            projects: {
+                client_id: context.clientId,
+                ...(restrictedProjectIds && { id: { in: restrictedProjectIds } }),
+            },
+        },
+    };
     if (options?.rangeStart != null && options?.rangeEnd != null) {
         where.start_time = {
             gte: new Date(options.rangeStart),
