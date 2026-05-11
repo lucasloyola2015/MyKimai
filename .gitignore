@@ -50,3 +50,17 @@ next-env.d.ts
 /certs/
 *.key
 *.crt
+
+# scratch / debug artifacts at repo root (ver §4.9 IMPROVEMENT_PLAN)
+/_scratch/
+/output.log
+/output.txt
+/test-output.txt
+/triggers-detail.txt
+/billing-check*.txt
+/temp_check.sql
+/fix_database*.sql
+/reproduction.txt
+/columns.txt
+/test-prisma.ts
+

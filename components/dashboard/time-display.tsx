@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Clock } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { formatDurationMinutes } from "@/lib/utils/duration";
 
 interface TimeDisplayProps {
     minutes: number;
@@ -38,14 +39,6 @@ export function TimeDisplay({
         return () => clearInterval(interval);
     }, [realTime, startTime, initialMinutes]);
 
-    const formatTime = (mins: number): string => {
-        const hours = Math.floor(mins / 60);
-        const remainingMins = mins % 60;
-        return `${hours.toString().padStart(2, "0")}:${remainingMins
-            .toString()
-            .padStart(2, "0")}`;
-    };
-
     const sizeClasses = {
         sm: "text-lg",
         md: "text-2xl",
@@ -57,7 +50,7 @@ export function TimeDisplay({
             {showIcon && <Clock className={cn("h-5 w-5", size === "lg" && "h-8 w-8")} />}
             <div className="flex flex-col">
                 <span className={cn("font-bold tabular-nums", sizeClasses[size])}>
-                    {formatTime(minutes)}
+                    {formatDurationMinutes(minutes)}
                 </span>
                 {label && (
                     <span className="text-xs text-muted-foreground">{label}</span>

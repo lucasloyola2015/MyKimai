@@ -560,6 +560,8 @@ model invoices {
   @@index([invoice_number], map: "idx_invoices_invoice_number")
   @@index([issue_date(sort: Desc)], map: "idx_invoices_issue_date")
   @@index([status], map: "idx_invoices_status")
+  /// §4.7 IMPROVEMENT_PLAN — listas ordenadas por fecha de creación.
+  @@index([created_at(sort: Desc)], map: "idx_invoices_created_at")
   @@schema("public")
 }
 
@@ -632,6 +634,8 @@ model time_entries {
   description       String?
   start_time        DateTime            @db.Timestamptz(6)
   end_time          DateTime?           @db.Timestamptz(6)
+  /// Duración bruta en MINUTOS enteros entre `start_time` y `end_time`.
+  /// Calculada por trigger en DB. Ver lib/utils/duration.ts.
   duration_total    Int?
   billable          Boolean             @default(true)
   rate_applied      Decimal?            @db.Decimal(10, 2)
@@ -641,6 +645,8 @@ model time_entries {
   invoice_id        String?             @db.Uuid
   usd_exchange_rate Decimal?            @db.Decimal(10, 2)
   updated_at        DateTime            @default(now()) @db.Timestamptz(6)
+  /// Duración neta en MINUTOS enteros: `duration_total` − suma de pausas.
+  /// SSOT para reportes, dashboards y cálculo de `amount`.
   duration_neto     Int?                @default(0)
   invoice_items     invoice_items[]
   invoices          invoices?           @relation(fields: [invoice_id], references: [id], onUpdate: NoAction)
@@ -652,6 +658,8 @@ model time_entries {
   @@index([created_at(sort: Desc)], map: "idx_time_entries_created_at")
   @@index([start_time], map: "idx_time_entries_start_time")
   @@index([task_id], map: "idx_time_entries_task_id")
+  /// §4.7 IMPROVEMENT_PLAN — acelera queries de "horas no facturadas".
+  @@index([is_billed, billable], map: "idx_time_entries_unbilled")
   @@index([user_id, start_time(sort: Desc)], map: "idx_time_entries_user_date")
   @@index([user_id], map: "idx_time_entries_user_id")
   @@schema("public")
@@ -666,6 +674,8 @@ model time_entry_breaks {
   time_entries  time_entries @relation(fields: [time_entry_id], references: [id], onDelete: Cascade)
 
   @@index([time_entry_id])
+  /// §4.7 IMPROVEMENT_PLAN — orden de pausas dentro de una entrada.
+  @@index([time_entry_id, start_time], map: "idx_time_entry_breaks_entry_time")
   @@schema("public")
 }
 

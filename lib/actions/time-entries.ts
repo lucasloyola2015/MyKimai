@@ -9,10 +9,26 @@ import { calculateNetDurationMinutes, computeEntryTotals } from "@/lib/utils";
 import { formatTime24 } from "@/lib/date-format";
 import { getUsdExchangeRate } from "./exchange";
 import { resolveRate } from "@/lib/utils/rates";
+import {
+    startTimeEntrySchema,
+    stopTimeEntrySchema,
+    deleteTimeEntrySchema,
+    updateTimeEntrySchema,
+} from "@/lib/validations/time-entries";
+import { ZodError } from "zod";
 
 export type ActionResponse<T> =
     | { success: true; data: T }
     | { success: false; error: string };
+
+/**
+ * Convierte un ZodError en un mensaje legible para devolver al cliente.
+ */
+function zodErrorMessage(err: ZodError): string {
+    return err.issues
+        .map((i) => `${i.path.join(".") || "input"}: ${i.message}`)
+        .join("; ");
+}
 
 
 /**
@@ -152,6 +168,13 @@ export async function startTimeEntry(
     taskId: string,
     description?: string
 ): Promise<ActionResponse<time_entries>> {
+    // §4.5 — validación de input
+    const parsed = startTimeEntrySchema.safeParse({ taskId, description });
+    if (!parsed.success) {
+        return { success: false, error: zodErrorMessage(parsed.error) };
+    }
+    ({ taskId, description } = { ...parsed.data, description: parsed.data.description ?? undefined });
+
     const user = await getAuthUser();
 
     // Verificar que no haya un timer activo
@@ -242,6 +265,12 @@ export async function startTimeEntry(
 export async function stopTimeEntry(
     entryId: string
 ): Promise<ActionResponse<time_entries>> {
+    // §4.5 — validación de input
+    const parsed = stopTimeEntrySchema.safeParse({ entryId });
+    if (!parsed.success) {
+        return { success: false, error: zodErrorMessage(parsed.error) };
+    }
+
     const user = await getAuthUser();
 
     // Obtener el entry
@@ -329,6 +358,12 @@ export async function stopTimeEntry(
  * Elimina un time entry
  */
 export async function deleteTimeEntry(entryId: string) {
+    // §4.5 — validación de input
+    const parsed = deleteTimeEntrySchema.safeParse({ entryId });
+    if (!parsed.success) {
+        return { success: false, error: zodErrorMessage(parsed.error) };
+    }
+
     const user = await getAuthUser();
 
     // Verificar que el entry pertenece al usuario
@@ -509,6 +544,12 @@ export async function updateTimeEntry(
         task_id?: string;
     }
 ): Promise<ActionResponse<time_entries>> {
+    // §4.5 — validación de input
+    const parsed = updateTimeEntrySchema.safeParse({ entryId, data });
+    if (!parsed.success) {
+        return { success: false, error: zodErrorMessage(parsed.error) };
+    }
+
     const user = await getAuthUser();
 
     // Verificar que el entry pertenece al usuario

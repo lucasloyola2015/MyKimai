@@ -322,7 +322,7 @@ Lógica de aplicación:
 - Descontar `hour_packages.hours_used` atómicamente en transacción.
 - Si no hay paquete con horas → entry queda como "facturable directamente".
 
-### 4.4. ⏳ Unidad de `duration_total` y `duration_neto` no documentada
+### 4.4. ✅ Unidad de `duration_total` y `duration_neto` documentada
 
 **Problema:** el schema declara `duration_total Int?` y `duration_neto Int?`. En `app/dashboard/page.tsx` se formatean como minutos. En otros archivos puede asumirse segundos. Riesgo silencioso de bug por inconsistencia.
 
@@ -342,7 +342,7 @@ Lógica de aplicación:
    ```
 3. Reemplazar todos los formateos inline por el helper.
 
-### 4.5. ⏳ Validación zod ausente en Server Actions
+### 4.5. 🟡 Validación zod en Server Actions críticas (parcial)
 
 **Problema:** `zod` está en dependencies, pero no veo schemas de validación de entrada en las Server Actions. Cualquier cliente malicioso o componente con bug puede mandar payloads raros (cantidades negativas, fechas en el futuro lejano, IDs random).
 
@@ -372,7 +372,7 @@ export async function startTimeEntry(input: z.input<typeof startTimeEntrySchema>
 3. UI de "borrar" pasa a setear `deleted_at = now()`.
 4. Queries por defecto agregan `WHERE deleted_at IS NULL`.
 
-### 4.7. ⏳ Índices faltantes
+### 4.7. ✅ Índices de performance agregados
 
 ```prisma
 // time_entry_breaks
@@ -391,7 +391,7 @@ export async function startTimeEntry(input: z.input<typeof startTimeEntrySchema>
 
 **Fix:** `select` específico con solo las columnas necesarias para la UI (probablemente: `tasks.name`, `projects.name`, `clients.name`).
 
-### 4.9. ⏳ Logs/artifacts en el root del repo
+### 4.9. ✅ Logs/artifacts del root limpiados
 
 `output.log`, `output.txt`, `test-output.txt`, `triggers-detail.txt`, `billing-check.txt`, `temp_check.sql`, `fix_database.sql`, `fix_database_utf8.sql`, `reproduction.txt`, `columns.txt`, `billing-check-v2.txt`.
 

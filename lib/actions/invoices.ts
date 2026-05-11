@@ -8,10 +8,25 @@ import type { invoices, invoice_items, invoice_status, billing_type_invoice } fr
 import { getUsdExchangeRate } from "./exchange";
 import { PUNTO_VENTA_DEFAULT } from "@/lib/fiscal-config";
 import { resolveRate } from "@/lib/utils/rates";
+import {
+    createInvoiceFromTimeEntriesSchema,
+    updateInvoiceStatusSchema,
+    deleteInvoiceSchema,
+} from "@/lib/validations/invoices";
+import { ZodError } from "zod";
 
 export type ActionResponse<T> =
     | { success: true; data: T }
     | { success: false; error: string };
+
+/**
+ * Convierte un ZodError en un mensaje legible para devolver al cliente.
+ */
+function zodErrorMessage(err: ZodError): string {
+    return err.issues
+        .map((i) => `${i.path.join(".") || "input"}: ${i.message}`)
+        .join("; ");
+}
 
 /**
  * Obtiene todas las facturas del usuario autenticado
@@ -192,6 +207,12 @@ export async function createInvoiceFromTimeEntries(data: {
     exchange_strategy?: "CURRENT" | "HISTORICAL";
     cbte_tipo?: number; // Tipo de comprobante AFIP (11 = Factura C)
 }): Promise<ActionResponse<invoices>> {
+    // §4.5 — validación de input
+    const parsed = createInvoiceFromTimeEntriesSchema.safeParse(data);
+    if (!parsed.success) {
+        return { success: false, error: zodErrorMessage(parsed.error) };
+    }
+
     const user = await getAuthUser();
 
     // Verificar que el cliente pertenece al usuario
@@ -435,6 +456,12 @@ export async function createInvoiceFromTimeEntries(data: {
  * Elimina una factura interna y libera las horas asociadas
  */
 export async function deleteInvoice(id: string): Promise<ActionResponse<void>> {
+    // §4.5 — validación de input
+    const parsed = deleteInvoiceSchema.safeParse({ id });
+    if (!parsed.success) {
+        return { success: false, error: zodErrorMessage(parsed.error) };
+    }
+
     const user = await getAuthUser();
 
     // 1. Obtener la factura y validar que pertenece al usuario
@@ -510,6 +537,12 @@ export async function updateInvoiceStatus(
     id: string,
     status: invoice_status
 ): Promise<ActionResponse<invoices>> {
+    // §4.5 — validación de input
+    const parsed = updateInvoiceStatusSchema.safeParse({ id, status });
+    if (!parsed.success) {
+        return { success: false, error: zodErrorMessage(parsed.error) };
+    }
+
     const user = await getAuthUser();
 
     // Verificar que la factura pertenece al usuario

@@ -17,6 +17,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Play, Square, Clock, Pause } from "lucide-react";
 import { format, differenceInMinutes } from "date-fns";
 import { formatDateTime24 } from "@/lib/date-format";
+import { formatDurationMinutes } from "@/lib/utils/duration";
 import { useActiveTimeEntry } from "@/contexts/active-time-entry-context";
 import { getClients } from "@/lib/actions/clients";
 import { getProjects } from "@/lib/actions/projects";
@@ -221,11 +222,7 @@ export default function TimeTrackerPage() {
     return elapsed;
   };
 
-  const formatTime = (minutes: number): string => {
-    const hours = Math.floor(minutes / 60);
-    const mins = minutes % 60;
-    return `${hours.toString().padStart(2, "0")}:${mins.toString().padStart(2, "0")}`;
-  };
+  const formatTime = formatDurationMinutes;
 
   const handleStart = async () => {
     if (!selectedTaskId) {

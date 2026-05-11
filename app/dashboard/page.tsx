@@ -2,14 +2,9 @@ import { Clock, FolderKanban, FileText, DollarSign } from "lucide-react";
 import { HoursChart } from "@/components/dashboard/hours-chart";
 import { StatCard } from "@/components/dashboard/stat-card";
 import { getDashboardStats } from "@/lib/actions/stats";
+import { formatDurationMinutes } from "@/lib/utils/duration";
 
 export const dynamic = "force-dynamic";
-
-function formatTime(minutes: number): string {
-  const hours = Math.floor(minutes / 60);
-  const mins = minutes % 60;
-  return `${hours}:${mins.toString().padStart(2, "0")}`;
-}
 
 function formatRevenue(total: number, currency: string): string {
   return `${currency} ${total.toLocaleString("es-AR", {
@@ -39,8 +34,8 @@ export default async function DashboardPage() {
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <StatCard
           title="Horas Hoy"
-          value={`${formatTime(stats.hoursTodayMinutes)}h`}
-          subtitle={`${formatTime(stats.hoursThisWeekMinutes)}h esta semana`}
+          value={`${formatDurationMinutes(stats.hoursTodayMinutes)}h`}
+          subtitle={`${formatDurationMinutes(stats.hoursThisWeekMinutes)}h esta semana`}
           icon={Clock}
         />
         <StatCard
