@@ -195,10 +195,22 @@ Esto crea ambigüedad perpetua y diff ruidoso en migraciones.
 
 **Severidad:** media (no rompe pero genera confusión perpetua y diff ruidoso).
 
-### 3.4. 🔒 RLS no verificada con test real
+### 3.4. ✅ RLS auditada en producción
 
-**Estado:** Bloqueado (requiere acceso manual a Supabase dashboard).
+**Estado:** Cerrado (auditoría 2026-05-11).
 **Ubicación:** Supabase dashboard.
+
+**Resultado de la auditoría:**
+
+- Las 11 tablas críticas tienen `rowsecurity = true`: `clients`, `projects`, `tasks`, `time_entries`, `time_entry_breaks`, `invoices`, `invoice_items`, `payments`, `hour_packages`, `client_users`, `user_fiscal_settings`.
+- Cada tabla tiene policies separadas para `SELECT`, `INSERT`, `UPDATE`, `DELETE` (o una policy `ALL` equivalente en el caso de `time_entry_breaks`).
+- Los `SELECT/UPDATE/DELETE` filtran por `auth.uid()` directo o vía join a `clients.user_id` (o función `is_client_owner`).
+- Los `INSERT` tienen `WITH CHECK` que previene insertar a nombre de otro user (`auth.uid() = user_id` o vía join a `clients.user_id`).
+- Tablas que también soportan acceso desde portal cliente tienen policies adicionales filtradas por `clients.portal_user_id = auth.uid()` o `client_users.user_id = auth.uid()`.
+
+**Implicancia para el bug §3.1:** la RLS de `invoices` SÍ filtra por `clients.user_id = auth.uid()`. La query bugueada del dashboard, en producción, hubiera retornado **0 filas** en lugar de leak — pero igualmente reemplazarla por la Server Action filtrada es la defensa en profundidad correcta.
+
+**Detalle histórico (versión original del bug, antes de la auditoría):**
 
 **Problema:** el `schema.prisma` tiene comentarios de Prisma del estilo:
 ```
