@@ -55,6 +55,8 @@ export default function Page() {
   const [isMaintenanceLoading, setIsMaintenanceLoading] = useState(false);
   const [selectedClient, setSelectedClient] = useState<string>("");
   const [selectedProject, setSelectedProject] = useState<string>("");
+  // §paginación — por defecto mostrar últimos 90 días (no traer años de historial).
+  const [showAll, setShowAll] = useState(false);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingEntry, setEditingEntry] = useState<any | null>(null);
   const [formData, setFormData] = useState<any>({
@@ -91,7 +93,7 @@ export default function Page() {
 
   useEffect(() => {
     loadEntries();
-  }, [selectedClient, selectedProject]);
+  }, [selectedClient, selectedProject, showAll]);
 
   useEffect(() => {
     if (isDialogOpen && formData.client_id) {
@@ -105,11 +107,18 @@ export default function Page() {
     }
   }, [formData.project_id, isDialogOpen]);
 
+  // Filtro de entradas con ventana temporal (90 días por defecto).
+  const buildEntriesFilter = () => ({
+    clientId: selectedClient || undefined,
+    projectId: selectedProject || undefined,
+    startDate: showAll ? undefined : new Date(Date.now() - 90 * 86400000),
+  });
+
   const loadData = async () => {
     try {
       const [clientsData, entriesData] = await Promise.all([
         getClients(),
-        getTimeEntries(),
+        getTimeEntries(buildEntriesFilter()),
       ]);
       setClients(clientsData);
       setEntries(entriesData);
@@ -131,10 +140,7 @@ export default function Page() {
 
   const loadEntries = async () => {
     try {
-      const entriesData = await getTimeEntries({
-        clientId: selectedClient || undefined,
-        projectId: selectedProject || undefined,
-      });
+      const entriesData = await getTimeEntries(buildEntriesFilter());
       setEntries(entriesData);
     } catch (error) {
       console.error("Error loading entries:", error);
@@ -321,7 +327,7 @@ export default function Page() {
     const result = await addTimeEntryBreak(editingEntry.id, start, now);
     if (result.success) {
       await loadEntries();
-      const updatedEntries = await getTimeEntries({ clientId: selectedClient || undefined, projectId: selectedProject || undefined });
+      const updatedEntries = await getTimeEntries(buildEntriesFilter());
       const updated = updatedEntries.find((e: any) => e.id === editingEntry.id);
       if (updated) {
         setEditingEntry(updated);
@@ -349,7 +355,7 @@ export default function Page() {
     const result = await updateTimeEntryBreak(breakId, start, end);
     if (result.success) {
       await loadEntries();
-      const updatedEntries = await getTimeEntries({ clientId: selectedClient || undefined, projectId: selectedProject || undefined });
+      const updatedEntries = await getTimeEntries(buildEntriesFilter());
       const updated = updatedEntries.find((e: any) => e.id === editingEntry.id);
       if (updated) setEditingEntry(updated);
     }
@@ -483,6 +489,15 @@ export default function Page() {
                 </SelectContent>
               </Select>
             </div>
+          </div>
+          {/* §paginación — ventana temporal por defecto (90 días) con toggle. */}
+          <div className="mt-4 flex items-center justify-between gap-2 text-sm">
+            <span className="text-muted-foreground">
+              {showAll ? "Mostrando todo el historial" : "Mostrando los últimos 90 días"}
+            </span>
+            <Button variant="outline" size="sm" onClick={() => setShowAll((v) => !v)}>
+              {showAll ? "Ver últimos 90 días" : "Ver todo el historial"}
+            </Button>
           </div>
         </CardContent>
       </Card>
