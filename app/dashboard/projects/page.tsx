@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { createClientComponentClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -24,12 +23,20 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Plus, Pencil, Trash2, ShieldCheck, Users, Flag } from "lucide-react";
-import type { Database } from "@/lib/types/database";
+import type { projects, clients as Client } from "@prisma/client";
 import Link from "next/link";
 import { Checkbox } from "@/components/ui/checkbox";
+import { getClients } from "@/lib/actions/clients";
+import {
+  getProjects,
+  createProject,
+  updateProject,
+  deleteProject,
+} from "@/lib/actions/projects";
+import { toast } from "@/hooks/use-toast";
 
-type Project = Database["public"]["Tables"]["projects"]["Row"];
-type Client = Database["public"]["Tables"]["clients"]["Row"];
+// La extensión de Prisma convierte rate (Decimal) a number en runtime.
+type Project = Omit<projects, "rate"> & { rate: number | null };
 
 const CURRENCIES = [
   { value: "USD", label: "USD" },
@@ -61,7 +68,6 @@ export default function ProjectsPage() {
   const [loading, setLoading] = useState(true);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingProject, setEditingProject] = useState<Project | null>(null);
-  const supabase = createClientComponentClient();
 
   const [formData, setFormData] = useState({
     client_id: "",
@@ -82,31 +88,12 @@ export default function ProjectsPage() {
 
   const loadData = async () => {
     try {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-
-      if (!user) return;
-
-      // Load clients
-      const { data: clientsData, error: clientsError } = await supabase
-        .from("clients")
-        .select("*")
-        .eq("user_id", user.id)
-        .order("name");
-
-      if (clientsError) throw clientsError;
-      setClients(clientsData || []);
-
-      // Load projects with clients
-      const { data: projectsData, error: projectsError } = await supabase
-        .from("projects")
-        .select("*, clients(*)")
-        .eq("clients.user_id", user.id)
-        .order("created_at", { ascending: false });
-
-      if (projectsError) throw projectsError;
-      setProjects((projectsData as any) || []);
+      const [clientsData, projectsData] = await Promise.all([
+        getClients(),
+        getProjects(),
+      ]);
+      setClients(clientsData as any);
+      setProjects(projectsData as any);
     } catch (error) {
       console.error("Error loading data:", error);
     } finally {
@@ -117,41 +104,31 @@ export default function ProjectsPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    try {
-      const projectData = {
-        client_id: formData.client_id,
-        name: formData.name,
-        description: formData.description || null,
-        currency: formData.currency,
-        rate: formData.rate ? parseFloat(formData.rate) : null,
-        billing_type: formData.billing_type,
-        status: formData.status,
-        start_date: formData.start_date || null,
-        end_date: formData.end_date || null,
-        is_billable: formData.is_billable,
-      };
+    const base = {
+      name: formData.name,
+      description: formData.description || null,
+      currency: formData.currency,
+      rate: formData.rate ? parseFloat(formData.rate) : null,
+      billing_type: formData.billing_type,
+      status: formData.status,
+      start_date: formData.start_date ? new Date(formData.start_date) : null,
+      end_date: formData.end_date ? new Date(formData.end_date) : null,
+      is_billable: formData.is_billable,
+    };
 
-      if (editingProject) {
-        const { error } = await supabase
-          .from("projects")
-          .update(projectData)
-          .eq("id", editingProject.id);
+    const result = editingProject
+      ? await updateProject(editingProject.id, base)
+      : await createProject({ client_id: formData.client_id, ...base });
 
-        if (error) throw error;
-      } else {
-        const { error } = await supabase
-          .from("projects")
-          .insert(projectData);
-        if (error) throw error;
-      }
-
-      setIsDialogOpen(false);
-      resetForm();
-      loadData();
-    } catch (error) {
-      console.error("Error saving project:", error);
-      alert("Error al guardar el proyecto");
+    if (!result.success) {
+      toast({ title: "Error", description: result.error, variant: "destructive" });
+      return;
     }
+
+    toast({ title: editingProject ? "Proyecto actualizado" : "Proyecto creado" });
+    setIsDialogOpen(false);
+    resetForm();
+    loadData();
   };
 
   const handleEdit = (project: Project) => {
@@ -164,8 +141,8 @@ export default function ProjectsPage() {
       rate: project.rate?.toString() || "",
       billing_type: project.billing_type,
       status: project.status,
-      start_date: project.start_date || "",
-      end_date: project.end_date || "",
+      start_date: project.start_date ? new Date(project.start_date).toISOString().split("T")[0] : "",
+      end_date: project.end_date ? new Date(project.end_date).toISOString().split("T")[0] : "",
       is_billable: (project as any).is_billable ?? true,
     });
     setIsDialogOpen(true);
@@ -174,18 +151,13 @@ export default function ProjectsPage() {
   const handleDelete = async (id: string) => {
     if (!confirm("¿Estás seguro de eliminar este proyecto?")) return;
 
-    try {
-      const { error } = await supabase
-        .from("projects")
-        .delete()
-        .eq("id", id);
-
-      if (error) throw error;
-      loadData();
-    } catch (error) {
-      console.error("Error deleting project:", error);
-      alert("Error al eliminar el proyecto");
+    const result = await deleteProject(id);
+    if (!result.success) {
+      toast({ title: "Error", description: result.error, variant: "destructive" });
+      return;
     }
+    toast({ title: "Proyecto eliminado" });
+    loadData();
   };
 
   const resetForm = () => {

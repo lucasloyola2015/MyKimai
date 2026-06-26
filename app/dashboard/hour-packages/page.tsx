@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { createClientComponentClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -24,12 +23,27 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Plus, Pencil, Trash2, AlertCircle } from "lucide-react";
-import type { Database } from "@/lib/types/database";
+import type { hour_packages, clients, projects } from "@prisma/client";
 import { format } from "date-fns";
+import { getClients } from "@/lib/actions/clients";
+import { getProjects } from "@/lib/actions/projects";
+import {
+  getHourPackages,
+  createHourPackage,
+  updateHourPackage,
+  deleteHourPackage,
+} from "@/lib/actions/hour-packages";
+import { toast } from "@/hooks/use-toast";
 
-type HourPackage = Database["public"]["Tables"]["hour_packages"]["Row"];
-type Client = Database["public"]["Tables"]["clients"]["Row"];
-type Project = Database["public"]["Tables"]["projects"]["Row"];
+// La extensión de Prisma (lib/prisma/client.ts) convierte los Decimal a number
+// en runtime; reflejamos eso en el tipo para la aritmética/formateo de la UI.
+type HourPackage = Omit<hour_packages, "hours" | "hours_used" | "price"> & {
+  hours: number;
+  hours_used: number;
+  price: number;
+};
+type Client = clients;
+type Project = projects;
 
 interface PackageWithRelations extends HourPackage {
   clients: Client;
@@ -55,7 +69,6 @@ export default function HourPackagesPage() {
   const [editingPackage, setEditingPackage] = useState<HourPackage | null>(
     null
   );
-  const supabase = createClientComponentClient();
 
   const [formData, setFormData] = useState({
     client_id: "",
@@ -73,41 +86,14 @@ export default function HourPackagesPage() {
 
   const loadData = async () => {
     try {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-
-      if (!user) return;
-
-      // Load clients
-      const { data: clientsData, error: clientsError } = await supabase
-        .from("clients")
-        .select("*")
-        .eq("user_id", user.id)
-        .order("name");
-
-      if (clientsError) throw clientsError;
-      setClients(clientsData || []);
-
-      // Load projects
-      const { data: projectsData, error: projectsError } = await supabase
-        .from("projects")
-        .select("*, clients(*)")
-        .eq("clients.user_id", user.id)
-        .order("name");
-
-      if (projectsError) throw projectsError;
-      setProjects((projectsData as any) || []);
-
-      // Load packages
-      const { data: packagesData, error: packagesError } = await supabase
-        .from("hour_packages")
-        .select("*, clients(*), projects(*)")
-        .eq("clients.user_id", user.id)
-        .order("purchased_at", { ascending: false });
-
-      if (packagesError) throw packagesError;
-      setPackages((packagesData as any) || []);
+      const [clientsData, projectsData, packagesData] = await Promise.all([
+        getClients(),
+        getProjects(),
+        getHourPackages(),
+      ]);
+      setClients(clientsData as any);
+      setProjects(projectsData as any);
+      setPackages(packagesData as any);
     } catch (error) {
       console.error("Error loading data:", error);
     } finally {
@@ -118,41 +104,29 @@ export default function HourPackagesPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    try {
-      // §4.3 — NO escribir hours_used: lo mantiene el trigger de DB derivándolo
-      // de las entradas linkeadas. En create, el default 0 de la DB aplica; en
-      // update, dejarlo intacto (antes lo reseteaba a 0 en cada edición).
-      const packageData = {
-        client_id: formData.client_id,
-        project_id: formData.project_id || null,
-        hours: parseFloat(formData.hours),
-        price: parseFloat(formData.price),
-        currency: formData.currency,
-        expires_at: formData.expires_at || null,
-        notes: formData.notes || null,
-      };
+    // §4.3 — hours_used lo mantiene el trigger de DB; nunca se envía.
+    const payload = {
+      project_id: formData.project_id || null,
+      hours: parseFloat(formData.hours),
+      price: parseFloat(formData.price),
+      currency: formData.currency,
+      expires_at: formData.expires_at ? new Date(formData.expires_at) : null,
+      notes: formData.notes || null,
+    };
 
-      if (editingPackage) {
-        const { error } = await supabase
-          .from("hour_packages")
-          .update(packageData)
-          .eq("id", editingPackage.id);
+    const result = editingPackage
+      ? await updateHourPackage(editingPackage.id, payload)
+      : await createHourPackage({ client_id: formData.client_id, ...payload });
 
-        if (error) throw error;
-      } else {
-        const { error } = await supabase
-          .from("hour_packages")
-          .insert(packageData);
-        if (error) throw error;
-      }
-
-      setIsDialogOpen(false);
-      resetForm();
-      loadData();
-    } catch (error) {
-      console.error("Error saving package:", error);
-      alert("Error al guardar el paquete");
+    if (!result.success) {
+      toast({ title: "Error", description: result.error, variant: "destructive" });
+      return;
     }
+
+    toast({ title: editingPackage ? "Paquete actualizado" : "Paquete creado" });
+    setIsDialogOpen(false);
+    resetForm();
+    loadData();
   };
 
   const handleEdit = (pkg: HourPackage) => {
@@ -174,18 +148,13 @@ export default function HourPackagesPage() {
   const handleDelete = async (id: string) => {
     if (!confirm("¿Estás seguro de eliminar este paquete?")) return;
 
-    try {
-      const { error } = await supabase
-        .from("hour_packages")
-        .delete()
-        .eq("id", id);
-
-      if (error) throw error;
-      loadData();
-    } catch (error) {
-      console.error("Error deleting package:", error);
-      alert("Error al eliminar el paquete");
+    const result = await deleteHourPackage(id);
+    if (!result.success) {
+      toast({ title: "Error", description: result.error, variant: "destructive" });
+      return;
     }
+    toast({ title: "Paquete eliminado" });
+    loadData();
   };
 
   const resetForm = () => {
