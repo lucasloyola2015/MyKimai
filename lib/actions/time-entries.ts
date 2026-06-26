@@ -111,6 +111,41 @@ export async function getActiveTimeEntry() {
 }
 
 /**
+ * §parallel-timers — Obtiene TODAS las entradas activas (timers corriendo o en
+ * pausa) del actor, para el panel de "Tareas activas". Soporta múltiples timers
+ * en paralelo. Cada entrada incluye su tarea/proyecto/cliente y sus pausas.
+ */
+export async function getActiveTimeEntries() {
+    const user = await getAuthUser();
+
+    const entries = await prisma.time_entries.findMany({
+        where: {
+            user_id: user.id,
+            end_time: null,
+        },
+        include: {
+            tasks: {
+                include: {
+                    projects: {
+                        include: {
+                            clients: true,
+                        },
+                    },
+                },
+            },
+            time_entry_breaks: {
+                orderBy: { start_time: "asc" },
+            },
+        },
+        orderBy: {
+            start_time: "asc",
+        },
+    });
+
+    return entries;
+}
+
+/**
  * Obtiene las últimas time entries del usuario
  */
 export async function getRecentTimeEntries(limit: number = 10) {
@@ -228,18 +263,21 @@ export async function startTimeEntry(
 
     const ctx = await getOwnerContext();
 
-    // Verificar que no haya un timer activo (por usuario actor)
-    const existingActive = await prisma.time_entries.findFirst({
+    // §parallel-timers — se permiten múltiples timers activos en paralelo
+    // (varias tareas/proyectos a la vez). Lo único que evitamos es que la MISMA
+    // tarea tenga dos timers activos del mismo actor (doble-start accidental).
+    const existingActiveSameTask = await prisma.time_entries.findFirst({
         where: {
             user_id: ctx.actorId,
+            task_id: taskId,
             end_time: null,
         },
     });
 
-    if (existingActive) {
+    if (existingActiveSameTask) {
         return {
             success: false,
-            error: "Ya tienes un timer activo. Deténlo antes de iniciar uno nuevo.",
+            error: "Esta tarea ya tiene un timer activo.",
         };
     }
 

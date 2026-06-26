@@ -1,129 +1,108 @@
 "use client";
 
 import { createContext, useContext, useEffect, useState, ReactNode } from "react";
-import { createClientComponentClient } from "@/lib/supabase/client";
-import { pauseTimeEntry, resumeTimeEntry, stopTimeEntry } from "@/lib/actions/time-entries";
-import type { Database } from "@/lib/types/database";
+import {
+  getActiveTimeEntries,
+  pauseTimeEntry,
+  resumeTimeEntry,
+  stopTimeEntry,
+} from "@/lib/actions/time-entries";
 
-type TimeEntry = Database["public"]["Tables"]["time_entries"]["Row"];
-
-interface ActiveTimeEntry extends TimeEntry {
+/**
+ * §parallel-timers — el contexto ahora trackea TODAS las entradas activas
+ * (timers en paralelo). `activeEntry` se mantiene como la más reciente para
+ * compatibilidad con el TopBar; `activeEntries` es la lista completa que consume
+ * el panel de "Tareas activas".
+ */
+export interface ActiveTimeEntry {
+  id: string;
+  task_id: string;
+  start_time: string | Date;
+  end_time: string | Date | null;
+  description: string | null;
   tasks?: {
     name: string;
+    project_id?: string;
     projects?: {
+      id?: string;
       name: string;
-      clients?: {
-        name: string;
-      };
+      currency?: string;
+      clients?: { id?: string; name: string };
     };
   };
   breaks?: Array<{
     id: string;
-    start_time: string;
-    end_time: string | null;
+    start_time: string | Date;
+    end_time: string | Date | null;
   }>;
+  [key: string]: any;
 }
 
 interface ActiveTimeEntryContextType {
+  /** Entrada activa más reciente (compat TopBar). */
   activeEntry: ActiveTimeEntry | null;
+  /** Todas las entradas activas (timers en paralelo). */
+  activeEntries: ActiveTimeEntry[];
   isLoading: boolean;
   refreshActiveEntry: () => Promise<void>;
-  stopActiveEntry: () => Promise<void>;
-  pauseActiveEntry: () => Promise<void>;
-  resumeActiveEntry: () => Promise<void>;
+  /** Detiene una entrada; si no se pasa id, usa la más reciente. */
+  stopActiveEntry: (id?: string) => Promise<void>;
+  pauseActiveEntry: (id?: string) => Promise<void>;
+  resumeActiveEntry: (id?: string) => Promise<void>;
 }
 
 const ActiveTimeEntryContext = createContext<ActiveTimeEntryContextType | undefined>(undefined);
 
+function mapEntry(e: any): ActiveTimeEntry {
+  return { ...e, breaks: e.time_entry_breaks ?? e.breaks ?? [] };
+}
+
 export function ActiveTimeEntryProvider({ children }: { children: ReactNode }) {
-  const [activeEntry, setActiveEntry] = useState<ActiveTimeEntry | null>(null);
+  const [activeEntries, setActiveEntries] = useState<ActiveTimeEntry[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const supabase = createClientComponentClient();
+
+  // La más reciente (última iniciada) para el control rápido del TopBar.
+  const activeEntry = activeEntries.length > 0 ? activeEntries[activeEntries.length - 1] : null;
 
   const refreshActiveEntry = async () => {
     try {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-
-      if (!user) {
-        setActiveEntry(null);
-        setIsLoading(false);
-        return;
-      }
-
-      // Buscar entrada activa (con start_time pero sin end_time)
-      const { data, error } = await supabase
-        .from("time_entries")
-        .select("*, tasks(name, projects(name, clients(name))), breaks:time_entry_breaks(*)")
-        .eq("user_id", user.id)
-        .is("end_time", null)
-        .order("start_time", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-
-      if (error) {
-        console.error("Error loading active entry:", error);
-        setActiveEntry(null);
-        return;
-      }
-
-      setActiveEntry(data || null);
+      const data = await getActiveTimeEntries();
+      setActiveEntries((data ?? []).map(mapEntry));
     } catch (error) {
       console.error("Error in refreshActiveEntry:", error);
-      setActiveEntry(null);
+      setActiveEntries([]);
     } finally {
       setIsLoading(false);
     }
   };
 
-  const stopActiveEntry = async () => {
-    if (!activeEntry) return;
-
-    try {
-      const result = await stopTimeEntry(activeEntry.id);
-      if (!result.success) throw new Error(result.error);
-
-      // Refrescar la entrada activa (ahora debería ser null)
-      await refreshActiveEntry();
-    } catch (error) {
-      console.error("Error stopping active entry:", error);
-      alert(error instanceof Error ? error.message : "Error al detener la tarea");
-    }
+  const stopActiveEntry = async (id?: string) => {
+    const target = id ?? activeEntry?.id;
+    if (!target) return;
+    const result = await stopTimeEntry(target);
+    if (!result.success) throw new Error(result.error);
+    await refreshActiveEntry();
   };
 
-  const pauseActiveEntry = async () => {
-    if (!activeEntry) return;
-
-    try {
-      const result = await pauseTimeEntry(activeEntry.id);
-      if (!result.success) throw new Error(result.error);
-
-      await refreshActiveEntry();
-    } catch (error) {
-      console.error("Error pausing active entry:", error);
-      alert(error instanceof Error ? error.message : "Error al pausar la tarea");
-    }
+  const pauseActiveEntry = async (id?: string) => {
+    const target = id ?? activeEntry?.id;
+    if (!target) return;
+    const result = await pauseTimeEntry(target);
+    if (!result.success) throw new Error(result.error);
+    await refreshActiveEntry();
   };
 
-  const resumeActiveEntry = async () => {
-    if (!activeEntry) return;
-
-    try {
-      const result = await resumeTimeEntry(activeEntry.id);
-      if (!result.success) throw new Error(result.error);
-
-      await refreshActiveEntry();
-    } catch (error) {
-      console.error("Error resuming active entry:", error);
-      alert(error instanceof Error ? error.message : "Error al reanudar la tarea");
-    }
+  const resumeActiveEntry = async (id?: string) => {
+    const target = id ?? activeEntry?.id;
+    if (!target) return;
+    const result = await resumeTimeEntry(target);
+    if (!result.success) throw new Error(result.error);
+    await refreshActiveEntry();
   };
 
   useEffect(() => {
     refreshActiveEntry();
-
-    // Refrescar cada 30 segundos para mantener sincronizado
+    // Refrescar cada 30 segundos para mantener sincronizado entre pestañas/dispositivos.
     const interval = setInterval(refreshActiveEntry, 30000);
     return () => clearInterval(interval);
   }, []);
@@ -132,6 +111,7 @@ export function ActiveTimeEntryProvider({ children }: { children: ReactNode }) {
     <ActiveTimeEntryContext.Provider
       value={{
         activeEntry,
+        activeEntries,
         isLoading,
         refreshActiveEntry,
         stopActiveEntry,

@@ -1,6 +1,7 @@
 import { Clock, FolderKanban, FileText, DollarSign } from "lucide-react";
 import { HoursChart } from "@/components/dashboard/hours-chart";
 import { StatCard } from "@/components/dashboard/stat-card";
+import { ActiveTasksPanel } from "@/components/dashboard/active-tasks-panel";
 import { getDashboardStats } from "@/lib/actions/stats";
 import { formatDurationMinutes } from "@/lib/utils/duration";
 
@@ -70,6 +71,7 @@ export default async function DashboardPage() {
           />
         ))}
       </div>
+      <ActiveTasksPanel />
       <HoursChart />
     </div>
   );
