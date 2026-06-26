@@ -156,6 +156,9 @@ export async function getPortalUnbilledSummary(): Promise<
             tasks: {
                 projects: {
                     client_id: context.clientId,
+                    // §F4 — respetar project_access: un stakeholder restringido
+                    // no debe ver montos pendientes de proyectos ajenos.
+                    ...(restrictedProjectIds && { id: { in: restrictedProjectIds } }),
                 },
             },
         },

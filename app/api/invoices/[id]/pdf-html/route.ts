@@ -26,11 +26,20 @@ export async function GET(
     // Obtener período real de los time entries vinculados a esta factura
     const linkedEntries = await prisma.time_entries.findMany({
       where: { invoice_id: id },
-      select: { start_time: true },
+      select: { start_time: true, end_time: true },
       orderBy: { start_time: "asc" },
     });
     const periodStart = linkedEntries.length > 0 ? linkedEntries[0].start_time : null;
-    const periodEnd = linkedEntries.length > 0 ? linkedEntries[linkedEntries.length - 1].start_time : null;
+    // §PDF — el "Hasta" es el máximo end_time (o start_time si la entrada no
+    // tiene fin), NO el start_time de la última entrada: una sesión que cruza
+    // medianoche tiene su fin en un día posterior a su inicio.
+    const periodEnd =
+      linkedEntries.length > 0
+        ? linkedEntries.reduce<Date>((max, e) => {
+            const end = e.end_time ?? e.start_time;
+            return end > max ? end : max;
+          }, linkedEntries[0].end_time ?? linkedEntries[0].start_time)
+        : null;
 
     const templatePath = path.join(process.cwd(), "public", "templates", "invoice.html");
     const templateHtml = fs.readFileSync(templatePath, "utf8");

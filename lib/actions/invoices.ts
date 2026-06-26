@@ -1,12 +1,12 @@
 "use server";
 
 import { prisma } from "@/lib/prisma/client";
-import { getClientContext } from "@/lib/auth/server";
 import {
     getOwnerContext,
     canManageWorkspace,
     canSeeFinancials,
 } from "@/lib/auth/owner-context";
+import { getPortalProjectFilter, type PortalProjectFilter } from "@/lib/auth/portal-context";
 import { revalidatePath } from "next/cache";
 import { format } from "date-fns";
 import type { invoices, invoice_items, invoice_status, billing_type_invoice } from "@prisma/client";
@@ -34,14 +34,33 @@ function zodErrorMessage(err: ZodError): string {
 }
 
 /**
+ * §F4 — Restricción de visibilidad de facturas para stakeholders del portal.
+ * Una factura es visible a un client_user restringido solo si TODAS sus
+ * time_entries pertenecen a proyectos a los que tiene acceso (y al menos una,
+ * para no mostrar facturas sin trabajo asociado a sus proyectos).
+ * Para `kind: "all"` no agrega restricción.
+ */
+function portalInvoiceProjectFilter(filter: PortalProjectFilter): Record<string, any> {
+    if (filter.kind === "all") return {};
+    return {
+        time_entries: {
+            some: { tasks: { project_id: { in: filter.projectIds } } },
+            every: { tasks: { project_id: { in: filter.projectIds } } },
+        },
+    };
+}
+
+/**
  * Obtiene todas las facturas del usuario autenticado
  */
 export async function getInvoices() {
-    const clientContext = await getClientContext();
+    const portalFilter = await getPortalProjectFilter();
 
     const where: any = {};
-    if (clientContext) {
-        where.client_id = clientContext.clientId;
+    if (portalFilter) {
+        where.client_id = portalFilter.clientId;
+        // §F4 — un stakeholder restringido solo ve facturas de sus proyectos.
+        Object.assign(where, portalInvoiceProjectFilter(portalFilter));
     } else {
         const ctx = await getOwnerContext();
         // §5/F2.D — collaborator NO ve invoices del workspace
@@ -71,11 +90,14 @@ export async function getInvoices() {
  * Obtiene una factura con todos sus items
  */
 export async function getInvoiceWithItems(id: string) {
-    const clientContext = await getClientContext();
+    const portalFilter = await getPortalProjectFilter();
 
     const where: any = { id };
-    if (clientContext) {
-        where.client_id = clientContext.clientId;
+    if (portalFilter) {
+        where.client_id = portalFilter.clientId;
+        // §F4 — un stakeholder restringido no puede leer una factura que cubra
+        // proyectos fuera de su project_access.
+        Object.assign(where, portalInvoiceProjectFilter(portalFilter));
     } else {
         const ctx = await getOwnerContext();
         if (!canSeeFinancials(ctx)) {
@@ -188,7 +210,11 @@ export async function getBilledTimeEntryIds() {
  * La secuencia es independiente por tipo y por año; la restricción única en
  * invoice_number evita duplicados; en caso de carrera se reintenta la transacción.
  */
-async function generateInvoiceNumber(type: billing_type_invoice = "LEGAL", tx?: any): Promise<string> {
+async function generateInvoiceNumber(
+    type: billing_type_invoice = "LEGAL",
+    ownerId?: string,
+    tx?: any
+): Promise<string> {
     const year = new Date().getFullYear();
     const prefix = type === "INTERNAL" ? "INT" : "INV";
     const client = tx || prisma;
@@ -197,6 +223,9 @@ async function generateInvoiceNumber(type: billing_type_invoice = "LEGAL", tx?: 
         where: {
             invoice_number: { startsWith: `${prefix}-${year}-` },
             billing_type: type,
+            // §DATA-4 — scopear la secuencia al workspace del owner: no leer ni
+            // colisionar con la numeración de otro tenant (multi-user 2.0).
+            ...(ownerId && { clients: { user_id: ownerId } }),
         },
         orderBy: { invoice_number: "desc" },
     });
@@ -380,7 +409,7 @@ export async function createInvoiceFromTimeEntries(data: {
             const result = await prisma.$transaction(async (tx) => {
             // Generar número de factura según tipo
             const billingType = data.billing_type || "LEGAL";
-            const invoiceNumber = await generateInvoiceNumber(billingType, tx);
+            const invoiceNumber = await generateInvoiceNumber(billingType, ctx.ownerId, tx);
 
             // Notas: Evitar undefined
             let invoiceNotes = data.notes || null;

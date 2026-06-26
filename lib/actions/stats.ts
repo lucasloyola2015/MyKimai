@@ -139,8 +139,10 @@ export async function getDashboardStats(): Promise<DashboardStats> {
     const today = new Date();
     const todayStart = startOfDay(today);
     const todayEnd = endOfDay(today);
-    const weekStart = startOfWeek(today);
-    const weekEnd = endOfWeek(today);
+    // §REPORTES — semana de Lunes a Domingo, consistente con el chart del
+    // dashboard (weekStartsOn:1) y el portal. Antes usaba el default domingo.
+    const weekStart = startOfWeek(today, { weekStartsOn: 1 });
+    const weekEnd = endOfWeek(today, { weekStartsOn: 1 });
 
     const [
         todayEntries,

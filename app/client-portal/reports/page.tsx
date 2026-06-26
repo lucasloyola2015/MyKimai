@@ -32,8 +32,15 @@ import {
     ResponsiveContainer,
     Cell
 } from "recharts";
-import { PDFDownloadLink } from "@react-pdf/renderer";
+import dynamic from "next/dynamic";
 import { PDFReport } from "@/components/reports/PDFReport";
+
+// §PERF — diferir la carga de @react-pdf hasta que se use (igual que el
+// dashboard): no inflar el bundle inicial del portal sobre conexiones lentas.
+const PDFDownloadLink = dynamic(
+    () => import("@react-pdf/renderer").then((mod) => mod.PDFDownloadLink),
+    { ssr: false }
+);
 
 export default function ClientReportsPage() {
     const [entries, setEntries] = useState<any[]>([]);

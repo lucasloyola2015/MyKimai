@@ -1,8 +1,10 @@
 "use server";
 
 import { prisma } from "@/lib/prisma/client";
-import { getClientContext } from "@/lib/auth/server";
 import { getOwnerContext, canManageWorkspace } from "@/lib/auth/owner-context";
+import { getPortalProjectFilter, projectIdFilter } from "@/lib/auth/portal-context";
+import { createProjectSchema, updateProjectSchema } from "@/lib/validations/projects";
+import { zodErrorMessage } from "@/lib/validations/utils";
 import { revalidatePath } from "next/cache";
 import type { billing_type, project_status, projects } from "@prisma/client";
 import { computeEntryTotals } from "@/lib/utils";
@@ -16,11 +18,15 @@ export type ActionResponse<T> =
  * Obtiene todos los proyectos del usuario
  */
 export async function getProjects(clientId?: string) {
-    const clientContext = await getClientContext();
+    const portalFilter = await getPortalProjectFilter();
 
     const where: any = {};
-    if (clientContext) {
-        where.client_id = clientContext.clientId;
+    if (portalFilter) {
+        // §F4 — portal: scopeado al cliente de la sesión + project_access.
+        // Se ignora el parámetro clientId del request (no es frontera de
+        // seguridad para un cliente del portal).
+        where.client_id = portalFilter.clientId;
+        Object.assign(where, projectIdFilter(portalFilter));
     } else {
         const ctx = await getOwnerContext();
         where.clients = {
@@ -46,11 +52,19 @@ export async function getProjects(clientId?: string) {
  * Obtiene un proyecto con todas sus relaciones
  */
 export async function getProjectWithRelations(id: string) {
-    const clientContext = await getClientContext();
+    const portalFilter = await getPortalProjectFilter();
 
     const where: any = { id };
-    if (clientContext) {
-        where.client_id = clientContext.clientId;
+    if (portalFilter) {
+        where.client_id = portalFilter.clientId;
+        // §F4 — un stakeholder restringido no puede abrir un proyecto fuera de
+        // su project_access.
+        if (
+            portalFilter.kind === "restricted" &&
+            !portalFilter.projectIds.includes(id)
+        ) {
+            return null;
+        }
     } else {
         const ctx = await getOwnerContext();
         where.clients = {
@@ -90,6 +104,11 @@ export async function createProject(data: {
             success: false,
             error: "Solo el dueño del workspace puede crear proyectos.",
         };
+    }
+
+    const parsed = createProjectSchema.safeParse(data);
+    if (!parsed.success) {
+        return { success: false, error: zodErrorMessage(parsed.error) };
     }
 
     // Verificar que el cliente pertenece al workspace
@@ -162,6 +181,11 @@ export async function updateProject(
             success: false,
             error: "Solo el dueño del workspace puede editar proyectos.",
         };
+    }
+
+    const parsed = updateProjectSchema.safeParse(data);
+    if (!parsed.success) {
+        return { success: false, error: zodErrorMessage(parsed.error) };
     }
 
     // Verificar que el proyecto pertenece al workspace

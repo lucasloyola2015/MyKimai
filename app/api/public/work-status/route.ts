@@ -3,6 +3,7 @@ import fs from "fs";
 import path from "path";
 import { format, differenceInMinutes } from "date-fns";
 import { getClientContext } from "@/lib/auth/server";
+import { getPortalProjectFilter } from "@/lib/auth/portal-context";
 import { prisma } from "@/lib/prisma/client";
 
 export async function GET() {
@@ -11,6 +12,12 @@ export async function GET() {
         if (!context) {
             return NextResponse.json({ active: false });
         }
+
+        // §F4 — un stakeholder restringido no debe ver el detalle del timer de
+        // un proyecto fuera de su project_access.
+        const portalFilter = await getPortalProjectFilter();
+        const restrictedProjectIds =
+            portalFilter?.kind === "restricted" ? portalFilter.projectIds : null;
 
         const clientName = context.name;
         const now = new Date();
@@ -39,7 +46,12 @@ export async function GET() {
 
             // Solo mostramos el detalle si el proyecto pertenece a este cliente (Privacidad)
             // Note: need to check if activeEntry.tasks and activeEntry.tasks.projects exist and if client_id match
-            if (activeEntry && activeEntry.tasks?.projects?.client_id === context.clientId) {
+            if (
+                activeEntry &&
+                activeEntry.tasks?.projects?.client_id === context.clientId &&
+                (!restrictedProjectIds ||
+                    restrictedProjectIds.includes(activeEntry.tasks.projects.id))
+            ) {
                 const start = new Date(activeEntry.start_time);
                 const diffMinutes = differenceInMinutes(now, start);
                 const hours = (diffMinutes / 60).toFixed(2);

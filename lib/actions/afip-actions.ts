@@ -5,9 +5,10 @@ import { getAfipClient } from "@/lib/afip";
 import { prisma } from "@/lib/prisma/client";
 import { revalidatePath } from "next/cache";
 import { getUserFiscalSettings } from "@/lib/actions/user-settings";
+import { getOwnerContext, canManageWorkspace } from "@/lib/auth/owner-context";
 
 // Función auxiliar para generar número de nota de crédito
-async function generateCreditNoteNumber(tx?: any): Promise<string> {
+async function generateCreditNoteNumber(ownerId?: string, tx?: any): Promise<string> {
     const year = new Date().getFullYear();
     const prefix = "NC";
     const client = tx || prisma;
@@ -17,6 +18,8 @@ async function generateCreditNoteNumber(tx?: any): Promise<string> {
             invoice_number: {
                 startsWith: `${prefix}-${year}-`,
             },
+            // §DATA-4 — secuencia scopeada al workspace del owner.
+            ...(ownerId && { clients: { user_id: ownerId } }),
         },
         orderBy: {
             invoice_number: "desc",
@@ -37,6 +40,17 @@ async function generateCreditNoteNumber(tx?: any): Promise<string> {
  * Incorporates logging and business logic for total calculation.
  */
 export async function generateFiscalInvoice(invoiceId: string) {
+    // §SEC — Autorización: solo el owner del workspace puede emitir CAE, y solo
+    // sobre facturas propias. Sin este gate, cualquier usuario interno (incluso
+    // un collaborator) podía solicitar un CAE contra una factura de otro tenant.
+    const ctx = await getOwnerContext();
+    if (!canManageWorkspace(ctx)) {
+        return {
+            success: false as const,
+            error: "Solo el dueño del workspace puede emitir comprobantes fiscales.",
+        };
+    }
+
     // §3.5 IMPROVEMENT_PLAN — Idempotencia AFIP:
     //
     // Tomamos un advisory lock derivado del invoiceId ANTES de leer/llamar a AFIP.
@@ -58,8 +72,8 @@ export async function generateFiscalInvoice(invoiceId: string) {
     }
 
     try {
-        const invoice = await prisma.invoices.findUnique({
-            where: { id: invoiceId },
+        const invoice = await prisma.invoices.findFirst({
+            where: { id: invoiceId, clients: { user_id: ctx.ownerId } },
             include: {
                 clients: true,
                 invoice_items: true,
@@ -223,9 +237,19 @@ export async function generateFiscalInvoice(invoiceId: string) {
  * Tipo de comprobante: 3 = Nota de Crédito C (para Monotributistas)
  */
 export async function generateCreditNote(originalInvoiceId: string) {
+    // §SEC — Autorización: solo el owner puede anular comprobantes, y solo los
+    // propios (evita anular facturas de otro tenant vía IDOR).
+    const ctx = await getOwnerContext();
+    if (!canManageWorkspace(ctx)) {
+        return {
+            success: false as const,
+            error: "Solo el dueño del workspace puede emitir notas de crédito.",
+        };
+    }
+
     try {
-        const originalInvoice = await prisma.invoices.findUnique({
-            where: { id: originalInvoiceId },
+        const originalInvoice = await prisma.invoices.findFirst({
+            where: { id: originalInvoiceId, clients: { user_id: ctx.ownerId } },
             include: {
                 clients: true,
                 invoice_items: true,
@@ -294,7 +318,7 @@ export async function generateCreditNote(originalInvoiceId: string) {
         console.log("[AFIP] ========== Fin solicitud CAE NC ==========");
 
         // Generar número de nota de crédito
-        const creditNoteNumber = await generateCreditNoteNumber();
+        const creditNoteNumber = await generateCreditNoteNumber(ctx.ownerId);
 
         // Crear la Nota de Crédito como nueva factura con estado 'sent'
         const creditNote = await prisma.invoices.create({

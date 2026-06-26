@@ -5,6 +5,8 @@ import { getOwnerContext, canManageWorkspace } from "@/lib/auth/owner-context";
 import { revalidatePath } from "next/cache";
 import type { tasks } from "@prisma/client";
 import { recalculateUnbilledEntries } from "./time-entries";
+import { createTaskSchema, updateTaskSchema } from "@/lib/validations/tasks";
+import { zodErrorMessage } from "@/lib/validations/utils";
 
 export type ActionResponse<T> =
     | { success: true; data: T }
@@ -84,6 +86,11 @@ export async function createTask(data: {
         };
     }
 
+    const parsed = createTaskSchema.safeParse(data);
+    if (!parsed.success) {
+        return { success: false, error: zodErrorMessage(parsed.error) };
+    }
+
     // Verificar que el proyecto pertenece al workspace
     const project = await prisma.projects.findFirst({
         where: {
@@ -155,6 +162,11 @@ export async function updateTask(
             success: false,
             error: "Solo el dueño del workspace puede editar tareas.",
         };
+    }
+
+    const parsed = updateTaskSchema.safeParse(data);
+    if (!parsed.success) {
+        return { success: false, error: zodErrorMessage(parsed.error) };
     }
 
     // Verificar que la tarea pertenece al workspace

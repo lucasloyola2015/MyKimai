@@ -7,6 +7,8 @@ import type { clients } from "@prisma/client";
 
 import { createAdminClient } from "@/lib/supabase/admin";
 import { recalculateUnbilledEntries } from "./time-entries";
+import { createClientSchema, updateClientSchema } from "@/lib/validations/clients";
+import { zodErrorMessage } from "@/lib/validations/utils";
 
 export type ActionResponse<T> =
     | { success: true; data: T }
@@ -75,6 +77,11 @@ export async function createClient(data: {
         };
     }
 
+    const parsed = createClientSchema.safeParse(data);
+    if (!parsed.success) {
+        return { success: false, error: zodErrorMessage(parsed.error) };
+    }
+
     try {
         const client = await prisma.clients.create({
             data: {
@@ -131,6 +138,11 @@ export async function updateClient(
             success: false,
             error: "Solo el dueño del workspace puede editar clientes.",
         };
+    }
+
+    const parsed = updateClientSchema.safeParse(data);
+    if (!parsed.success) {
+        return { success: false, error: zodErrorMessage(parsed.error) };
     }
 
     const existing = await prisma.clients.findFirst({
@@ -244,6 +256,20 @@ export async function deleteClient(id: string) {
         return {
             success: false,
             error: "Cliente no encontrado.",
+        };
+    }
+
+    // §DATA-1 — NO borrar un cliente con facturas: el onDelete CASCADE de la DB
+    // destruiría físicamente comprobantes (incl. LEGAL con CAE) cuya retención
+    // exige AFIP. La migración RESTRICT es el backstop duro; este guard da un
+    // mensaje claro antes de llegar a él.
+    const invoiceCount = await prisma.invoices.count({
+        where: { client_id: id },
+    });
+    if (invoiceCount > 0) {
+        return {
+            success: false,
+            error: `No se puede eliminar el cliente: tiene ${invoiceCount} factura(s) asociada(s). La normativa fiscal exige conservarlas. Archivá el cliente en lugar de borrarlo.`,
         };
     }
 

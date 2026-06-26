@@ -3,6 +3,7 @@
 import { prisma } from "@/lib/prisma/client";
 import { getClientContext } from "@/lib/auth/server";
 import { getOwnerContext, canManageWorkspace } from "@/lib/auth/owner-context";
+import { getPortalProjectFilter, taskProjectIdFilter } from "@/lib/auth/portal-context";
 
 /**
  * Obtiene la configuración de branding (logo) del cliente actual
@@ -10,8 +11,17 @@ import { getOwnerContext, canManageWorkspace } from "@/lib/auth/owner-context";
  */
 export async function getClientBranding(clientId: string) {
     try {
-        const client = await prisma.clients.findUnique({
-            where: { id: clientId },
+        // §SEC — resolver/validar el clientId contra el contexto autenticado.
+        // Portal: forzar el cliente de la sesión (ignora el parámetro recibido).
+        // Interno: validar que el cliente pertenezca al workspace del owner.
+        // Antes confiaba en el clientId del request → IDOR de name+logo_url.
+        const clientContext = await getClientContext();
+        const where: any = clientContext
+            ? { id: clientContext.clientId }
+            : { id: clientId, user_id: (await getOwnerContext()).ownerId };
+
+        const client = await prisma.clients.findFirst({
+            where,
             select: {
                 name: true,
                 logo_url: true,
@@ -34,7 +44,7 @@ export async function getClientReportAnalytics(filters: {
     startDate?: Date;
     endDate?: Date;
 }) {
-    const clientContext = await getClientContext();
+    const portalFilter = await getPortalProjectFilter();
 
     const where: any = {
         tasks: {
@@ -42,10 +52,20 @@ export async function getClientReportAnalytics(filters: {
         }
     };
 
-    // Si es cliente del portal, forzar su clientId. Si es team/owner, filtrar
-    // por todos los proyectos del workspace efectivo.
-    if (clientContext) {
-        where.tasks.projects.client_id = clientContext.clientId;
+    // Si es cliente del portal, forzar su clientId y respetar project_access
+    // (§F4). Si es team/owner, filtrar por el workspace efectivo (ownerId).
+    if (portalFilter) {
+        where.tasks.projects.client_id = portalFilter.clientId;
+        const pf = taskProjectIdFilter(portalFilter); // { project_id?: { in } }
+        if (pf.project_id) where.tasks.project_id = pf.project_id;
+        // filters.projectId solo si pertenece a los proyectos permitidos.
+        if (
+            filters.projectId &&
+            (portalFilter.kind === "all" ||
+                portalFilter.projectIds.includes(filters.projectId))
+        ) {
+            where.tasks.project_id = filters.projectId;
+        }
     } else {
         const ctx = await getOwnerContext();
         where.tasks.projects.clients = {
@@ -54,10 +74,9 @@ export async function getClientReportAnalytics(filters: {
         if (filters.clientId) {
             where.tasks.projects.client_id = filters.clientId;
         }
-    }
-
-    if (filters.projectId) {
-        where.tasks.project_id = filters.projectId;
+        if (filters.projectId) {
+            where.tasks.project_id = filters.projectId;
+        }
     }
 
     if (filters.startDate || filters.endDate) {

@@ -1,8 +1,9 @@
 "use server";
 
 import { prisma } from "@/lib/prisma/client";
-import { getAuthUser, getClientContext } from "@/lib/auth/server";
+import { getAuthUser } from "@/lib/auth/server";
 import { getOwnerContext, canManageWorkspace } from "@/lib/auth/owner-context";
+import { getPortalProjectFilter, taskProjectIdFilter } from "@/lib/auth/portal-context";
 import { revalidatePath } from "next/cache";
 import { differenceInMinutes, format } from "date-fns";
 import type { time_entries } from "@prisma/client";
@@ -517,26 +518,35 @@ export async function getTimeEntries(filters?: {
     endDate?: Date;
     onlyCompleted?: boolean; // Solo entradas con end_time
 }) {
-    const clientContext = await getClientContext();
+    const portalFilter = await getPortalProjectFilter();
 
     const where: any = {};
 
-    if (clientContext) {
+    if (portalFilter) {
+        // Portal: SIEMPRE scopeado al cliente de la sesión y a los proyectos
+        // accesibles vía project_access (§F4). NUNCA se acepta filters.clientId
+        // del request (evita IDOR cross-tenant); filters.projectId solo se honra
+        // si pertenece a los proyectos permitidos.
         where.tasks = {
-            projects: {
-                client_id: clientContext.clientId,
-            },
+            projects: { client_id: portalFilter.clientId },
+            ...taskProjectIdFilter(portalFilter),
         };
+        if (
+            filters?.projectId &&
+            (portalFilter.kind === "all" ||
+                portalFilter.projectIds.includes(filters.projectId))
+        ) {
+            where.tasks.project_id = filters.projectId;
+        }
     } else {
-        // Para admin/team_member, ver todas las entradas del workspace efectivo.
+        // Para admin/team_member/owner, ver todas las entradas del workspace
+        // efectivo. filters.clientId/projectId son restricciones ADICIONALES
+        // (AND) sobre el scope de ownerId, nunca lo reemplazan.
         const ctx = await getOwnerContext();
-        where.tasks = {
-            projects: {
-                clients: {
-                    user_id: ctx.ownerId
-                }
-            }
-        };
+        const projectScope: any = { clients: { user_id: ctx.ownerId } };
+        if (filters?.clientId) projectScope.client_id = filters.clientId;
+        where.tasks = { projects: projectScope };
+        if (filters?.projectId) where.tasks.project_id = filters.projectId;
     }
 
     if (filters?.onlyCompleted) {
@@ -558,23 +568,6 @@ export async function getTimeEntries(filters?: {
         where.start_time = {
             ...where.start_time,
             lte: endOfDay,
-        };
-    }
-
-    if (filters?.clientId) {
-        where.tasks = {
-            ...where.tasks,
-            projects: {
-                ...where.tasks?.projects,
-                client_id: filters.clientId,
-            },
-        };
-    }
-
-    if (filters?.projectId) {
-        where.tasks = {
-            ...where.tasks,
-            project_id: filters.projectId,
         };
     }
 
@@ -1135,14 +1128,13 @@ export async function executeConsolidation() {
  * Sigue la misión de blindaje financiero delegando la cascada a la DB.
  */
 export async function calculateEntryAmount(entryId: string): Promise<ActionResponse<time_entries>> {
-    const user = await getAuthUser();
+    // §SEC — verificar pertenencia al workspace / autoría antes de mutar el
+    // monto facturable (evita IDOR de manipulación financiera cross-tenant).
+    const guard = await ensureCanOperateEntry(entryId);
+    if (!guard.ok) return guard.response;
 
     try {
-        const currentEntry = await prisma.time_entries.findUnique({
-            where: { id: entryId },
-        });
-
-        if (!currentEntry) throw new Error("Entrada no encontrada");
+        const currentEntry = guard.entry;
 
         // Obtenemos la tarifa de la SSOT (calculateRate ya maneja la jerarquía de facturabilidad)
         const rate = await calculateRate(currentEntry.task_id);
