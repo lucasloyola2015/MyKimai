@@ -64,3 +64,8 @@ next-env.d.ts
 /columns.txt
 /test-prisma.ts
 
+# Claude Code — local (no versionar worktrees ni settings locales).
+# Sí versionamos .claude/commands/ (slash commands compartidos del proyecto).
+/.claude/worktrees/
+/.claude/settings.local.json
+
