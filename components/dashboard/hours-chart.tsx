@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useTheme } from "next-themes";
-import { createClientComponentClient } from "@/lib/supabase/client";
+import { getActorChartEntries } from "@/lib/actions/stats";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import {
@@ -84,7 +84,6 @@ export function HoursChart() {
     clientProject: string;
     hours: number;
   } | null>(null);
-  const supabase = createClientComponentClient();
   const { resolvedTheme } = useTheme();
   const isDark = resolvedTheme === "dark";
   const chartGridStroke = isDark ? "hsl(0,0%,25%)" : undefined;
@@ -97,12 +96,6 @@ export function HoursChart() {
   const loadData = async () => {
     setLoading(true);
     try {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-
-      if (!user) return;
-
       // Calcular rango de fechas según el período y offset
       const now = new Date();
       let startDate: Date;
@@ -145,20 +138,15 @@ export function HoursChart() {
         end: format(endDate, "dd/MM/yyyy"),
       });
 
-      // Obtener entradas de tiempo con relaciones
-      const { data: entries, error } = await supabase
-        .from("time_entries")
-        .select("*, tasks(name, projects(name, clients(id, name)))")
-        .eq("user_id", user.id)
-        .gte("start_time", startDate.toISOString())
-        .lte("start_time", endDate.toISOString())
-        .order("start_time", { ascending: true });
-
-      if (error) throw error;
+      // Obtener entradas de tiempo con relaciones (Server Action / Prisma).
+      const entries = await getActorChartEntries(
+        startDate.toISOString(),
+        endDate.toISOString()
+      );
 
       // Procesar datos
       const processedData = processEntries(
-        entries as TimeEntryWithRelations[],
+        entries as unknown as TimeEntryWithRelations[],
         period,
         startDate,
         endDate

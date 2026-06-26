@@ -140,6 +140,19 @@ export function TopBar() {
       <div className="flex-1 flex items-center gap-2 md:gap-3 min-w-0">
         {activeEntry ? (
           <div className="flex items-center gap-1.5 shrink-0">
+            {/* Iniciar otra tarea en paralelo (timers concurrentes) */}
+            <Button
+              variant="default"
+              size="sm"
+              onClick={() => router.push("/dashboard/time-tracker")}
+              disabled={isLoading}
+              className="flex items-center gap-1.5 h-8 text-xs md:text-sm font-bold bg-emerald-600 hover:bg-emerald-700 text-white"
+              title="Iniciar una nueva tarea en paralelo"
+            >
+              <Play className="h-3.5 w-3.5 fill-current" />
+              <span className="hidden sm:inline">NUEVA</span>
+              <span className="sm:hidden">+</span>
+            </Button>
             <Button
               variant="destructive"
               size="sm"

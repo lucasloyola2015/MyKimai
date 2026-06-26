@@ -9,6 +9,46 @@ import {
 import { startOfDay, endOfDay, startOfWeek, endOfWeek } from "date-fns";
 
 /**
+ * §HoursChart — Entradas de tiempo del ACTOR en un rango, para el gráfico de
+ * "Horas Trabajadas" del dashboard. Vía Prisma (bypasea RLS): antes el gráfico
+ * leía con supabase-js (anon key + RLS), y al embeber `projects` se topaba con la
+ * recursión infinita de las políticas RLS → la query fallaba y el gráfico quedaba
+ * vacío. Server Action + ownerId/actorId = primera línea de defensa (regla de oro #1).
+ */
+export async function getActorChartEntries(startISO: string, endISO: string) {
+    const ctx = await getOwnerContext();
+
+    const entries = await prisma.time_entries.findMany({
+        where: {
+            user_id: ctx.actorId,
+            start_time: {
+                gte: new Date(startISO),
+                lte: new Date(endISO),
+            },
+        },
+        select: {
+            id: true,
+            start_time: true,
+            duration_neto: true,
+            tasks: {
+                select: {
+                    name: true,
+                    projects: {
+                        select: {
+                            name: true,
+                            clients: { select: { id: true, name: true } },
+                        },
+                    },
+                },
+            },
+        },
+        orderBy: { start_time: "asc" },
+    });
+
+    return entries;
+}
+
+/**
  * Estadísticas para el sidebar/navegación.
  *
  * Para un usuario interno (owner o team_member):
