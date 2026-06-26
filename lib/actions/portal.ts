@@ -21,8 +21,14 @@ import {
 import { es } from "date-fns/locale";
 import { getUsdExchangeRate } from "./exchange";
 import { computeEntryTotals, computeMinutesPerHour } from "@/lib/utils";
+import { arZoned, arToUtc, startOfMonthAr } from "@/lib/timezone";
 
 const WEEK_STARTS_ON = 1; // Lunes
+
+// §TZ — todo el bucketing por día/semana/mes del portal se hace en hora de
+// Argentina: se calcula sobre el wall-clock AR (arZoned) y solo se convierte a
+// UTC (arToUtc) en el borde de la query a la DB. Así el trabajo nocturno no cae
+// en el día siguiente en los gráficos que ve/audita el cliente.
 
 /**
  * Obtiene los datos resumidos para el dashboard del portal de clientes
@@ -37,8 +43,9 @@ export async function getPortalDashboardData() {
     const restrictedProjectIds = portalFilter?.kind === "restricted" ? portalFilter.projectIds : null;
 
     const now = new Date();
-    const firstDayOfMonth = startOfMonth(now);
-    const firstDayPrevMonth = startOfMonth(subMonths(now, 1));
+    // §TZ — límites de mes en hora de Argentina (instantes UTC para la query).
+    const firstDayOfMonth = startOfMonthAr(now);
+    const firstDayPrevMonth = startOfMonthAr(subMonths(now, 1));
 
     // 1. Obtener todas las facturas impagas y calcular total
     const unpaidInvoices = await prisma.invoices.findMany({
@@ -228,7 +235,7 @@ export async function getPortalChartData(
     const portalFilter = await getPortalProjectFilter();
     const restrictedProjectIds = portalFilter?.kind === "restricted" ? portalFilter.projectIds : null;
 
-    const now = new Date();
+    const now = arZoned(new Date()); // §TZ — wall-clock AR; todas las ops de fecha siguen en AR.
     const ROLLING_PERIODS = 7;
     let startDate: Date;
     let endDate: Date;
@@ -265,7 +272,7 @@ export async function getPortalChartData(
     const entries = await prisma.time_entries.findMany({
         where: {
             tasks: { projects: { client_id: context.clientId, ...(restrictedProjectIds && { id: { in: restrictedProjectIds } }) } },
-            start_time: { gte: startDate, lte: endDate },
+            start_time: { gte: arToUtc(startDate), lte: arToUtc(endDate) },
         },
         include: { time_entry_breaks: true, tasks: { include: { projects: { select: { name: true } } } } },
         orderBy: { start_time: "asc" },
@@ -278,7 +285,7 @@ export async function getPortalChartData(
         const totals = computeEntryTotals({ ...entry, breaks: entry.time_entry_breaks } as any);
         const hours = totals.duration_neto / 60;
         const projectName = entry.tasks?.projects?.name ?? "Sin proyecto";
-        const entryDate = new Date(entry.start_time);
+        const entryDate = arZoned(entry.start_time); // §TZ — bucketing en hora AR
         let periodKey: string;
         switch (period) {
             case "day":
@@ -354,19 +361,30 @@ export async function getPortalChartDataHourly(
     const portalFilter = await getPortalProjectFilter();
     const restrictedProjectIds = portalFilter?.kind === "restricted" ? portalFilter.projectIds : null;
 
-    const dayStart = startOfDay(new Date(dayStartIso));
+    const dayStart = startOfDay(arZoned(new Date(dayStartIso))); // §TZ — wall-clock AR
     const dayEnd = endOfDay(dayStart);
 
     const entries = await prisma.time_entries.findMany({
         where: {
             tasks: { projects: { client_id: context.clientId, ...(restrictedProjectIds && { id: { in: restrictedProjectIds } }) } },
-            start_time: { gte: dayStart, lte: dayEnd },
+            start_time: { gte: arToUtc(dayStart), lte: arToUtc(dayEnd) },
         },
         include: { time_entry_breaks: true, tasks: { include: { projects: { select: { name: true } } } } },
         orderBy: { start_time: "asc" },
     });
 
-    const perHour = computeMinutesPerHour(dayStart, entries.map(e => ({ ...e, breaks: e.time_entry_breaks })) as any);
+    // §TZ — pasar las entradas en wall-clock AR para que el bucketing por hora sea AR.
+    const arEntries = entries.map((e) => ({
+        ...e,
+        start_time: arZoned(e.start_time),
+        end_time: e.end_time ? arZoned(e.end_time) : null,
+        breaks: e.time_entry_breaks.map((b) => ({
+            ...b,
+            start_time: arZoned(b.start_time),
+            end_time: b.end_time ? arZoned(b.end_time) : null,
+        })),
+    }));
+    const perHour = computeMinutesPerHour(dayStart, arEntries as any);
 
     const data: PortalHourlyDataPoint[] = perHour.map(({ hour, minutes, percent }) => ({
         hour,
@@ -399,13 +417,13 @@ export async function getPortalChartDataInRange(
     const portalFilter = await getPortalProjectFilter();
     const restrictedProjectIds = portalFilter?.kind === "restricted" ? portalFilter.projectIds : null;
 
-    const startDate = startOfDay(new Date(rangeStart));
-    const endDate = endOfDay(new Date(rangeEnd));
+    const startDate = startOfDay(arZoned(new Date(rangeStart))); // §TZ — wall-clock AR
+    const endDate = endOfDay(arZoned(new Date(rangeEnd)));
 
     const entries = await prisma.time_entries.findMany({
         where: {
             tasks: { projects: { client_id: context.clientId, ...(restrictedProjectIds && { id: { in: restrictedProjectIds } }) } },
-            start_time: { gte: startDate, lte: endDate },
+            start_time: { gte: arToUtc(startDate), lte: arToUtc(endDate) },
         },
         include: { time_entry_breaks: true, tasks: { include: { projects: { select: { name: true } } } } },
         orderBy: { start_time: "asc" },
@@ -418,7 +436,7 @@ export async function getPortalChartDataInRange(
         const totals = computeEntryTotals({ ...entry, breaks: entry.time_entry_breaks } as any);
         const hours = totals.duration_neto / 60;
         const projectName = entry.tasks?.projects?.name ?? "Sin proyecto";
-        const entryDate = new Date(entry.start_time);
+        const entryDate = arZoned(entry.start_time); // §TZ — bucketing en hora AR
         let periodKey: string;
         if (period === "day") {
             periodKey = format(entryDate, "dd/MM");

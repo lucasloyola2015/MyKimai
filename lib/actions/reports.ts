@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma/client";
 import { getClientContext } from "@/lib/auth/server";
 import { getOwnerContext, canManageWorkspace } from "@/lib/auth/owner-context";
 import { getPortalProjectFilter, taskProjectIdFilter } from "@/lib/auth/portal-context";
+import { arDayKey } from "@/lib/timezone";
 
 /**
  * Obtiene la configuración de branding (logo) del cliente actual
@@ -107,7 +108,9 @@ export async function getClientReportAnalytics(filters: {
         // Solo incluir entradas facturables en las analíticas de tiempo facturable
         if (entry.billable === false) return;
 
-        const date = entry.start_time.toISOString().split('T')[0];
+        // §TZ — agrupar por día en hora de Argentina, no UTC (el trabajo nocturno
+        // caía en el día siguiente en el reporte que audita el cliente).
+        const date = arDayKey(entry.start_time);
         const projectName = entry.tasks.projects.name;
         const duration = entry.duration_neto || 0;
 

@@ -6,7 +6,7 @@ import {
     getOwnerContext,
     canSeeFinancials,
 } from "@/lib/auth/owner-context";
-import { startOfDay, endOfDay, startOfWeek, endOfWeek } from "date-fns";
+import { startOfDayAr, endOfDayAr, startOfWeekAr, endOfWeekAr } from "@/lib/timezone";
 
 /**
  * §HoursChart — Entradas de tiempo del ACTOR en un rango, para el gráfico de
@@ -111,8 +111,8 @@ export async function getNavStats() {
                     where: {
                         user_id: ctx.actorId,
                         start_time: {
-                            gte: startOfDay(new Date()),
-                            lte: endOfDay(new Date()),
+                            gte: startOfDayAr(new Date()),
+                            lte: endOfDayAr(new Date()),
                         },
                     },
                     select: { duration_neto: true },
@@ -177,12 +177,12 @@ export async function getDashboardStats(): Promise<DashboardStats> {
     const showFinancials = canSeeFinancials(ctx);
 
     const today = new Date();
-    const todayStart = startOfDay(today);
-    const todayEnd = endOfDay(today);
-    // §REPORTES — semana de Lunes a Domingo, consistente con el chart del
-    // dashboard (weekStartsOn:1) y el portal. Antes usaba el default domingo.
-    const weekStart = startOfWeek(today, { weekStartsOn: 1 });
-    const weekEnd = endOfWeek(today, { weekStartsOn: 1 });
+    // §TZ — "hoy" y "esta semana" en hora de Argentina (no UTC del server), y
+    // semana de Lunes a Domingo (consistente con el chart y el portal).
+    const todayStart = startOfDayAr(today);
+    const todayEnd = endOfDayAr(today);
+    const weekStart = startOfWeekAr(today);
+    const weekEnd = endOfWeekAr(today);
 
     const [
         todayEntries,
