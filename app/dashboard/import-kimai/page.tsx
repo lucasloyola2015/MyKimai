@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { createClientComponentClient } from "@/lib/supabase/client";
+import { importKimaiEntries, type KimaiRow } from "@/lib/actions/import-kimai";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -36,7 +36,6 @@ export default function ImportKimaiPage() {
     };
   } | null>(null);
   const router = useRouter();
-  const supabase = createClientComponentClient();
 
   // Función para parsear CSV manualmente
   const parseCSV = (text: string): CSVRow[] => {
@@ -79,21 +78,6 @@ export default function ImportKimaiPage() {
     return rows;
   };
 
-  // Función para convertir duración "5:08" a minutos
-  const durationToMinutes = (duration: string): number => {
-    const parts = duration.split(":");
-    if (parts.length !== 2) return 0;
-    const hours = parseInt(parts[0], 10) || 0;
-    const minutes = parseInt(parts[1], 10) || 0;
-    return hours * 60 + minutes;
-  };
-
-  // Función para combinar fecha y hora
-  const combineDateTime = (date: string, time: string): string => {
-    // date: "2026-01-16", time: "07:07"
-    return `${date}T${time}:00`;
-  };
-
   const handleImport = async () => {
     if (!file) return;
 
@@ -101,186 +85,12 @@ export default function ImportKimaiPage() {
     setResult(null);
 
     try {
-      // Obtener usuario autenticado
-      const {
-        data: { user },
-        error: userError,
-      } = await supabase.auth.getUser();
-
-      if (userError || !user) {
-        throw new Error("No se pudo obtener el usuario autenticado");
-      }
-
-      // Leer archivo CSV
+      // El CSV se parsea en el cliente; el find-or-create + insert lo hace el
+      // Server Action (Prisma + ownerId), no supabase-js anon.
       const text = await file.text();
       const rows = parseCSV(text);
-
-      if (rows.length === 0) {
-        throw new Error("El archivo CSV está vacío o no tiene el formato correcto");
-      }
-
-      // Extraer datos únicos del CSV
-      const firstRow = rows[0];
-      const clientName = firstRow.Customer;
-      const projectName = firstRow.Project;
-      const taskName = firstRow.Activity;
-      const hourlyRate = parseFloat(firstRow["Hourly price"]) || 25;
-      const currency = firstRow.Currency || "USD";
-
-      // 1. Crear o obtener cliente
-      let clientId: string;
-      const { data: existingClient } = await supabase
-        .from("clients")
-        .select("id")
-        .eq("name", clientName)
-        .eq("user_id", user.id)
-        .single();
-
-      if (existingClient) {
-        clientId = existingClient.id;
-        console.log("Cliente existente encontrado:", clientId);
-      } else {
-        const { data: newClient, error: clientError } = await supabase
-          .from("clients")
-          .insert({
-            user_id: user.id,
-            name: clientName,
-            currency: currency,
-            default_rate: hourlyRate,
-          })
-          .select("id")
-          .single();
-
-        if (clientError || !newClient) {
-          throw new Error(`Error al crear cliente: ${clientError?.message}`);
-        }
-        clientId = newClient.id;
-        console.log("Cliente creado:", clientId);
-      }
-
-      // 2. Crear o obtener proyecto
-      let projectId: string;
-      const { data: existingProject } = await supabase
-        .from("projects")
-        .select("id")
-        .eq("name", projectName)
-        .eq("client_id", clientId)
-        .single();
-
-      if (existingProject) {
-        projectId = existingProject.id;
-        console.log("Proyecto existente encontrado:", projectId);
-      } else {
-        // Calcular fechas de inicio y fin desde las entradas
-        const dates = rows.map((r) => r.Date).sort();
-        const startDate = dates[0];
-        const endDate = dates[dates.length - 1];
-
-        const { data: newProject, error: projectError } = await supabase
-          .from("projects")
-          .insert({
-            client_id: clientId,
-            name: projectName,
-            currency: currency,
-            rate: hourlyRate,
-            billing_type: "hourly",
-            status: "active",
-            start_date: startDate,
-            end_date: endDate,
-          })
-          .select("id")
-          .single();
-
-        if (projectError || !newProject) {
-          throw new Error(`Error al crear proyecto: ${projectError?.message}`);
-        }
-        projectId = newProject.id;
-        console.log("Proyecto creado:", projectId);
-      }
-
-      // 3. Crear o obtener tarea
-      let taskId: string;
-      const { data: existingTask } = await supabase
-        .from("tasks")
-        .select("id")
-        .eq("name", taskName)
-        .eq("project_id", projectId)
-        .single();
-
-      if (existingTask) {
-        taskId = existingTask.id;
-        console.log("Tarea existente encontrada:", taskId);
-      } else {
-        const { data: newTask, error: taskError } = await supabase
-          .from("tasks")
-          .insert({
-            project_id: projectId,
-            name: taskName,
-            rate: hourlyRate,
-          })
-          .select("id")
-          .single();
-
-        if (taskError || !newTask) {
-          throw new Error(`Error al crear tarea: ${taskError?.message}`);
-        }
-        taskId = newTask.id;
-        console.log("Tarea creada:", taskId);
-      }
-
-      // 4. Importar entradas de tiempo
-      const timeEntries = rows.map((row) => {
-        const startTime = combineDateTime(row.Date, row.From);
-        const endTime = combineDateTime(row.Date, row.To);
-        const durationMinutes = durationToMinutes(row.Duration);
-        const billable = row.Billable === "1" || row.Billable === "true";
-
-        return {
-          user_id: user.id,
-          task_id: taskId,
-          description: row.Description || null,
-          start_time: startTime,
-          end_time: endTime,
-          duration_total: durationMinutes,
-          duration_neto: durationMinutes,
-          billable: billable,
-          rate_applied: hourlyRate,
-        };
-      });
-
-      // Insertar en lotes para evitar problemas de tamaño
-      const batchSize = 10;
-      let imported = 0;
-      let errors = 0;
-
-      for (let i = 0; i < timeEntries.length; i += batchSize) {
-        const batch = timeEntries.slice(i, i + batchSize);
-        const { error: insertError } = await supabase
-          .from("time_entries")
-          .insert(batch);
-
-        if (insertError) {
-          console.error(`Error al insertar lote ${i / batchSize + 1}:`, insertError);
-          errors += batch.length;
-        } else {
-          imported += batch.length;
-        }
-      }
-
-      if (errors > 0 && imported === 0) {
-        throw new Error(`Error al importar entradas de tiempo. ${errors} errores.`);
-      }
-
-      setResult({
-        success: true,
-        message: `Importación completada exitosamente. ${imported} entradas importadas.${errors > 0 ? ` ${errors} errores.` : ""}`,
-        details: {
-          clientCreated: !existingClient,
-          projectCreated: !existingProject,
-          taskCreated: !existingTask,
-          timeEntriesImported: imported,
-        },
-      });
+      const res = await importKimaiEntries(rows as KimaiRow[]);
+      setResult(res);
     } catch (error: any) {
       console.error("Error en importación:", error);
       setResult({
