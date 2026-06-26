@@ -49,6 +49,3 @@ export function resolveRate(context: RateContext): RateResult {
 
   return { rate: null, source: null };
 }
-
-// Re-exportar getRateContext desde lib/actions/rates
-export { getRateContext, type RateContext as RateContextType } from "@/lib/actions/rates";
