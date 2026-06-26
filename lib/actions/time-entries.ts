@@ -248,6 +248,39 @@ async function calculateRate(taskId: string): Promise<number> {
 }
 
 /**
+ * §4.3 — Encuentra el paquete de horas que debe consumir una entrada facturable.
+ * Reglas: paquete del mismo cliente, y del proyecto si el paquete es por-proyecto
+ * (los paquetes con project_id NULL aplican a todo el cliente); no vencido; con
+ * saldo disponible (hours_used < hours). Prefiere el paquete POR-PROYECTO sobre el
+ * general del cliente, y dentro de cada grupo elige FIFO (el comprado primero).
+ * Devuelve el id del paquete o null si no hay ninguno elegible.
+ */
+async function findPackageForEntry(
+    clientId: string,
+    projectId: string
+): Promise<string | null> {
+    const candidates = await prisma.hour_packages.findMany({
+        where: {
+            client_id: clientId,
+            OR: [{ project_id: null }, { project_id: projectId }],
+        },
+    });
+
+    const now = new Date();
+    const eligible = candidates
+        .filter((p) => !p.expires_at || p.expires_at >= now)
+        .filter((p) => Number(p.hours) - Number(p.hours_used) > 0)
+        .sort((a, b) => {
+            const aProj = a.project_id ? 0 : 1;
+            const bProj = b.project_id ? 0 : 1;
+            if (aProj !== bProj) return aProj - bProj; // proyecto-específico primero
+            return new Date(a.purchased_at).getTime() - new Date(b.purchased_at).getTime(); // FIFO
+        });
+
+    return eligible[0]?.id ?? null;
+}
+
+/**
  * Inicia un nuevo time entry
  */
 export async function startTimeEntry(
@@ -421,6 +454,18 @@ export async function stopTimeEntry(
     const netDuration = calculateNetDurationMinutes(entry.start_time, endTime, currentBreaks);
     const finalAmount = rate === 0 ? 0 : Number(((netDuration / 60) * rate).toFixed(2));
 
+    // §4.3 — auto-asignar paquete de horas si la entrada es facturable y hay un
+    // paquete elegible (FIFO de scope). Las horas cubiertas por paquete quedan
+    // prepagas y se excluyen de la factura por hora. El trigger de DB recalcula
+    // hour_packages.hours_used. Se puede cambiar/quitar a mano con assignEntryPackage.
+    const consumedPackageId =
+        rate > 0
+            ? await findPackageForEntry(
+                  (entry as any).tasks.projects.client_id,
+                  (entry as any).tasks.project_id
+              )
+            : null;
+
     try {
         // Actualizar entry con el monto calculado por la SSOT del código
         const updatedEntry = await prisma.time_entries.update({
@@ -431,6 +476,7 @@ export async function stopTimeEntry(
                 rate_applied: rate,
                 amount: finalAmount,
                 billable: rate > 0,
+                consumed_from_package_id: consumedPackageId,
                 updated_at: new Date(), // Forzar disparador (pero ya enviamos el amount)
             },
             include: {
@@ -1218,6 +1264,77 @@ export async function calculateEntryAmount(entryId: string): Promise<ActionRespo
 // Mantener el nombre anterior por compatibilidad con la UI si es necesario,
 // pero redirigir a la nueva función centralizada.
 export const recalculateTimeEntryRate = calculateEntryAmount;
+
+/**
+ * §4.3 — Override manual del paquete que consume una entrada (o quitarlo con
+ * null). Solo el owner (decisión financiera). El trigger de DB recalcula
+ * hour_packages.hours_used de los paquetes afectados.
+ */
+export async function assignEntryPackage(
+    entryId: string,
+    packageId: string | null
+): Promise<ActionResponse<null>> {
+    const ctx = await getOwnerContext();
+    if (!canManageWorkspace(ctx)) {
+        return { success: false, error: "Solo el dueño del workspace puede asignar paquetes." };
+    }
+
+    const entry = await prisma.time_entries.findFirst({
+        where: {
+            id: entryId,
+            tasks: { projects: { clients: { user_id: ctx.ownerId } } },
+        },
+        include: { tasks: { select: { projects: { select: { client_id: true } } } } },
+    });
+    if (!entry) {
+        return { success: false, error: "Entrada no encontrada." };
+    }
+
+    if (packageId) {
+        const pkg = await prisma.hour_packages.findFirst({
+            where: { id: packageId, client_id: (entry as any).tasks.projects.client_id },
+            select: { id: true },
+        });
+        if (!pkg) {
+            return { success: false, error: "El paquete no pertenece al cliente de esta entrada." };
+        }
+    }
+
+    try {
+        await prisma.time_entries.update({
+            where: { id: entryId },
+            data: { consumed_from_package_id: packageId, updated_at: new Date() },
+        });
+        revalidatePath("/dashboard/my-hours");
+        revalidatePath("/dashboard/hour-packages");
+        return { success: true, data: null };
+    } catch (error) {
+        console.error("Error assignEntryPackage:", error);
+        return { success: false, error: "Error al asignar el paquete" };
+    }
+}
+
+/**
+ * §4.3 — Paquetes de horas de un cliente, para el selector de override en Mis Horas.
+ */
+export async function getAssignablePackages(clientId: string) {
+    const ctx = await getOwnerContext();
+    if (!canManageWorkspace(ctx)) return [];
+
+    return prisma.hour_packages.findMany({
+        where: { client_id: clientId, clients: { user_id: ctx.ownerId } },
+        select: {
+            id: true,
+            hours: true,
+            hours_used: true,
+            project_id: true,
+            currency: true,
+            expires_at: true,
+            projects: { select: { name: true } },
+        },
+        orderBy: { purchased_at: "asc" },
+    });
+}
 
 /**
  * Recalcula rate_applied y amount de todos los time entries no facturados

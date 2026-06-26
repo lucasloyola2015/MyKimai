@@ -119,11 +119,13 @@ export default function HourPackagesPage() {
     e.preventDefault();
 
     try {
+      // §4.3 — NO escribir hours_used: lo mantiene el trigger de DB derivándolo
+      // de las entradas linkeadas. En create, el default 0 de la DB aplica; en
+      // update, dejarlo intacto (antes lo reseteaba a 0 en cada edición).
       const packageData = {
         client_id: formData.client_id,
         project_id: formData.project_id || null,
         hours: parseFloat(formData.hours),
-        hours_used: 0,
         price: parseFloat(formData.price),
         currency: formData.currency,
         expires_at: formData.expires_at || null,

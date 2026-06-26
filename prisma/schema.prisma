@@ -511,6 +511,7 @@ model hour_packages {
   clients      clients   @relation(fields: [client_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
   projects     projects? @relation(fields: [project_id], references: [id], onUpdate: NoAction)
   reserved_for client_users? @relation("hour_packages_reserved_for", fields: [reserved_for_client_user_id], references: [id], onUpdate: NoAction)
+  consumed_entries time_entries[] @relation("hour_packages_consumed")
 
   @@index([client_id], map: "idx_hour_packages_client_id")
   @@index([expires_at], map: "idx_hour_packages_expires_at")
@@ -672,11 +673,16 @@ model time_entries {
   /// §7 IMPROVEMENT_PLAN — Asociación opcional a un hito del proyecto.
   /// Permite reportar progreso por hito al cliente.
   milestone_id      String?             @db.Uuid
+  /// §4.3 — Paquete de horas del que esta entrada consumió (auto al frenar por
+  /// FIFO de scope, o manual). Las entradas con paquete NO se facturan por hora
+  /// (ya están prepagas). hour_packages.hours_used se mantiene por trigger.
+  consumed_from_package_id String?       @db.Uuid
   invoice_items     invoice_items[]
   invoices          invoices?           @relation(fields: [invoice_id], references: [id], onUpdate: NoAction)
   tasks             tasks               @relation(fields: [task_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
   users             users               @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
   milestones        milestones?         @relation(fields: [milestone_id], references: [id], onUpdate: NoAction)
+  consumed_from_package hour_packages?  @relation("hour_packages_consumed", fields: [consumed_from_package_id], references: [id], onDelete: SetNull, onUpdate: NoAction)
   time_entry_breaks time_entry_breaks[]
 
   @@index([billable], map: "idx_time_entries_billable")
@@ -687,6 +693,7 @@ model time_entries {
   @@index([is_billed, billable], map: "idx_time_entries_unbilled")
   /// §7 — lookup de time_entries por milestone para cálculo de progreso.
   @@index([milestone_id], map: "idx_time_entries_milestone_id")
+  @@index([consumed_from_package_id], map: "idx_time_entries_consumed_pkg")
   @@index([user_id, start_time(sort: Desc)], map: "idx_time_entries_user_date")
   @@index([user_id], map: "idx_time_entries_user_id")
   @@schema("public")

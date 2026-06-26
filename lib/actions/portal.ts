@@ -153,6 +153,8 @@ export async function getPortalUnbilledSummary(): Promise<
         where: {
             is_billed: false,
             billable: true,
+            // §4.3 — las horas cubiertas por un paquete ya están prepagas.
+            consumed_from_package_id: null,
             tasks: {
                 projects: {
                     client_id: context.clientId,

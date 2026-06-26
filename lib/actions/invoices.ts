@@ -158,6 +158,9 @@ export async function getUnbilledTimeEntries(clientId?: string) {
             },
             billable: true,
             is_billed: false,
+            // §4.3 — las horas cubiertas por un paquete ya están prepagas → no
+            // se facturan por hora.
+            consumed_from_package_id: null,
         },
         include: {
             tasks: {
@@ -290,6 +293,9 @@ export async function createInvoiceFromTimeEntries(data: {
                 in: data.time_entry_ids,
             },
             billable: true,
+            // §4.3 — guard: nunca facturar por hora una entrada ya cubierta por
+            // un paquete (prepaga), aunque su id llegue en la selección.
+            consumed_from_package_id: null,
             tasks: {
                 projects: {
                     client_id: data.client_id,
@@ -746,6 +752,8 @@ export async function getClientBillingSummary() {
             },
             billable: true,
             is_billed: false,
+            // §4.3 — excluir horas prepagas por paquete del cálculo de pendiente.
+            consumed_from_package_id: null,
         },
         include: {
             tasks: {

@@ -35,6 +35,8 @@ import {
   previewConsolidation,
   executeConsolidation,
   recalculateTimeEntryRate,
+  assignEntryPackage,
+  getAssignablePackages,
   type ConsolidationPreview
 } from "@/lib/actions/time-entries";
 import { format, differenceInMinutes } from "date-fns";
@@ -70,6 +72,9 @@ export default function Page() {
   const [recalculatingIds, setRecalculatingIds] = useState<Set<string>>(new Set());
   /** Estado controlado por descanso: start/end en "HH:mm" para envío atómico (ambos siempre al servidor) */
   const [breakFormValues, setBreakFormValues] = useState<Record<string, { start: string; end: string }>>({});
+  // §4.3 — paquetes de horas asignables al cliente de la entrada en edición.
+  const [entryPackages, setEntryPackages] = useState<any[]>([]);
+  const [assigningPackage, setAssigningPackage] = useState(false);
 
   useEffect(() => {
     loadData();
@@ -185,7 +190,42 @@ export default function Page() {
       };
     });
     setBreakFormValues(breakValues);
+    // §4.3 — cargar los paquetes del cliente para el override de consumo.
+    setEntryPackages([]);
+    if (client?.id) {
+      getAssignablePackages(client.id)
+        .then((pkgs) => setEntryPackages(pkgs || []))
+        .catch(() => setEntryPackages([]));
+    }
     setIsDialogOpen(true);
+  };
+
+  // §4.3 — asignar/quitar a mano el paquete del que consume la entrada.
+  const handleAssignPackage = async (packageId: string | null) => {
+    if (!editingEntry) return;
+    setAssigningPackage(true);
+    try {
+      const result = await assignEntryPackage(editingEntry.id, packageId);
+      if (!result.success) throw new Error(result.error);
+      toast({
+        title: packageId ? "Paquete asignado" : "Paquete quitado",
+        description: packageId
+          ? "Estas horas se descuentan del paquete y no se facturan por hora."
+          : "Estas horas vuelven a facturarse por hora.",
+      });
+      setEditingEntry((prev: any) =>
+        prev ? { ...prev, consumed_from_package_id: packageId } : prev
+      );
+      await loadEntries();
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: error instanceof Error ? error.message : "No se pudo asignar el paquete",
+        variant: "destructive",
+      });
+    } finally {
+      setAssigningPackage(false);
+    }
   };
 
   const handleDelete = async (id: string) => {
@@ -898,6 +938,35 @@ export default function Page() {
                   )}
                 </div>
               </div>
+            </div>
+
+            {/* §4.3 — Paquete de horas: de qué paquete consume esta entrada. */}
+            <div className="space-y-2 rounded-md border p-3">
+              <Label htmlFor="entry-package">Paquete de horas</Label>
+              <select
+                id="entry-package"
+                className="w-full h-9 rounded-md border bg-background px-3 text-sm"
+                value={editingEntry?.consumed_from_package_id || ""}
+                disabled={assigningPackage || entryPackages.length === 0}
+                onChange={(e) => handleAssignPackage(e.target.value || null)}
+              >
+                <option value="">Sin paquete (se factura por hora)</option>
+                {entryPackages.map((p) => {
+                  const remaining = Number(p.hours) - Number(p.hours_used);
+                  const scope = p.projects?.name ? `${p.projects.name} · ` : "General · ";
+                  return (
+                    <option key={p.id} value={p.id}>
+                      {scope}
+                      {remaining.toFixed(1)}h libres de {Number(p.hours).toFixed(0)}h
+                    </option>
+                  );
+                })}
+              </select>
+              <p className="text-xs text-muted-foreground">
+                {entryPackages.length === 0
+                  ? "Este cliente no tiene paquetes de horas."
+                  : "Si consume de un paquete, estas horas no se facturan por hora (ya están prepagas). Al frenar el timer se asigna automáticamente; acá lo podés cambiar."}
+              </p>
             </div>
 
             <DialogFooter className="pt-4 border-t">
