@@ -684,16 +684,17 @@ export async function updateInvoiceStatus(
     }
 
     try {
+        // §estado — consistencia de paid_at: SOLO 'paid' tiene fecha de pago.
+        // Si la factura ya estaba pagada (p.ej. por un pago registrado), se
+        // preserva su paid_at; si pasa a cualquier otro estado, se limpia (antes
+        // quedaba una paid_at obsoleta al volver de 'paid' a 'sent'/'cancelled').
         const updateData: {
             status: invoice_status;
-            paid_at?: Date;
+            paid_at: Date | null;
         } = {
             status,
+            paid_at: status === "paid" ? (existing.paid_at ?? new Date()) : null,
         };
-
-        if (status === "paid") {
-            updateData.paid_at = new Date();
-        }
 
         const invoice = await prisma.invoices.update({
             where: { id },

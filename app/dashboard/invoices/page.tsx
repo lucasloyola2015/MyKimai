@@ -318,7 +318,14 @@ export default function InvoicesPage() {
         </h2>
         <div className="grid gap-3">
           {invoices.map((invoice) => {
-            const status = INVOICE_STATUSES.find(s => s.value === invoice.status) || INVOICE_STATUSES[0];
+            // §estado — "Vencida" se calcula por due_date en el listado (display),
+            // no es un estado mutable que alguien tenga que setear a mano.
+            const isOverdue =
+              (invoice.status === 'sent' || invoice.status === 'partial') &&
+              !!invoice.due_date &&
+              new Date(invoice.due_date) < new Date();
+            const effectiveStatus = isOverdue ? 'overdue' : invoice.status;
+            const status = INVOICE_STATUSES.find(s => s.value === effectiveStatus) || INVOICE_STATUSES[0];
             const StatusIcon = status.icon;
             const isInternal = invoice.billing_type === 'INTERNAL';
             const borderLeftColor = isInternal
