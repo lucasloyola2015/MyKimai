@@ -6,7 +6,7 @@ import { revalidatePath } from "next/cache";
 import type { tasks } from "@prisma/client";
 import { recalculateUnbilledEntries } from "./time-entries";
 import { createTaskSchema, updateTaskSchema } from "@/lib/validations/tasks";
-import { zodErrorMessage } from "@/lib/validations/utils";
+import { zodErrorMessage, safeActionError } from "@/lib/validations/utils";
 
 export type ActionResponse<T> =
     | { success: true; data: T }
@@ -139,7 +139,7 @@ export async function createTask(data: {
     } catch (error) {
         return {
             success: false,
-            error: error instanceof Error ? error.message : "Error al crear la tarea",
+            error: safeActionError(error, "Error al crear la tarea"),
         };
     }
 }
@@ -229,7 +229,7 @@ export async function updateTask(
     } catch (error) {
         return {
             success: false,
-            error: error instanceof Error ? error.message : "Error al actualizar la tarea",
+            error: safeActionError(error, "Error al actualizar la tarea"),
         };
     }
 }

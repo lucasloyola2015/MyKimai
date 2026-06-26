@@ -4,7 +4,7 @@ import { prisma } from "@/lib/prisma/client";
 import { getOwnerContext, canManageWorkspace } from "@/lib/auth/owner-context";
 import { getPortalProjectFilter, projectIdFilter } from "@/lib/auth/portal-context";
 import { createProjectSchema, updateProjectSchema } from "@/lib/validations/projects";
-import { zodErrorMessage } from "@/lib/validations/utils";
+import { zodErrorMessage, safeActionError } from "@/lib/validations/utils";
 import { revalidatePath } from "next/cache";
 import type { billing_type, project_status, projects } from "@prisma/client";
 import { computeEntryTotals } from "@/lib/utils";
@@ -153,7 +153,7 @@ export async function createProject(data: {
     } catch (error) {
         return {
             success: false,
-            error: error instanceof Error ? error.message : "Error al crear el proyecto",
+            error: safeActionError(error, "Error al crear el proyecto"),
         };
     }
 }
@@ -249,7 +249,7 @@ export async function updateProject(
     } catch (error) {
         return {
             success: false,
-            error: error instanceof Error ? error.message : "Error al actualizar el proyecto",
+            error: safeActionError(error, "Error al actualizar el proyecto"),
         };
     }
 }

@@ -8,7 +8,7 @@ import type { clients } from "@prisma/client";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { recalculateUnbilledEntries } from "./time-entries";
 import { createClientSchema, updateClientSchema } from "@/lib/validations/clients";
-import { zodErrorMessage } from "@/lib/validations/utils";
+import { zodErrorMessage, safeActionError } from "@/lib/validations/utils";
 
 export type ActionResponse<T> =
     | { success: true; data: T }
@@ -100,7 +100,7 @@ export async function createClient(data: {
     } catch (error) {
         return {
             success: false,
-            error: error instanceof Error ? error.message : "Error al crear el cliente",
+            error: safeActionError(error, "Error al crear el cliente"),
         };
     }
 }
@@ -188,7 +188,7 @@ export async function updateClient(
         } catch (err) {
             return {
                 success: false,
-                error: err instanceof Error ? err.message : "Error al sincronizar con el proveedor de identidad. Los datos no se guardaron.",
+                error: safeActionError(err, "Error al sincronizar con el proveedor de identidad. Los datos no se guardaron."),
             };
         }
     }
@@ -227,7 +227,7 @@ export async function updateClient(
     } catch (error) {
         return {
             success: false,
-            error: error instanceof Error ? error.message : "Error al actualizar el cliente",
+            error: safeActionError(error, "Error al actualizar el cliente"),
         };
     }
 }
@@ -393,7 +393,7 @@ export async function toggleClientWebAccess(
     } catch (error) {
         return {
             success: false,
-            error: error instanceof Error ? error.message : "Error al procesar el acceso web",
+            error: safeActionError(error, "Error al procesar el acceso web"),
         };
     }
 }
