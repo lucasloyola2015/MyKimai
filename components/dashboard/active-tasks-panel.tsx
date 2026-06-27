@@ -197,7 +197,7 @@ function EditDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
+      <DialogContent aria-describedby={undefined}>
         <DialogHeader>
           <DialogTitle>Editar sesión</DialogTitle>
           <p className="text-sm text-muted-foreground">
