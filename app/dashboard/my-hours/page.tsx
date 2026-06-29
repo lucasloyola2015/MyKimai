@@ -75,6 +75,25 @@ function liveTotals(entry: any, now: number): { bruto: number; pausas: number; n
   };
 }
 
+/** Tarifa efectiva por hora de una entrada: cascada Tarea > Proyecto > Cliente
+ * (mismos `!= null` que resolveRate; un 0 explícito es una tarifa válida). */
+function resolveEntryRate(entry: any): number {
+  const task = entry.tasks;
+  const project = task?.projects;
+  const client = project?.clients;
+  const r = task?.rate ?? project?.rate ?? client?.default_rate ?? 0;
+  return Number(r) || 0;
+}
+
+/** Inversión (monto) de la entrada. Completada: usa el `amount` persistido (lo
+ * calcula el trigger). Activa: lo calcula en vivo = (neto/60) * tarifa, salvo que
+ * no sea facturable. */
+function liveAmount(entry: any, netoMin: number): number {
+  if (entry.end_time) return Number(entry.amount || 0);
+  if (!entry.billable) return 0;
+  return (netoMin / 60) * resolveEntryRate(entry);
+}
+
 export default function Page() {
   const [loading, setLoading] = useState(true);
   const [clients, setClients] = useState<clients[]>([]);
@@ -669,6 +688,7 @@ export default function Page() {
                 const client = project?.clients;
                 const activeBreak = (entry as any).time_entry_breaks?.find((b: any) => b.end_time === null);
                 const totals = liveTotals(entry, nowTick);
+                const inversion = liveAmount(entry, totals.neto);
 
                 return (
                   <div
@@ -734,7 +754,7 @@ export default function Page() {
                             {recalculatingIds.has(entry.id) ? (
                               <span className="animate-pulse text-blue-600">??.??</span>
                             ) : (
-                              Number(entry.amount || 0).toFixed(2)
+                              inversion.toFixed(2)
                             )} <span className="text-[9px] font-medium opacity-40">{project?.currency}</span>
                           </p>
                         </div>
