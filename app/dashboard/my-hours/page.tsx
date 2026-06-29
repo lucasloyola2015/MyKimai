@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { useSearchParams } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Select,
@@ -85,6 +86,11 @@ export default function Page() {
   const [selectedProject, setSelectedProject] = useState<string>("");
   // §paginación — por defecto mostrar últimos 90 días (no traer años de historial).
   const [showAll, setShowAll] = useState(false);
+  // Deep-link de edición: /dashboard/my-hours?edit=<id> abre el modal de esa
+  // entrada (lo usa el lápiz del panel "Tareas activas" del dashboard).
+  const searchParams = useSearchParams();
+  const editId = searchParams.get("edit");
+  const [handledEditId, setHandledEditId] = useState<string | null>(null);
   // Tick para recalcular en vivo Bruto/Pausas/Neto de las entradas activas
   // (sin esperar a frenar/pausar). ~20s = "update razonable", no cada segundo.
   const [nowTick, setNowTick] = useState(() => Date.now());
@@ -240,6 +246,19 @@ export default function Page() {
     }
     setIsDialogOpen(true);
   };
+
+  // Deep-link: abrir el modal de edición si llegamos con ?edit=<id> y la entrada
+  // ya está cargada (la usa el lápiz del panel "Tareas activas" del dashboard).
+  useEffect(() => {
+    if (editId && editId !== handledEditId && entries.length > 0) {
+      const entry = (entries as any[]).find((e) => e.id === editId);
+      if (entry) {
+        handleEdit(entry);
+        setHandledEditId(editId);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editId, entries, handledEditId]);
 
   // §4.3 — asignar/quitar a mano el paquete del que consume la entrada.
   const handleAssignPackage = async (packageId: string | null) => {
