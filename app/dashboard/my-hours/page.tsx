@@ -46,6 +46,34 @@ import { cn, calculateNetDurationMinutes } from "@/lib/utils";
 import type { clients, projects, time_entries } from "@prisma/client";
 import { DayTimeline } from "@/components/dashboard/DayTimeline";
 
+/**
+ * Bruto/Pausas/Neto en MINUTOS. Para entradas completadas usa lo persistido
+ * (lo calcula el trigger de DB). Para entradas ACTIVAS (sin end_time) lo calcula
+ * en vivo: bruto = ahora − inicio; pausas = suma de pausas (la abierta corre
+ * hasta ahora); neto = bruto − pausas.
+ */
+function liveTotals(entry: any, now: number): { bruto: number; pausas: number; neto: number } {
+  if (entry.end_time) {
+    const bruto = entry.duration_total || 0;
+    const neto = entry.duration_neto || 0;
+    return { bruto, pausas: Math.max(0, bruto - neto), neto };
+  }
+  const start = new Date(entry.start_time).getTime();
+  const brutoMs = Math.max(0, now - start);
+  let pausasMs = 0;
+  for (const b of entry.time_entry_breaks ?? []) {
+    const bs = new Date(b.start_time).getTime();
+    const be = b.end_time ? new Date(b.end_time).getTime() : now;
+    pausasMs += Math.max(0, be - bs);
+  }
+  pausasMs = Math.min(pausasMs, brutoMs);
+  return {
+    bruto: Math.floor(brutoMs / 60000),
+    pausas: Math.floor(pausasMs / 60000),
+    neto: Math.max(0, Math.floor((brutoMs - pausasMs) / 60000)),
+  };
+}
+
 export default function Page() {
   const [loading, setLoading] = useState(true);
   const [clients, setClients] = useState<clients[]>([]);
@@ -57,6 +85,13 @@ export default function Page() {
   const [selectedProject, setSelectedProject] = useState<string>("");
   // §paginación — por defecto mostrar últimos 90 días (no traer años de historial).
   const [showAll, setShowAll] = useState(false);
+  // Tick para recalcular en vivo Bruto/Pausas/Neto de las entradas activas
+  // (sin esperar a frenar/pausar). ~20s = "update razonable", no cada segundo.
+  const [nowTick, setNowTick] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNowTick(Date.now()), 20000);
+    return () => clearInterval(id);
+  }, []);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingEntry, setEditingEntry] = useState<any | null>(null);
   const [formData, setFormData] = useState<any>({
@@ -614,6 +649,7 @@ export default function Page() {
                 const project = task?.projects;
                 const client = project?.clients;
                 const activeBreak = (entry as any).time_entry_breaks?.find((b: any) => b.end_time === null);
+                const totals = liveTotals(entry, nowTick);
 
                 return (
                   <div
@@ -652,21 +688,21 @@ export default function Page() {
                         <div className="text-center">
                           <p className="text-[6px] font-black text-slate-400 uppercase tracking-tighter leading-none mb-0.5">Bruto</p>
                           <p className="text-[10px] font-mono font-medium text-slate-500 leading-none">
-                            {((entry.duration_total || 0) / 60).toFixed(2)}h
+                            {(totals.bruto / 60).toFixed(2)}h
                           </p>
                         </div>
                         <div className="text-slate-300 text-[10px] font-light">-</div>
                         <div className="text-center">
                           <p className="text-[6px] font-black text-orange-400 uppercase tracking-tighter leading-none mb-0.5">Pausas</p>
                           <p className="text-[10px] font-mono font-bold text-orange-600 dark:text-orange-400 leading-none">
-                            {(((entry.duration_total || 0) - (entry.duration_neto || 0)) / 60).toFixed(2)}h
+                            {(totals.pausas / 60).toFixed(2)}h
                           </p>
                         </div>
                         <div className="text-slate-300 text-[10px] font-light">=</div>
                         <div className="text-center min-w-[35px]">
                           <p className="text-[6px] font-black text-blue-400 uppercase tracking-tighter leading-none mb-0.5">Neto</p>
                           <p className="text-[11px] font-mono font-black text-blue-700 dark:text-blue-400 leading-none">
-                            {((entry.duration_neto || 0) / 60).toFixed(2)}h
+                            {(totals.neto / 60).toFixed(2)}h
                           </p>
                         </div>
                       </div>
