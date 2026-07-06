@@ -2,7 +2,7 @@
 
 import { prisma } from "@/lib/prisma/client";
 import { getClientContext } from "@/lib/auth/server";
-import { getOwnerContext, canManageWorkspace } from "@/lib/auth/owner-context";
+import { getOwnerContext, canManageWorkspace, canSeeFinancials } from "@/lib/auth/owner-context";
 import { getPortalProjectFilter, taskProjectIdFilter } from "@/lib/auth/portal-context";
 import { arDayKey } from "@/lib/timezone";
 
@@ -34,6 +34,37 @@ export async function getClientBranding(clientId: string) {
         console.error("Error fetching client branding:", error);
         return null;
     }
+}
+
+/**
+ * §feature — Datos para el informe detallado (resumen por proyecto) de UNA
+ * factura: las time_entries linkeadas a esa factura + el cliente. Scopeado al
+ * owner (canSeeFinancials). Lo consume el botón de "Descargar informe" del
+ * listado de facturas.
+ */
+export async function getInvoiceReportData(invoiceId: string) {
+    const ctx = await getOwnerContext();
+    if (!canSeeFinancials(ctx)) return null;
+
+    const invoice = await prisma.invoices.findFirst({
+        where: { id: invoiceId, clients: { user_id: ctx.ownerId } },
+        select: {
+            id: true,
+            invoice_number: true,
+            clients: { select: { name: true, logo_url: true } },
+        },
+    });
+    if (!invoice) return null;
+
+    const entries = await prisma.time_entries.findMany({
+        where: { invoice_id: invoiceId },
+        include: {
+            tasks: { include: { projects: { include: { clients: true } } } },
+        },
+        orderBy: { start_time: "asc" },
+    });
+
+    return { invoice, entries };
 }
 
 /**

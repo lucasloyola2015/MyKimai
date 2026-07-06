@@ -34,6 +34,7 @@ import {
   deleteInvoice,
 } from "@/lib/actions/invoices";
 import { recordPayment } from "@/lib/actions/payments";
+import { InvoiceReportButton } from "@/components/invoices/invoice-report-button";
 import type { invoices, clients, time_entries } from "@prisma/client";
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
@@ -372,6 +373,9 @@ export default function InvoicesPage() {
                     <Link href={`/dashboard/invoices/${invoice.id}`} passHref>
                       <Button variant="outline" size="sm" className="h-8 text-xs font-bold">DETALLES</Button>
                     </Link>
+
+                    {/* Descargar informe detallado (resumen por proyecto) de la factura */}
+                    <InvoiceReportButton invoiceId={invoice.id} />
 
                     {invoice.status !== 'paid' && (
                       <Button
