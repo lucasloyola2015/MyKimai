@@ -647,11 +647,13 @@ export async function getTimeEntries(filters?: {
     }
 
     if (filters?.endDate) {
-        const endOfDay = new Date(filters.endDate);
-        endOfDay.setHours(23, 59, 59, 999);
+        // §bug — usar el endDate tal cual (el caller ya lo manda como fin-de-día
+        // en hora de Argentina). Antes se re-aplicaba setHours(23:59:59) en el TZ
+        // del server (UTC en Vercel), lo que corría el rango al día siguiente
+        // (ej: filtro al 30/6 mostraba entradas del 1/7).
         where.start_time = {
             ...where.start_time,
-            lte: endOfDay,
+            lte: filters.endDate,
         };
     }
 

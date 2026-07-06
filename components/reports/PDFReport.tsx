@@ -212,7 +212,19 @@ const ProjectChart = ({ data }: { data: any[] }) => {
     );
 };
 
-export const PDFReport = ({ entries, client, totalHours, analytics, filters }: PDFReportProps) => (
+export const PDFReport = ({ entries, client, totalHours, analytics, filters }: PDFReportProps) => {
+    // §bug — el total del "Resumen Ejecutivo" debe reflejar TODOS los proyectos
+    // (suma de sus horas), no uno solo. Se deriva de analytics.projects; si no
+    // hay analítica, cae al prop totalHours.
+    const projectsTotal = (analytics?.projects ?? []).reduce(
+        (s, p) => s + (Number(p?.hours) || 0),
+        0
+    );
+    const grandTotal =
+        analytics?.projects && analytics.projects.length > 0
+            ? projectsTotal.toFixed(2)
+            : totalHours;
+    return (
     <Document>
         <Page size="A4" style={styles.page}>
             {/* Header */}
@@ -237,7 +249,7 @@ export const PDFReport = ({ entries, client, totalHours, analytics, filters }: P
                 <Text style={styles.sectionTitle}>Resumen Ejecutivo</Text>
                 <View style={{ flexDirection: 'row' }}>
                     <View style={{ flex: 1 }}>{analytics?.projects ? <ProjectChart data={analytics.projects} /> : null}</View>
-                    <View style={{ width: 150, justifyContent: 'center', alignItems: 'flex-end' }}><Text style={styles.totalLabel}>Horas Totales</Text><Text style={[styles.totalValue, { fontSize: 32 }]}>{totalHours}</Text><Text style={[styles.subtitle, { fontSize: 8, marginTop: 5 }]}>Tiempo Neto</Text></View>
+                    <View style={{ width: 150, justifyContent: 'center', alignItems: 'flex-end' }}><Text style={styles.totalLabel}>Horas Totales</Text><Text style={[styles.totalValue, { fontSize: 32 }]}>{grandTotal}</Text><Text style={[styles.subtitle, { fontSize: 8, marginTop: 5 }]}>Tiempo Neto (todos los proyectos)</Text></View>
                 </View>
             </View>
 
@@ -269,4 +281,5 @@ export const PDFReport = ({ entries, client, totalHours, analytics, filters }: P
             </Text>
         </Page>
     </Document>
-);
+    );
+};

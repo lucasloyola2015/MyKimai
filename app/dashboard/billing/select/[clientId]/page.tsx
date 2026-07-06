@@ -36,6 +36,16 @@ import {
 import { ShieldAlert, ShieldCheck } from "lucide-react";
 import { generateFiscalInvoice } from "@/lib/actions/afip-actions";
 import { fillInvoiceTemplate, previewDataToTemplateData } from "@/lib/invoice-template";
+import nextDynamic from "next/dynamic";
+import { PDFReport } from "@/components/reports/PDFReport";
+import { arDayKey } from "@/lib/timezone";
+
+// §feature — informe detallado (resumen) de las entradas que se van a facturar,
+// sincronizado con el comprobante. @react-pdf diferido (no SSR).
+const ReportPDFLink = nextDynamic(
+    () => import("@react-pdf/renderer").then((m) => m.PDFDownloadLink),
+    { ssr: false }
+);
 
 export default function PartialBillingPage() {
     const params = useParams();
@@ -45,6 +55,7 @@ export default function PartialBillingPage() {
     const [submitting, setSubmitting] = useState(false);
     const [timeEntries, setTimeEntries] = useState<any[]>([]);
     const [client, setClient] = useState<clients | null>(null);
+    const [isMounted, setIsMounted] = useState(false);
     const [selectedIds, setSelectedIds] = useState<string[]>([]);
     const [dueDate, setDueDate] = useState(format(new Date(Date.now() + 15 * 86400000), "yyyy-MM-dd"));
     const [billingType, setBillingType] = useState<string>("LEGAL");
@@ -100,9 +111,43 @@ export default function PartialBillingPage() {
         }
     };
 
+    useEffect(() => {
+        setIsMounted(true);
+    }, []);
+
     const selectedEntries = useMemo(() => {
         return timeEntries.filter(e => selectedIds.includes(e.id));
     }, [timeEntries, selectedIds]);
+
+    // §feature — datos para el informe detallado (resumen por proyecto) de las
+    // entradas seleccionadas, para emitirlo junto con el comprobante.
+    const reportData = useMemo(() => {
+        const projMap: Record<string, number> = {};
+        const dayMap: Record<string, number> = {};
+        let totalMin = 0;
+        for (const e of selectedEntries) {
+            if (e.billable === false) continue;
+            const min = e.duration_neto || 0;
+            totalMin += min;
+            const pn = e.tasks?.projects?.name ?? "—";
+            projMap[pn] = (projMap[pn] || 0) + min;
+            const dk = arDayKey(e.start_time);
+            dayMap[dk] = (dayMap[dk] || 0) + min;
+        }
+        const dates = selectedEntries.map((e) => arDayKey(e.start_time)).sort();
+        return {
+            totalHours: (totalMin / 60).toFixed(2),
+            analytics: {
+                projects: Object.entries(projMap).map(([name, m]) => ({ name, hours: Number((m / 60).toFixed(2)) })),
+                daily: Object.entries(dayMap)
+                    .map(([date, m]) => ({ date, hours: Number((m / 60).toFixed(2)) }))
+                    .sort((a, b) => a.date.localeCompare(b.date)),
+            },
+            filters: dates.length
+                ? { start_date: dates[0].split("-").reverse().join("/"), end_date: dates[dates.length - 1].split("-").reverse().join("/") }
+                : undefined,
+        };
+    }, [selectedEntries]);
 
     const summary = useMemo(() => {
         const totalMinutes = selectedEntries.reduce((sum, e) => sum + (e.duration_neto || 0), 0);
@@ -637,7 +682,7 @@ export default function PartialBillingPage() {
                                 <Input id="date" type="date" value={dueDate} onChange={e => setDueDate(e.target.value)} className="h-9" />
                             </div>
                         </CardContent>
-                        <CardFooter className="bg-muted/30 pt-4">
+                        <CardFooter className="bg-muted/30 pt-4 flex-col gap-2">
                             <Button
                                 className="w-full font-bold h-11"
                                 disabled={selectedIds.length === 0 || submitting}
@@ -646,6 +691,31 @@ export default function PartialBillingPage() {
                                 <Save className="mr-2 h-4 w-4" />
                                 Ver Preview y Crear Factura
                             </Button>
+                            {/* §feature — informe detallado (resumen por proyecto) de lo
+                                que se va a facturar, para emitirlo junto al comprobante. */}
+                            {isMounted && selectedEntries.length > 0 && (
+                                <ReportPDFLink
+                                    key={selectedIds.join(",")}
+                                    document={
+                                        <PDFReport
+                                            entries={selectedEntries}
+                                            client={client as any}
+                                            totalHours={reportData.totalHours}
+                                            analytics={reportData.analytics}
+                                            filters={reportData.filters}
+                                        />
+                                    }
+                                    fileName={`Informe_${client?.name || "Cliente"}_${format(new Date(), "yyyyMMdd")}.pdf`}
+                                    className="w-full"
+                                >
+                                    {((args: any) => (
+                                        <Button variant="outline" className="w-full h-10" disabled={args.loading}>
+                                            <FileText className="mr-2 h-4 w-4" />
+                                            {args.loading ? "Preparando informe..." : "Informe detallado (PDF)"}
+                                        </Button>
+                                    )) as any}
+                                </ReportPDFLink>
+                            )}
                         </CardFooter>
                     </Card>
                 </div>

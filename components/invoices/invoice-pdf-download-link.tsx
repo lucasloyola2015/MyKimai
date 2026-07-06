@@ -51,19 +51,18 @@ export function InvoicePDFDownloadLink({ invoice }: { invoice: InvoiceWithDetail
       printWindow.document.write(html);
       printWindow.document.close();
 
-      // Esperar a que carguen fuentes e imágenes, luego imprimir
-      printWindow.onload = () => {
-        setTimeout(() => {
-          printWindow.print();
-        }, 500);
+      // Imprimir UNA sola vez: onload dispara el print; el fallback (por si
+      // onload no dispara en algunas versiones de Chrome) queda anulado si ya
+      // se imprimió. Antes ambos disparaban → doble diálogo de impresión.
+      let printed = false;
+      const doPrint = () => {
+        if (printed || printWindow.closed) return;
+        printed = true;
+        printWindow.print();
       };
 
-      // Fallback si onload no dispara (algunas versiones de Chrome)
-      setTimeout(() => {
-        if (!printWindow.closed) {
-          printWindow.print();
-        }
-      }, 2000);
+      printWindow.onload = () => setTimeout(doPrint, 500);
+      setTimeout(doPrint, 2000);
 
     } catch (err: any) {
       console.error("[InvoicePDFDownloadLink]", err);

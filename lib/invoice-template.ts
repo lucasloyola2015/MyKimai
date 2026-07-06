@@ -111,6 +111,15 @@ export function fillInvoiceTemplate(templateHtml: string, data: InvoiceTemplateD
   const esInterno = Boolean(data.EsInterno);
   const itemsRows = buildItemsRows(data.items);
   let html = templateHtml.replace(/\{\{ITEMS_ROWS\}\}/g, itemsRows);
+
+  // §bug — un recibo interno (X) es UN solo ejemplar: se eliminan las copias
+  // DUPLICADO y TRIPLICADO. Para LEGAL se conservan (solo se quitan los marcadores).
+  if (esInterno) {
+    html = html.replace(/<!-- COPIES:BEGIN -->[\s\S]*?<!-- COPIES:END -->/g, "");
+  } else {
+    html = html.replace(/<!-- COPIES:(?:BEGIN|END) -->/g, "");
+  }
+  html = html.replace(/\{PAGE1_COPY_LABEL\}/g, esInterno ? "" : "ORIGINAL");
   html = html.replace(/\{QR_BLOCK\}/g, buildQrBlock(data.DataQR ?? "", esInterno));
   html = html.replace(/\{ARCA_DISCLAIMER_BLOCK\}/g, esInterno ? "" : ARCA_DISCLAIMER_HTML);
   html = html.replace(/\{CAE_BLOCK\}/g, buildCaeBlock(data.CAE ?? "—", data.VtoCAE ?? "—", esInterno));

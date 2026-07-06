@@ -15,6 +15,7 @@ import {
 import { Download, FileText, Clock, Folder, BarChart3, Image as ImageIcon, FileSearch, Pencil, Check, X } from "lucide-react";
 import { format } from "date-fns";
 import { formatDateTime24 } from "@/lib/date-format";
+import { startOfDayAr, endOfDayAr } from "@/lib/timezone";
 import { getClients } from "@/lib/actions/clients";
 import { getProjects } from "@/lib/actions/projects";
 import { getTimeEntries } from "@/lib/actions/time-entries";
@@ -110,11 +111,13 @@ export default function ReportsPage() {
   const loadEntries = async () => {
     setLoading(true);
     try {
+      // Límites de día en hora de Argentina (independiente del TZ del navegador).
+      // Se usa mediodía UTC como referencia del día elegido.
       const startDate = filters.start_date
-        ? new Date(`${filters.start_date}T00:00:00`)
+        ? startOfDayAr(new Date(`${filters.start_date}T12:00:00Z`))
         : undefined;
       const endDate = filters.end_date
-        ? new Date(`${filters.end_date}T23:59:59`)
+        ? endOfDayAr(new Date(`${filters.end_date}T12:00:00Z`))
         : undefined;
 
       const [data, analyticsData] = await Promise.all([
