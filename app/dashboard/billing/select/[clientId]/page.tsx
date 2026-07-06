@@ -749,33 +749,60 @@ export default function PartialBillingPage() {
                         )}
                     </div>
 
-                    <DialogFooter className="px-6 py-4 border-t bg-muted/30 space-y-3 shrink-0">
-                        <div className="flex gap-3 w-full">
-                            <Button
-                                variant="outline"
-                                onClick={() => setShowPreview(false)}
-                                disabled={submitting}
-                                className="flex-1"
-                            >
-                                Cancelar
-                            </Button>
-                            <Button
-                                onClick={handleConfirmInvoice}
-                                disabled={submitting || !previewData}
-                                className="flex-1 font-bold"
-                            >
-                                {submitting ? (
-                                    <>
-                                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                        {billingType === "LEGAL" ? "Creando y Autorizando..." : "Creando..."}
-                                    </>
-                                ) : (
-                                    <>
-                                        <CheckCircle2 className="mr-2 h-4 w-4" />
-                                        Confirmar y Crear Factura
-                                    </>
-                                )}
-                            </Button>
+                    <DialogFooter className="px-6 py-4 border-t bg-muted/30 shrink-0">
+                        <div className="w-full space-y-3">
+                            {/* §feature — informe detallado (resumen por proyecto) para
+                                emitirlo sincronizado con el comprobante. */}
+                            {isMounted && selectedEntries.length > 0 && (
+                                <ReportPDFLink
+                                    key={`prev-${selectedIds.join(",")}`}
+                                    document={
+                                        <PDFReport
+                                            entries={selectedEntries}
+                                            client={client as any}
+                                            totalHours={reportData.totalHours}
+                                            analytics={reportData.analytics}
+                                            filters={reportData.filters}
+                                        />
+                                    }
+                                    fileName={`Informe_${client?.name || "Cliente"}_${format(new Date(), "yyyyMMdd")}.pdf`}
+                                    className="block w-full"
+                                >
+                                    {((args: any) => (
+                                        <Button variant="outline" className="w-full" disabled={args.loading}>
+                                            <FileText className="mr-2 h-4 w-4" />
+                                            {args.loading ? "Preparando informe..." : "Descargar informe detallado (PDF)"}
+                                        </Button>
+                                    )) as any}
+                                </ReportPDFLink>
+                            )}
+                            <div className="flex gap-3 w-full">
+                                <Button
+                                    variant="outline"
+                                    onClick={() => setShowPreview(false)}
+                                    disabled={submitting}
+                                    className="flex-1"
+                                >
+                                    Cancelar
+                                </Button>
+                                <Button
+                                    onClick={handleConfirmInvoice}
+                                    disabled={submitting || !previewData}
+                                    className="flex-1 font-bold"
+                                >
+                                    {submitting ? (
+                                        <>
+                                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                            {billingType === "LEGAL" ? "Creando y Autorizando..." : "Creando..."}
+                                        </>
+                                    ) : (
+                                        <>
+                                            <CheckCircle2 className="mr-2 h-4 w-4" />
+                                            Confirmar y Crear Factura
+                                        </>
+                                    )}
+                                </Button>
+                            </div>
                         </div>
                     </DialogFooter>
                 </DialogContent>

@@ -47,22 +47,17 @@ export function InvoicePDFDownloadLink({ invoice }: { invoice: InvoiceWithDetail
         throw new Error("El navegador bloqueó la ventana emergente. Permitir pop-ups para este sitio.");
       }
 
+      // El print se dispara UNA sola vez desde DENTRO del propio documento (con su
+      // propio flag), no desde la ventana padre. Antes había un print() en onload
+      // + un fallback a los 2s que podían disparar dos diálogos.
+      const printScript = `<script>(function(){var p=false;function go(){if(p)return;p=true;try{window.focus();}catch(e){}window.print();}if(document.readyState==='complete'){setTimeout(go,300);}else{window.addEventListener('load',function(){setTimeout(go,300);});}setTimeout(go,1500);})();</script>`;
+      const htmlWithPrint = html.includes("</body>")
+        ? html.replace("</body>", `${printScript}</body>`)
+        : html + printScript;
+
       printWindow.document.open();
-      printWindow.document.write(html);
+      printWindow.document.write(htmlWithPrint);
       printWindow.document.close();
-
-      // Imprimir UNA sola vez: onload dispara el print; el fallback (por si
-      // onload no dispara en algunas versiones de Chrome) queda anulado si ya
-      // se imprimió. Antes ambos disparaban → doble diálogo de impresión.
-      let printed = false;
-      const doPrint = () => {
-        if (printed || printWindow.closed) return;
-        printed = true;
-        printWindow.print();
-      };
-
-      printWindow.onload = () => setTimeout(doPrint, 500);
-      setTimeout(doPrint, 2000);
 
     } catch (err: any) {
       console.error("[InvoicePDFDownloadLink]", err);
