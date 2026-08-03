@@ -65,6 +65,11 @@ export default function PartialBillingPage() {
     const [currentRate, setCurrentRate] = useState<number>(0);
     const [exchangeInfo, setExchangeInfo] = useState<UsdExchangeInfo | null>(null);
     const [showPreview, setShowPreview] = useState(false);
+    // §descuento — checkbox + diálogo de configuración (% y motivo).
+    const [applyDiscount, setApplyDiscount] = useState(false);
+    const [showDiscountDialog, setShowDiscountDialog] = useState(false);
+    const [discountPercent, setDiscountPercent] = useState<string>("10");
+    const [discountReason, setDiscountReason] = useState<string>("");
     const [issuerData, setIssuerData] = useState<any>(null);
     const [previewHtml, setPreviewHtml] = useState<string | null>(null);
 
@@ -185,12 +190,21 @@ export default function PartialBillingPage() {
             totalToInvoice = totalUsdDynamic;
         }
 
+        // §descuento — el total a facturar queda NETO de descuento.
+        const pct = applyDiscount
+            ? Math.min(Math.max(Number(discountPercent) || 0, 0), 100)
+            : 0;
+        const discountAmount = pct > 0 ? Number((totalToInvoice * (pct / 100)).toFixed(2)) : 0;
+
         return {
             hours: (totalMinutes / 60).toFixed(2),
             totalUsdFromDb: totalUsdDynamic,
-            total: totalToInvoice,
+            gross: totalToInvoice,
+            discountPercent: pct,
+            discountAmount,
+            total: Number((totalToInvoice - discountAmount).toFixed(2)),
         };
-    }, [selectedEntries, billingCurrency, exchangeStrategy, currentRate]);
+    }, [selectedEntries, billingCurrency, exchangeStrategy, currentRate, applyDiscount, discountPercent]);
 
     const handleToggleAll = () => {
         if (selectedIds.length === timeEntries.length) {
@@ -211,6 +225,22 @@ export default function PartialBillingPage() {
             toast({ title: "Error", description: "Selecciona al menos una entrada", variant: "destructive" });
             return;
         }
+        // §descuento — si está tildado, primero se configura % y motivo.
+        if (applyDiscount) {
+            setShowDiscountDialog(true);
+            return;
+        }
+        setShowPreview(true);
+    };
+
+    // §descuento — confirma la configuración y pasa al preview.
+    const handleConfirmDiscount = () => {
+        const pct = Number(discountPercent);
+        if (!Number.isFinite(pct) || pct <= 0 || pct > 100) {
+            toast({ title: "Descuento inválido", description: "Ingresá un porcentaje entre 0 y 100.", variant: "destructive" });
+            return;
+        }
+        setShowDiscountDialog(false);
         setShowPreview(true);
     };
 
@@ -229,6 +259,8 @@ export default function PartialBillingPage() {
                 currency: billingCurrency,
                 exchange_strategy: exchangeStrategy,
                 cbte_tipo: billingType === "LEGAL" ? cbteTipo : undefined,
+                discount_percent: summary.discountPercent > 0 ? summary.discountPercent : undefined,
+                discount_reason: summary.discountPercent > 0 ? (discountReason.trim() || null) : undefined,
             });
 
             if (!result.success) throw new Error(result.error);
@@ -349,6 +381,20 @@ export default function PartialBillingPage() {
             };
         });
 
+        // §descuento — línea negativa en el preview (igual que la persistida).
+        if (summary.discountAmount > 0) {
+            const reason = discountReason.trim();
+            items.push({
+                description: reason
+                    ? `Descuento ${summary.discountPercent}% — ${reason}`
+                    : `Descuento ${summary.discountPercent}%`,
+                quantity: 1,
+                rate: -summary.discountAmount,
+                amount: -summary.discountAmount,
+                type: "fixed" as any,
+            });
+        }
+
         return {
             issuer: {
                 business_name: issuerData?.business_name || "Lucas Loyola",
@@ -390,7 +436,7 @@ export default function PartialBillingPage() {
             exchangeInfo: billingCurrency === "ARS" ? exchangeInfo : undefined,
             exchangeStrategy,
         };
-    }, [client, selectedEntries, summary, billingType, cbteTipo, billingCurrency, exchangeStrategy, exchangeInfo, currentRate, dueDate, issuerData]);
+    }, [client, selectedEntries, summary, billingType, cbteTipo, billingCurrency, exchangeStrategy, exchangeInfo, currentRate, dueDate, issuerData, discountReason]);
 
     // Rellenar plantilla HTML para el preview cuando se abre el diálogo
     useEffect(() => {
@@ -666,6 +712,21 @@ export default function PartialBillingPage() {
                                 </span>
                             </div>
 
+                            {/* §descuento — se muestra restando antes del total */}
+                            {summary.discountAmount > 0 && (
+                                <div className="flex justify-between items-center text-sm py-1 border-b border-border/50">
+                                    <span className="text-muted-foreground">
+                                        Descuento ({summary.discountPercent}%)
+                                        {discountReason.trim() && (
+                                            <span className="block text-[10px] italic opacity-70">{discountReason.trim()}</span>
+                                        )}
+                                    </span>
+                                    <span className="font-mono tabular-nums font-bold text-red-600">
+                                        −{summary.discountAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {billingCurrency}
+                                    </span>
+                                </div>
+                            )}
+
                             {/* 5. Total a facturar */}
                             <div className="bg-black text-white p-4 rounded-xl space-y-1">
                                 <p className="text-[10px] uppercase tracking-widest font-bold opacity-60">Total a facturar</p>
@@ -683,6 +744,27 @@ export default function PartialBillingPage() {
                             </div>
                         </CardContent>
                         <CardFooter className="bg-muted/30 pt-4 flex-col gap-2">
+                            {/* §descuento — al tildar, el botón abre primero el diálogo de configuración */}
+                            <div className="flex items-center gap-2 w-full rounded-md border bg-background px-3 py-2">
+                                <Checkbox
+                                    id="apply-discount"
+                                    checked={applyDiscount}
+                                    onCheckedChange={(v) => setApplyDiscount(v === true)}
+                                />
+                                <Label htmlFor="apply-discount" className="text-sm font-medium cursor-pointer flex-1">
+                                    Agregar descuento
+                                </Label>
+                                {applyDiscount && summary.discountAmount > 0 && (
+                                    <button
+                                        type="button"
+                                        className="text-xs font-bold text-primary hover:underline"
+                                        onClick={() => setShowDiscountDialog(true)}
+                                    >
+                                        {summary.discountPercent}% · editar
+                                    </button>
+                                )}
+                            </div>
+
                             <Button
                                 className="w-full font-bold h-11"
                                 disabled={selectedIds.length === 0 || submitting}
@@ -720,6 +802,85 @@ export default function PartialBillingPage() {
                     </Card>
                 </div>
             </div>
+
+            {/* §descuento — Dialog de configuración (% y motivo) */}
+            <Dialog open={showDiscountDialog} onOpenChange={setShowDiscountDialog}>
+                <DialogContent className="max-w-md">
+                    <DialogHeader>
+                        <DialogTitle className="flex items-center gap-2">
+                            <DollarSign className="h-5 w-5" />
+                            Configurar descuento
+                        </DialogTitle>
+                        <DialogDescription>
+                            Se agregará a la factura como una línea que resta del total.
+                        </DialogDescription>
+                    </DialogHeader>
+
+                    <div className="space-y-4 py-2">
+                        <div className="grid gap-2">
+                            <Label htmlFor="discount-percent">Porcentaje de descuento (%)</Label>
+                            <Input
+                                id="discount-percent"
+                                type="number"
+                                min="0"
+                                max="100"
+                                step="0.01"
+                                value={discountPercent}
+                                onChange={(e) => setDiscountPercent(e.target.value)}
+                                autoFocus
+                            />
+                        </div>
+                        <div className="grid gap-2">
+                            <Label htmlFor="discount-reason">Motivo</Label>
+                            <Input
+                                id="discount-reason"
+                                placeholder="Ej: Cliente frecuente, acuerdo comercial…"
+                                value={discountReason}
+                                onChange={(e) => setDiscountReason(e.target.value)}
+                                maxLength={500}
+                            />
+                        </div>
+
+                        <div className="rounded-lg bg-muted p-3 space-y-1 text-sm">
+                            <div className="flex justify-between">
+                                <span className="text-muted-foreground">Subtotal</span>
+                                <span className="font-mono tabular-nums">
+                                    {summary.gross.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {billingCurrency}
+                                </span>
+                            </div>
+                            <div className="flex justify-between text-red-600">
+                                <span>Descuento</span>
+                                <span className="font-mono tabular-nums font-bold">
+                                    −{summary.discountAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {billingCurrency}
+                                </span>
+                            </div>
+                            <div className="flex justify-between border-t pt-1 font-bold">
+                                <span>Total</span>
+                                <span className="font-mono tabular-nums">
+                                    {summary.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {billingCurrency}
+                                </span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <DialogFooter>
+                        <Button
+                            variant="outline"
+                            onClick={() => {
+                                setShowDiscountDialog(false);
+                                setApplyDiscount(false);
+                            }}
+                            className="flex-1"
+                        >
+                            Quitar descuento
+                        </Button>
+                        <Button onClick={handleConfirmDiscount} className="flex-1 font-bold">
+                            <CheckCircle2 className="mr-2 h-4 w-4" />
+                            Aplicar y continuar
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
 
             {/* Dialog de Preview: PDF A4 + botones */}
             <Dialog open={showPreview} onOpenChange={setShowPreview}>

@@ -24,6 +24,10 @@ export const createInvoiceFromTimeEntriesSchema = z.object({
     currency: z.string().length(3).optional(),
     exchange_strategy: z.enum(["CURRENT", "HISTORICAL"]).optional(),
     cbte_tipo: z.number().int().positive().optional(),
+    /** §descuento — % sobre el subtotal (0-100) y su motivo, se agrega como
+     * un invoice_item negativo. */
+    discount_percent: z.number().min(0).max(100).optional(),
+    discount_reason: z.string().max(500).nullable().optional(),
 });
 
 export const updateInvoiceStatusSchema = z.object({

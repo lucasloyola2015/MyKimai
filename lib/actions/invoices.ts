@@ -255,6 +255,9 @@ export async function createInvoiceFromTimeEntries(data: {
     currency?: string;
     exchange_strategy?: "CURRENT" | "HISTORICAL";
     cbte_tipo?: number; // Tipo de comprobante AFIP (11 = Factura C)
+    /** §descuento — % sobre el subtotal; se persiste como invoice_item negativo. */
+    discount_percent?: number;
+    discount_reason?: string | null;
 }): Promise<ActionResponse<invoices>> {
     // §4.5 — validación de input
     const parsed = createInvoiceFromTimeEntriesSchema.safeParse(data);
@@ -402,6 +405,16 @@ export async function createInvoiceFromTimeEntries(data: {
         subtotal = entriesWithDynamicAmount.reduce((sum, e) => sum + e._dynamicAmount, 0);
     }
 
+    // §descuento — se aplica sobre el subtotal de trabajo y se persiste como un
+    // invoice_item negativo. El subtotal de la factura queda NETO de descuento,
+    // así `subtotal` sigue siendo igual a la suma de sus items.
+    const discountPercent = Math.min(Math.max(Number(data.discount_percent || 0), 0), 100);
+    const grossSubtotal = subtotal;
+    const discountAmount = discountPercent > 0
+        ? Number((grossSubtotal * (discountPercent / 100)).toFixed(2))
+        : 0;
+    subtotal = Number((grossSubtotal - discountAmount).toFixed(2));
+
     const taxRate = data.tax_rate || 0;
     const taxAmount = subtotal * (taxRate / 100);
     const totalAmount = subtotal + taxAmount;
@@ -524,6 +537,24 @@ export async function createInvoiceFromTimeEntries(data: {
                         rate: Number(itemRate.toFixed(2)),
                         amount: Number(itemAmount.toFixed(2)),
                         type: "time",
+                    },
+                });
+            }
+
+            // §descuento — línea negativa que resta del total.
+            if (discountAmount > 0) {
+                const reason = (data.discount_reason || "").trim();
+                await tx.invoice_items.create({
+                    data: {
+                        invoice_id: invoice.id,
+                        time_entry_id: null,
+                        description: reason
+                            ? `Descuento ${discountPercent}% — ${reason}`
+                            : `Descuento ${discountPercent}%`,
+                        quantity: 1,
+                        rate: -discountAmount,
+                        amount: -discountAmount,
+                        type: "fixed",
                     },
                 });
             }
