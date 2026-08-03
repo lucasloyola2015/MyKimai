@@ -120,6 +120,16 @@
         }
         .detail-table td { border-bottom: 1px solid #e2e8f0; padding: 5px 6px; vertical-align: top; }
         .detail-table tbody tr:nth-child(even) { background-color: #f8fafc; }
+
+        /* Tabla de registros: se le da el máximo ancho posible a la descripción
+           (es el texto largo) y se comprimen las columnas de contexto. */
+        .detail-table--entries { table-layout: fixed; font-size: 8.5px; }
+        .detail-table--entries td { padding: 4px 5px; line-height: 1.3; }
+        .detail-table--entries th { padding: 4px 5px; }
+        .col-fecha { white-space: nowrap; font-size: 8px; line-height: 1.2; }
+        .col-fecha .hora { display: block; color: var(--acero); font-size: 7.5px; }
+        .col-meta { font-size: 8px; line-height: 1.25; word-break: break-word; hyphens: auto; }
+        .col-desc { text-align: justify; word-break: break-word; overflow-wrap: anywhere; hyphens: auto; }
         .detail-total-row td {
             border-top: 2px solid var(--titanio); border-bottom: none; font-weight: 700;
             font-size: 10px; padding-top: 7px;

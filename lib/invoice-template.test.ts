@@ -77,6 +77,16 @@ describe("anexo de detalle en el PDF de factura", () => {
     expect(html).toContain("Juntas Illinois SA");
   });
 
+  it("da el máximo ancho a la descripción para reducir páginas", () => {
+    const html = fillInvoiceTemplate(TPL, baseData(), entries);
+    // La descripción se lleva el ancho; las columnas de contexto se comprimen.
+    expect(html).toContain('style="width:60%">Descripción / Notas');
+    expect(html).toContain('style="width:8%">Fecha');
+    expect(html).toContain("detail-table--entries"); // table-layout: fixed
+    // La fecha va en 2 líneas (día + hora) para no ensanchar su columna.
+    expect(html).toContain('class="hora"');
+  });
+
   it("no agrega anexo si la factura no tiene entradas asociadas", () => {
     const html = fillInvoiceTemplate(TPL, baseData(), []);
     expect(html).not.toContain("Detalle de lo facturado");

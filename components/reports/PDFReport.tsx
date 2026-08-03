@@ -120,16 +120,17 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         borderBottomWidth: 0.5,
         borderBottomColor: '#e2e8f0',
-        paddingVertical: 6,
+        paddingVertical: 4,
         paddingHorizontal: 4,
         alignItems: 'flex-start', // Align distinct texts to top
     },
-    // Column widths (padding entre Tarea y Descripción para evitar solapamiento)
-    colDate: { width: '15%' },
-    colProject: { width: '20%' },
-    colTask: { width: '25%', paddingRight: 10 },
-    colDesc: { width: '30%', paddingLeft: 6 },
-    colHours: { width: '10%', textAlign: 'right' },
+    // Column widths: se maximiza la Descripción (texto largo) y se comprimen las
+    // columnas de contexto, para reducir el alto de fila y la cantidad de páginas.
+    colDate: { width: '9%' },
+    colProject: { width: '13%', paddingRight: 4 },
+    colTask: { width: '14%', paddingRight: 6 },
+    colDesc: { width: '57%', paddingLeft: 4, paddingRight: 4 },
+    colHours: { width: '7%', textAlign: 'right' },
 
     headerText: {
         color: '#f8fafc',
@@ -138,13 +139,19 @@ const styles = StyleSheet.create({
         textTransform: 'uppercase',
     },
     cellText: {
-        fontSize: 9,
+        fontSize: 8,
         color: '#334155',
-        lineHeight: 1.3,
+        lineHeight: 1.25,
     },
     monoText: {
         fontFamily: 'Courier',
-        fontSize: 9,
+        fontSize: 8,
+    },
+    // Fecha compacta: entra en una columna angosta (se parte en 2 líneas).
+    dateText: {
+        fontFamily: 'Courier',
+        fontSize: 7,
+        lineHeight: 1.2,
     },
     summaryBox: {
         marginTop: 30,
@@ -261,7 +268,7 @@ export const PDFReport = ({ entries, client, totalHours, analytics, filters }: P
 
                     {entries.map((entry, i) => (
                         <View key={i} style={styles.tableRow} wrap={false}>
-                            <Text style={[styles.colDate, styles.monoText]}>{formatDateTime24(new Date(entry.start_time))}</Text>
+                            <Text style={[styles.colDate, styles.dateText]}>{formatDateTime24(new Date(entry.start_time))}</Text>
                             <Text style={[styles.colProject, styles.cellText]}>{entry.tasks?.projects?.name}</Text>
                             <View style={styles.colTask}>
                                 <Text style={styles.cellText}>{entry.tasks?.name}</Text>

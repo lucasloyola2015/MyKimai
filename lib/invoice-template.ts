@@ -157,16 +157,19 @@ function buildDetailPages(
 
   const detailRows = entries
     .map((e) => {
-      const fecha = arFormat(new Date(e.start_time), "dd/MM/yyyy HH:mm");
+      // Fecha en dos líneas (dd/MM/yy + hh:mm) para que la columna sea angosta y
+      // la descripción se lleve el ancho.
+      const dia = arFormat(new Date(e.start_time), "dd/MM/yy");
+      const hora = arFormat(new Date(e.start_time), "HH:mm");
       const proyecto = e.tasks?.projects?.name || "—";
       const tarea = e.tasks?.name || "—";
       const noBillable =
-        e.billable === false ? ` <span class="nb-tag">(No facturable)</span>` : "";
+        e.billable === false ? ` <span class="nb-tag">(No fact.)</span>` : "";
       return `<tr>
-          <td class="mono" style="white-space:nowrap">${escapeHtml(fecha)}</td>
-          <td>${escapeHtml(proyecto)}</td>
-          <td>${escapeHtml(tarea)}${noBillable}</td>
-          <td>${escapeHtml(e.description || "—")}</td>
+          <td class="col-fecha mono">${escapeHtml(dia)}<span class="hora">${escapeHtml(hora)}</span></td>
+          <td class="col-meta">${escapeHtml(proyecto)}</td>
+          <td class="col-meta">${escapeHtml(tarea)}${noBillable}</td>
+          <td class="col-desc">${escapeHtml(e.description || "—")}</td>
           <td class="t-right mono" style="white-space:nowrap">${fmtHours(e.duration_neto || 0)}</td>
         </tr>`;
     })
@@ -211,14 +214,14 @@ function buildDetailPages(
     </table>
 
     <div class="detail-section-title">Detalle de tareas (${entries.length} registros)</div>
-    <table class="detail-table">
+    <table class="detail-table detail-table--entries">
         <thead>
             <tr>
-                <th style="width:14%">Fecha</th>
-                <th style="width:20%">Proyecto</th>
-                <th style="width:22%">Tarea</th>
-                <th style="width:34%">Descripción / Notas</th>
-                <th style="width:10%" class="t-right">Horas</th>
+                <th style="width:8%">Fecha</th>
+                <th style="width:12%">Proyecto</th>
+                <th style="width:13%">Tarea</th>
+                <th style="width:60%">Descripción / Notas</th>
+                <th style="width:7%" class="t-right">Hs</th>
             </tr>
         </thead>
         <tbody>
