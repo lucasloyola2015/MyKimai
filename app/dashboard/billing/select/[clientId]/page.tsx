@@ -14,6 +14,7 @@ import { getClients } from "@/lib/actions/clients";
 import { getUserFiscalSettings } from "@/lib/actions/user-settings";
 import type { time_entries, clients } from "@prisma/client";
 import { resolveRate } from "@/lib/utils/rates";
+import { buildDiscountDescription } from "@/lib/utils/discount";
 import { getUsdExchangeRateInfo, type UsdExchangeInfo } from "@/lib/actions/exchange";
 import { es } from "date-fns/locale";
 import { toast } from "@/hooks/use-toast";
@@ -383,11 +384,8 @@ export default function PartialBillingPage() {
 
         // §descuento — línea negativa en el preview (igual que la persistida).
         if (summary.discountAmount > 0) {
-            const reason = discountReason.trim();
             items.push({
-                description: reason
-                    ? `Descuento ${summary.discountPercent}% — ${reason}`
-                    : `Descuento ${summary.discountPercent}%`,
+                description: buildDiscountDescription(summary.discountPercent, discountReason),
                 quantity: 1,
                 rate: -summary.discountAmount,
                 amount: -summary.discountAmount,

@@ -13,6 +13,7 @@ import type { invoices, invoice_items, invoice_status, billing_type_invoice } fr
 import { getUsdExchangeRate } from "./exchange";
 import { PUNTO_VENTA_DEFAULT } from "@/lib/fiscal-config";
 import { resolveRate } from "@/lib/utils/rates";
+import { buildDiscountDescription } from "@/lib/utils/discount";
 import {
     createInvoiceFromTimeEntriesSchema,
     updateInvoiceStatusSchema,
@@ -543,14 +544,11 @@ export async function createInvoiceFromTimeEntries(data: {
 
             // §descuento — línea negativa que resta del total.
             if (discountAmount > 0) {
-                const reason = (data.discount_reason || "").trim();
                 await tx.invoice_items.create({
                     data: {
                         invoice_id: invoice.id,
                         time_entry_id: null,
-                        description: reason
-                            ? `Descuento ${discountPercent}% — ${reason}`
-                            : `Descuento ${discountPercent}%`,
+                        description: buildDiscountDescription(discountPercent, data.discount_reason),
                         quantity: 1,
                         rate: -discountAmount,
                         amount: -discountAmount,
