@@ -95,10 +95,49 @@
             font-family: 'Montserrat', sans-serif; font-weight: 600; font-size: 5px; color: #4B5563;
             text-transform: uppercase; letter-spacing: 0.5px; line-height: 1.3; margin-top: 2px;
         }
+        /* ---- Detalle de horas facturadas (anexo, fluye en varias páginas) ---- */
+        .detail-page {
+            width: 210mm; background: white; margin: 20px auto; padding: 10mm;
+            box-shadow: 0 0 10px rgba(0,0,0,0.5); position: relative;
+        }
+        .detail-title {
+            font-family: 'Space Grotesk', sans-serif; font-size: 20px; font-weight: 700;
+            margin: 0 0 2px 0; text-transform: uppercase; letter-spacing: 0.5px;
+        }
+        .detail-subtitle { font-size: 10px; color: var(--acero); margin-bottom: 12px; }
+        .detail-head {
+            display: flex; justify-content: space-between; align-items: flex-end;
+            border-bottom: 2px solid var(--titanio); padding-bottom: 8px; margin-bottom: 12px;
+        }
+        .detail-section-title {
+            font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px;
+            margin: 16px 0 6px 0; color: var(--titanio);
+        }
+        .detail-table { width: 100%; border-collapse: collapse; font-size: 9px; }
+        .detail-table th {
+            background-color: var(--titanio); color: white; padding: 5px 6px; text-align: left;
+            font-weight: 600; text-transform: uppercase; font-size: 8px; letter-spacing: 0.5px;
+        }
+        .detail-table td { border-bottom: 1px solid #e2e8f0; padding: 5px 6px; vertical-align: top; }
+        .detail-table tbody tr:nth-child(even) { background-color: #f8fafc; }
+        .detail-total-row td {
+            border-top: 2px solid var(--titanio); border-bottom: none; font-weight: 700;
+            font-size: 10px; padding-top: 7px;
+        }
+        .mono { font-family: 'Space Grotesk', monospace; }
+        .nb-tag { color: #ea580c; font-weight: 700; font-size: 7px; }
+
         @media print {
             body { background: none; }
             .page { margin: 0; box-shadow: none; border: none; width: 100%; height: 100%; page-break-after: always; padding: 5mm 10mm; }
             .page:last-child { page-break-after: auto; }
+            /* El anexo arranca en hoja nueva y fluye; el encabezado de la tabla
+               se repite en cada página y no se parten las filas. */
+            .detail-page {
+                margin: 0; box-shadow: none; width: 100%; padding: 5mm 10mm; page-break-before: always;
+            }
+            .detail-table thead { display: table-header-group; }
+            .detail-table tr { page-break-inside: avoid; }
         }
     </style>
 </head>
@@ -327,6 +366,8 @@
     </div>
 </div>
 <!-- COPIES:END -->
+
+{DETAIL_PAGES}
 
 </body>
 </html>

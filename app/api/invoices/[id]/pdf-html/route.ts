@@ -23,10 +23,20 @@ export async function GET(
     if (!invoice) {
       return NextResponse.json({ error: "Factura no encontrada" }, { status: 404 });
     }
-    // Obtener período real de los time entries vinculados a esta factura
+    // Time entries vinculados: se usan para el período real y para el ANEXO de
+    // detalle que se adjunta después de la factura.
     const linkedEntries = await prisma.time_entries.findMany({
       where: { invoice_id: id },
-      select: { start_time: true, end_time: true },
+      select: {
+        start_time: true,
+        end_time: true,
+        description: true,
+        duration_neto: true,
+        billable: true,
+        tasks: {
+          select: { name: true, projects: { select: { name: true } } },
+        },
+      },
       orderBy: { start_time: "asc" },
     });
     const periodStart = linkedEntries.length > 0 ? linkedEntries[0].start_time : null;
@@ -47,7 +57,7 @@ export async function GET(
       { ...(invoice as any), _periodStart: periodStart, _periodEnd: periodEnd },
       issuer
     );
-    const html = fillInvoiceTemplate(templateHtml, data);
+    const html = fillInvoiceTemplate(templateHtml, data, linkedEntries as any);
     return new NextResponse(html, {
       headers: {
         "Content-Type": "text/html; charset=utf-8",

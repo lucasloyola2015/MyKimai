@@ -452,7 +452,8 @@ export default function PartialBillingPage() {
                 const templateHtml = await res.text();
                 if (cancelled) return;
                 const data = previewDataToTemplateData(previewData as any);
-                const html = fillInvoiceTemplate(templateHtml, data);
+                // §anexo — el preview incluye el detalle igual que el PDF final.
+                const html = fillInvoiceTemplate(templateHtml, data, selectedEntries as any);
                 if (!cancelled) setPreviewHtml(html);
             } catch (e) {
                 console.error("[Preview template]", e);
@@ -460,7 +461,7 @@ export default function PartialBillingPage() {
             }
         })();
         return () => { cancelled = true; };
-    }, [showPreview, previewData]);
+    }, [showPreview, previewData, selectedEntries]);
 
     if (!clientId) {
         return (

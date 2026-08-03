@@ -1,6 +1,7 @@
 import { format } from "date-fns";
 import { getAfipQrUrlFromInvoice } from "@/lib/afip-qr";
 import { PUNTO_VENTA_DEFAULT } from "@/lib/fiscal-config";
+import { arFormat } from "@/lib/timezone";
 
 /**
  * Rellena la plantilla HTML de factura con los datos proporcionados.
@@ -107,7 +108,135 @@ function buildCaeBlock(cae: string, vtoCae: string, esInterno?: boolean): string
             </div>`;
 }
 
-export function fillInvoiceTemplate(templateHtml: string, data: InvoiceTemplateData): string {
+/** Entrada de tiempo para el anexo de detalle de la factura. */
+export interface InvoiceDetailEntry {
+  start_time: Date | string;
+  description?: string | null;
+  duration_neto?: number | null;
+  billable?: boolean;
+  tasks?: {
+    name?: string | null;
+    projects?: { name?: string | null } | null;
+  } | null;
+}
+
+const fmtHours = (minutes: number) => (minutes / 60).toFixed(2);
+
+/**
+ * §anexo — Construye las páginas de DETALLE que se adjuntan después de la
+ * factura: resumen por proyecto + detalle de tareas. Fluye en tantas hojas como
+ * haga falta (el CSS repite el encabezado de tabla y evita cortar filas).
+ */
+function buildDetailPages(
+  entries: InvoiceDetailEntry[],
+  data: InvoiceTemplateData
+): string {
+  if (!entries || entries.length === 0) return "";
+
+  // Agrupar por proyecto
+  const byProject = new Map<string, number>();
+  let totalMinutes = 0;
+  for (const e of entries) {
+    const min = e.duration_neto || 0;
+    totalMinutes += min;
+    const name = e.tasks?.projects?.name || "—";
+    byProject.set(name, (byProject.get(name) || 0) + min);
+  }
+
+  const projectRows = Array.from(byProject.entries())
+    .sort((a, b) => b[1] - a[1])
+    .map(([name, min]) => {
+      const pct = totalMinutes > 0 ? (min / totalMinutes) * 100 : 0;
+      return `<tr>
+          <td>${escapeHtml(name)}</td>
+          <td class="t-right mono">${fmtHours(min)} h</td>
+          <td class="t-right mono">${pct.toFixed(1)}%</td>
+        </tr>`;
+    })
+    .join("\n");
+
+  const detailRows = entries
+    .map((e) => {
+      const fecha = arFormat(new Date(e.start_time), "dd/MM/yyyy HH:mm");
+      const proyecto = e.tasks?.projects?.name || "—";
+      const tarea = e.tasks?.name || "—";
+      const noBillable =
+        e.billable === false ? ` <span class="nb-tag">(No facturable)</span>` : "";
+      return `<tr>
+          <td class="mono" style="white-space:nowrap">${escapeHtml(fecha)}</td>
+          <td>${escapeHtml(proyecto)}</td>
+          <td>${escapeHtml(tarea)}${noBillable}</td>
+          <td>${escapeHtml(e.description || "—")}</td>
+          <td class="t-right mono" style="white-space:nowrap">${fmtHours(e.duration_neto || 0)}</td>
+        </tr>`;
+    })
+    .join("\n");
+
+  const docLabel = data.EsInterno ? "Recibo" : "Factura";
+
+  return `
+<div class="detail-page">
+    <div class="detail-head">
+        <div>
+            <h2 class="detail-title">Detalle de lo facturado</h2>
+            <div class="detail-subtitle">
+                ${escapeHtml(docLabel)} N° ${escapeHtml(data.CompNro)} &nbsp;·&nbsp;
+                ${escapeHtml(data.RazonSocialReceptor)} &nbsp;·&nbsp;
+                Período: ${escapeHtml(data.PeriodoDesde)} al ${escapeHtml(data.PeriodoHasta)}
+            </div>
+        </div>
+        <div style="text-align:right">
+            <div style="font-size:9px;color:var(--acero);text-transform:uppercase;letter-spacing:1px;font-weight:700">Horas totales</div>
+            <div class="mono" style="font-size:22px;font-weight:700">${fmtHours(totalMinutes)} h</div>
+        </div>
+    </div>
+
+    <div class="detail-section-title">Resumen por proyecto</div>
+    <table class="detail-table">
+        <thead>
+            <tr>
+                <th style="width:60%">Proyecto</th>
+                <th style="width:20%" class="t-right">Horas</th>
+                <th style="width:20%" class="t-right">Participación</th>
+            </tr>
+        </thead>
+        <tbody>
+            ${projectRows}
+            <tr class="detail-total-row">
+                <td>Total</td>
+                <td class="t-right mono">${fmtHours(totalMinutes)} h</td>
+                <td class="t-right mono">100%</td>
+            </tr>
+        </tbody>
+    </table>
+
+    <div class="detail-section-title">Detalle de tareas (${entries.length} registros)</div>
+    <table class="detail-table">
+        <thead>
+            <tr>
+                <th style="width:14%">Fecha</th>
+                <th style="width:20%">Proyecto</th>
+                <th style="width:22%">Tarea</th>
+                <th style="width:34%">Descripción / Notas</th>
+                <th style="width:10%" class="t-right">Horas</th>
+            </tr>
+        </thead>
+        <tbody>
+            ${detailRows}
+            <tr class="detail-total-row">
+                <td colspan="4">Total de horas netas</td>
+                <td class="t-right mono">${fmtHours(totalMinutes)}</td>
+            </tr>
+        </tbody>
+    </table>
+</div>`;
+}
+
+export function fillInvoiceTemplate(
+  templateHtml: string,
+  data: InvoiceTemplateData,
+  detailEntries?: InvoiceDetailEntry[]
+): string {
   const esInterno = Boolean(data.EsInterno);
   const itemsRows = buildItemsRows(data.items);
   let html = templateHtml.replace(/\{\{ITEMS_ROWS\}\}/g, itemsRows);
@@ -164,6 +293,9 @@ export function fillInvoiceTemplate(templateHtml: string, data: InvoiceTemplateD
     const value = String((data as any)[key] ?? "");
     html = html.split(`{${key}}`).join(value);
   }
+  // §anexo — se inserta DESPUÉS del loop de placeholders para que el texto libre
+  // del detalle (descripciones del usuario) no se interprete como placeholder.
+  html = html.replace(/\{DETAIL_PAGES\}/g, buildDetailPages(detailEntries ?? [], data));
   return html;
 }
 
