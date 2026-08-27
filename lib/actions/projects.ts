@@ -164,6 +164,8 @@ export async function createProject(data: {
 export async function updateProject(
     id: string,
     data: {
+        /** Reasignar el proyecto a otro cliente del workspace. */
+        client_id?: string;
         name?: string;
         description?: string | null;
         currency?: string;
@@ -205,11 +207,38 @@ export async function updateProject(
         };
     }
 
+    // §reasignación de cliente — validaciones antes de mover el proyecto.
+    const isMovingClient =
+        data.client_id !== undefined && data.client_id !== existing.client_id;
+
+    if (isMovingClient) {
+        // 1) El cliente destino debe pertenecer al MISMO workspace (anti cross-tenant).
+        const targetClient = await prisma.clients.findFirst({
+            where: { id: data.client_id, user_id: ctx.ownerId },
+        });
+        if (!targetClient) {
+            return {
+                success: false,
+                error: "El cliente destino no existe o no pertenece a tu workspace.",
+            };
+        }
+
+        // 2) Nota de integridad: las facturas YA EMITIDAS conservan su propio
+        //    client_id, por lo que los comprobantes históricos NO se alteran al
+        //    mover el proyecto. Lo que sí cambia es la atribución de horas por
+        //    cliente en reportes; la UI pide confirmación explícita en ese caso.
+
+        // 3) Herencia de facturabilidad del nuevo cliente.
+        if ((targetClient as any).is_billable === false) {
+            data.is_billable = false;
+        }
+    }
+
     try {
         // HERENCIA: Validamos contra el cliente al intentar activar facturabilidad
         if (data.is_billable === true) {
             const client = await prisma.clients.findUnique({
-                where: { id: existing.client_id }
+                where: { id: data.client_id ?? existing.client_id }
             });
             if (client && (client as any).is_billable === false) {
                 return {
@@ -236,7 +265,7 @@ export async function updateProject(
         });
 
         // Recalcular entries no facturados si cambió la tarifa o facturabilidad
-        if (data.rate !== undefined || data.is_billable !== undefined) {
+        if (data.rate !== undefined || data.is_billable !== undefined || isMovingClient) {
             await recalculateUnbilledEntries({ projectId: id });
         }
 
@@ -428,4 +457,22 @@ export async function getPortalProjectDetail(projectId: string) {
         tasks: tasksWithStats,
         timeEntries: allTimeEntries,
     };
+}
+
+/**
+ * §reasignación de cliente — cuántas horas del proyecto ya están facturadas.
+ * La UI lo usa para advertir antes de mover el proyecto a otro cliente: los
+ * comprobantes emitidos no cambian (la factura guarda su propio client_id), pero
+ * la atribución histórica de horas por cliente en los reportes sí.
+ */
+export async function countBilledEntriesForProject(projectId: string): Promise<number> {
+    const ctx = await getOwnerContext();
+    if (!canManageWorkspace(ctx)) return 0;
+
+    return prisma.time_entries.count({
+        where: {
+            invoice_id: { not: null },
+            tasks: { project_id: projectId, projects: { clients: { user_id: ctx.ownerId } } },
+        },
+    });
 }

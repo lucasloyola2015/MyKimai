@@ -31,6 +31,7 @@ import {
   getProjects,
   createProject,
   updateProject,
+  countBilledEntriesForProject,
   deleteProject,
 } from "@/lib/actions/projects";
 import { toast } from "@/hooks/use-toast";
@@ -116,8 +117,24 @@ export default function ProjectsPage() {
       is_billable: formData.is_billable,
     };
 
+    // Si se está cambiando el cliente de un proyecto con horas ya facturadas,
+    // avisar: los comprobantes emitidos no cambian, pero la atribución histórica
+    // de horas por cliente en los reportes sí.
+    if (editingProject && formData.client_id !== editingProject.client_id) {
+      const billed = await countBilledEntriesForProject(editingProject.id);
+      if (billed > 0) {
+        const ok = confirm(
+          `Este proyecto tiene ${billed} hora(s) ya facturadas.\n\n` +
+          `Las facturas emitidas NO se modifican (conservan su cliente original), ` +
+          `pero los reportes por cliente pasarán a atribuir esas horas al nuevo cliente.\n\n` +
+          `¿Querés cambiar el cliente igualmente?`
+        );
+        if (!ok) return;
+      }
+    }
+
     const result = editingProject
-      ? await updateProject(editingProject.id, base)
+      ? await updateProject(editingProject.id, { client_id: formData.client_id, ...base })
       : await createProject({ client_id: formData.client_id, ...base });
 
     if (!result.success) {

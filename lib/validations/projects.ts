@@ -25,4 +25,7 @@ export const createProjectSchema = z.object({
     ...projectBase,
 });
 
-export const updateProjectSchema = z.object(projectBase).partial();
+// client_id opcional: permite REASIGNAR el proyecto a otro cliente.
+export const updateProjectSchema = z
+    .object({ ...projectBase, client_id: uuid })
+    .partial();
