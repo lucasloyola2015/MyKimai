@@ -7,7 +7,6 @@ import {
     LayoutDashboard,
     Users,
     FolderKanban,
-    CheckSquare,
     Clock,
     FileText,
     Package,
