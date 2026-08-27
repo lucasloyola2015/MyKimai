@@ -506,7 +506,7 @@ export default function PartialBillingPage() {
                                     const project = task?.projects ?? (task as any)?.project;
                                     const client = project?.clients;
                                     const projectName = project?.name ?? "—";
-                                    const taskName = task?.name ?? "—";
+                                    const taskName = entry.title ?? task?.name ?? "—";
                                     const durationNeto = entry.duration_neto ?? 0;
                                     const { rate: resolvedRate, source: rateSource } = resolveRate({ task, project, client });
                                     const rateDisplay = resolvedRate ?? Number(entry.rate_applied ?? 0);

@@ -31,6 +31,7 @@ export async function GET(
         start_time: true,
         end_time: true,
         description: true,
+        title: true,
         duration_neto: true,
         billable: true,
         tasks: {

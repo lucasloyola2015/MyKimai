@@ -60,9 +60,9 @@ export async function GET() {
                     active: true,
                     mode: "timer",
                     project: activeEntry.tasks.projects.name,
-                    task: activeEntry.tasks.name,
+                    task: (activeEntry as any).title || activeEntry.tasks.name,
                     elapsed: `${hours}h`,
-                    milestone: `${activeEntry.tasks.projects.name} / ${activeEntry.tasks.name} : ${hours}h`
+                    milestone: `${activeEntry.tasks.projects.name} / ${(activeEntry as any).title || activeEntry.tasks.name} : ${hours}h`
                 });
             }
         }

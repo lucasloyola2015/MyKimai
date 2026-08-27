@@ -271,7 +271,7 @@ export const PDFReport = ({ entries, client, totalHours, analytics, filters }: P
                             <Text style={[styles.colDate, styles.dateText]}>{formatDateTime24(new Date(entry.start_time))}</Text>
                             <Text style={[styles.colProject, styles.cellText]}>{entry.tasks?.projects?.name}</Text>
                             <View style={styles.colTask}>
-                                <Text style={styles.cellText}>{entry.tasks?.name}</Text>
+                                <Text style={styles.cellText}>{entry.title || entry.tasks?.name || "—"}</Text>
                                 {!entry.billable && (
                                     <Text style={{ fontSize: 7, color: '#ea580c', fontWeight: 'bold' }}>(No Facturable)</Text>
                                 )}

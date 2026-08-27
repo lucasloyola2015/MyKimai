@@ -112,6 +112,7 @@ function buildCaeBlock(cae: string, vtoCae: string, esInterno?: boolean): string
 export interface InvoiceDetailEntry {
   start_time: Date | string;
   description?: string | null;
+  title?: string | null;
   duration_neto?: number | null;
   billable?: boolean;
   tasks?: {
@@ -162,7 +163,7 @@ function buildDetailPages(
       const dia = arFormat(new Date(e.start_time), "dd/MM/yy");
       const hora = arFormat(new Date(e.start_time), "HH:mm");
       const proyecto = e.tasks?.projects?.name || "—";
-      const tarea = e.tasks?.name || "—";
+      const tarea = e.title || e.tasks?.name || "—";
       const noBillable =
         e.billable === false ? ` <span class="nb-tag">(No fact.)</span>` : "";
       return `<tr>

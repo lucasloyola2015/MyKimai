@@ -145,7 +145,7 @@ export default function ProjectDetailPage({ params }: { params: { id: string } }
             <div className="space-y-4">
                 <h3 className="text-xl font-bold flex items-center gap-2">
                     <FolderKanban className="h-5 w-5 text-muted-foreground" />
-                    Desglose por Tarea
+                    Desglose por Título
                 </h3>
                 <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
                     {project.tasks.map((task: any) => (

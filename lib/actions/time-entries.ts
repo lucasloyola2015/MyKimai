@@ -285,10 +285,11 @@ async function findPackageForEntry(
  */
 export async function startTimeEntry(
     taskId: string,
-    description?: string
+    description?: string,
+    title?: string | null
 ): Promise<ActionResponse<time_entries>> {
     // §4.5 — validación de input
-    const parsed = startTimeEntrySchema.safeParse({ taskId, description });
+    const parsed = startTimeEntrySchema.safeParse({ taskId, description, title });
     if (!parsed.success) {
         return { success: false, error: zodErrorMessage(parsed.error) };
     }
@@ -354,6 +355,7 @@ export async function startTimeEntry(
                 user_id: ctx.actorId,
                 task_id: taskId,
                 description: description || null,
+                title: (title ?? "").trim() || null,
                 start_time: new Date(),
                 end_time: null,
                 duration_total: null,
@@ -692,6 +694,7 @@ export async function updateTimeEntry(
     entryId: string,
     data: {
         description?: string | null;
+        title?: string | null;
         start_time?: Date;
         end_time?: Date | null;
         duration_total?: number | null;
@@ -1406,4 +1409,63 @@ export async function recalculateUnbilledEntries(filter: {
     revalidatePath("/dashboard/time-tracker");
 
     return entries.length;
+}
+
+/**
+ * §sin-tareas — Resuelve la "tarea contenedora" de un proyecto.
+ *
+ * Las tareas ya no se eligen desde la UI: el detalle real de cada sesión vive en
+ * `time_entries.title`. Pero `tasks` sigue siendo el vínculo entre las horas y su
+ * proyecto/cliente (lo usan todas las consultas de scoping y facturación), así que
+ * cada proyecto necesita una tarea que sostenga esa relación.
+ *
+ * Estrategia (en orden): usar una tarea llamada "General" si existe; si no, y el
+ * proyecto tiene exactamente UNA tarea, reutilizarla (continuidad con los datos
+ * actuales); en cualquier otro caso, crear "General".
+ */
+async function resolveContainerTaskId(projectId: string, ownerId: string): Promise<string | null> {
+    const project = await prisma.projects.findFirst({
+        where: { id: projectId, clients: { user_id: ownerId } },
+        select: { id: true, is_billable: true, tasks: { select: { id: true, name: true } } },
+    });
+    if (!project) return null;
+
+    const general = project.tasks.find((t) => t.name === "General");
+    if (general) return general.id;
+    if (project.tasks.length === 1) return project.tasks[0].id;
+
+    const created = await prisma.tasks.create({
+        data: {
+            project_id: projectId,
+            name: "General",
+            is_billable: (project as any).is_billable ?? true,
+        },
+        select: { id: true },
+    });
+    return created.id;
+}
+
+/**
+ * §sin-tareas — Inicia una sesión eligiendo PROYECTO + título libre (sin tarea).
+ */
+export async function startTimeEntryForProject(
+    projectId: string,
+    title?: string | null,
+    description?: string
+): Promise<ActionResponse<time_entries>> {
+    const ctx = await getOwnerContext();
+    const taskId = await resolveContainerTaskId(projectId, ctx.ownerId);
+    if (!taskId) {
+        return { success: false, error: "Proyecto no encontrado o fuera de tu workspace." };
+    }
+    return startTimeEntry(taskId, description, title);
+}
+
+/**
+ * §sin-tareas — Devuelve el id de tarea contenedora de un proyecto, para las
+ * pantallas que necesitan reasignar una entrada a otro proyecto (Mis Horas).
+ */
+export async function getContainerTaskId(projectId: string): Promise<string | null> {
+    const ctx = await getOwnerContext();
+    return resolveContainerTaskId(projectId, ctx.ownerId);
 }

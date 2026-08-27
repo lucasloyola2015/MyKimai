@@ -20,6 +20,7 @@ const uuid = z.string().uuid({ message: "ID inválido (esperado UUID)" });
 export const startTimeEntrySchema = z.object({
     taskId: uuid,
     description: z.string().max(2000).nullable().optional(),
+    title: z.string().max(255).nullable().optional(),
 });
 
 export const stopTimeEntrySchema = z.object({
@@ -47,6 +48,7 @@ export const updateTimeEntrySchema = z
         data: z
             .object({
                 description: z.string().max(2000).nullable().optional(),
+                title: z.string().max(255).nullable().optional(),
                 start_time: z.coerce.date().optional(),
                 end_time: z.coerce.date().nullable().optional(),
                 duration_total: z.number().int().nonnegative().nullable().optional(),

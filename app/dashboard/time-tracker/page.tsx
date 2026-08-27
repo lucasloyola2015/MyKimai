@@ -11,6 +11,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Play } from "lucide-react";
@@ -19,22 +20,17 @@ import { useActiveTimeEntry } from "@/contexts/active-time-entry-context";
 import { ActiveTasksPanel } from "@/components/dashboard/active-tasks-panel";
 import { getClients } from "@/lib/actions/clients";
 import { getProjects } from "@/lib/actions/projects";
-import { startTimeEntry, getRecentTimeEntries } from "@/lib/actions/time-entries";
-import type { clients, projects, tasks, time_entries } from "@prisma/client";
+import { startTimeEntryForProject, getRecentTimeEntries } from "@/lib/actions/time-entries";
+import type { clients, projects, time_entries } from "@prisma/client";
 import { toast } from "@/hooks/use-toast";
-
-interface TaskWithRelations extends tasks {
-  projects: projects & { clients: clients };
-}
 
 export default function TimeTrackerPage() {
   const searchParams = useSearchParams();
   const [clients, setClients] = useState<clients[]>([]);
   const [projects, setProjects] = useState<(projects & { clients: clients })[]>([]);
-  const [tasks, setTasks] = useState<TaskWithRelations[]>([]);
   const [selectedClientId, setSelectedClientId] = useState<string>("");
   const [selectedProjectId, setSelectedProjectId] = useState<string>("");
-  const [selectedTaskId, setSelectedTaskId] = useState<string>("");
+  const [title, setTitle] = useState<string>("");
   const [description, setDescription] = useState("");
   const [recentEntries, setRecentEntries] = useState<time_entries[]>([]);
   const [loading, setLoading] = useState(true);
@@ -52,15 +48,12 @@ export default function TimeTrackerPage() {
   useEffect(() => {
     const clientId = searchParams.get("client_id");
     const projectId = searchParams.get("project_id");
-    const taskId = searchParams.get("task_id");
 
-    if (clientId && projectId && taskId && !preloaded && clients.length > 0) {
+    if (clientId && projectId && !preloaded && clients.length > 0) {
       (async () => {
         setSelectedClientId(clientId);
         setSelectedProjectId(projectId);
         await loadProjects(clientId);
-        await loadTasks(projectId);
-        setSelectedTaskId(taskId);
         setPreloaded(true);
       })();
     }
@@ -76,12 +69,7 @@ export default function TimeTrackerPage() {
   }, [selectedClientId]);
 
   useEffect(() => {
-    if (selectedProjectId) {
-      loadTasks(selectedProjectId);
-    } else {
-      setTasks([]);
-      setSelectedTaskId("");
-    }
+    if (!selectedProjectId) setTitle("");
   }, [selectedProjectId]);
 
   const loadClients = async () => {
@@ -106,17 +94,6 @@ export default function TimeTrackerPage() {
     }
   };
 
-  const loadTasks = async (projectId: string) => {
-    try {
-      const { getTasks } = await import("@/lib/actions/tasks");
-      const allTasks = await getTasks(projectId);
-      setTasks(allTasks as TaskWithRelations[]);
-    } catch (error) {
-      console.error("Error loading tasks:", error);
-      toast({ title: "Error", description: "No se pudieron cargar las tareas.", variant: "destructive" });
-    }
-  };
-
   const loadRecentEntries = async () => {
     try {
       const data = await getRecentTimeEntries(10);
@@ -127,20 +104,24 @@ export default function TimeTrackerPage() {
   };
 
   const handleStart = async () => {
-    if (!selectedTaskId) {
-      toast({ title: "Error", description: "Por favor selecciona una tarea", variant: "destructive" });
+    if (!selectedProjectId) {
+      toast({ title: "Error", description: "Elegí un proyecto", variant: "destructive" });
+      return;
+    }
+    if (!title.trim()) {
+      toast({ title: "Error", description: "Escribí un título para la sesión", variant: "destructive" });
       return;
     }
 
     setStarting(true);
     try {
-      const result = await startTimeEntry(selectedTaskId, description || undefined);
+      const result = await startTimeEntryForProject(selectedProjectId, title, description || undefined);
       if (!result.success) throw new Error(result.error);
 
       toast({ title: "Timer iniciado", description: "Podés iniciar más tareas en paralelo." });
 
       // Limpiar para iniciar otra tarea; refrescar el panel de activas.
-      setSelectedTaskId("");
+      setTitle("");
       setDescription("");
       await refreshActiveEntry();
       await loadRecentEntries();
@@ -154,8 +135,6 @@ export default function TimeTrackerPage() {
       setStarting(false);
     }
   };
-
-  const selectedTask = tasks.find((t) => t.id === selectedTaskId);
 
   return (
     <div className="space-y-6">
@@ -182,7 +161,7 @@ export default function TimeTrackerPage() {
                 onValueChange={(value) => {
                   setSelectedClientId(value);
                   setSelectedProjectId("");
-                  setSelectedTaskId("");
+                  setTitle("");
                 }}
               >
                 <SelectTrigger>
@@ -205,7 +184,7 @@ export default function TimeTrackerPage() {
                   value={selectedProjectId}
                   onValueChange={(value) => {
                     setSelectedProjectId(value);
-                    setSelectedTaskId("");
+                    setTitle("");
                   }}
                   disabled={!selectedClientId}
                 >
@@ -225,29 +204,17 @@ export default function TimeTrackerPage() {
 
             {selectedProjectId && (
               <div className="grid gap-2">
-                <Label htmlFor="task">Tarea *</Label>
-                <Select value={selectedTaskId} onValueChange={setSelectedTaskId} disabled={!selectedProjectId}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Selecciona una tarea" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {tasks.map((task) => (
-                      <SelectItem key={task.id} value={task.id}>
-                        {task.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <Label htmlFor="title">Título *</Label>
+                <Input
+                  id="title"
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                  placeholder="En qué estás trabajando (ej. Puesta en marcha PLC)"
+                  maxLength={255}
+                />
               </div>
             )}
 
-            {selectedTask && (
-              <div className="rounded-lg border bg-muted p-3 text-sm">
-                <p><strong>Cliente:</strong> {selectedTask.projects.clients.name}</p>
-                <p><strong>Proyecto:</strong> {selectedTask.projects.name}</p>
-                <p><strong>Tarea:</strong> {selectedTask.name}</p>
-              </div>
-            )}
 
             <div className="grid gap-2">
               <Label htmlFor="description">Descripción</Label>
@@ -259,7 +226,7 @@ export default function TimeTrackerPage() {
               />
             </div>
 
-            <Button onClick={handleStart} disabled={!selectedTaskId || loading || starting} className="w-full font-bold h-11">
+            <Button onClick={handleStart} disabled={!selectedProjectId || !title.trim() || loading || starting} className="w-full font-bold h-11">
               <Play className="mr-2 h-5 w-5 fill-current" />
               INICIAR TAREA
             </Button>
@@ -282,7 +249,7 @@ export default function TimeTrackerPage() {
                   return (
                     <div key={entry.id} className="rounded-lg border p-4 text-sm">
                       <div className="flex items-center justify-between mb-2">
-                        <p className="font-medium">{task?.name || "Tarea eliminada"}</p>
+                        <p className="font-medium">{(entry as any).title || task?.name || "—"}</p>
                         <p className="text-muted-foreground">{entry.duration_neto} min</p>
                       </div>
                       {project && (

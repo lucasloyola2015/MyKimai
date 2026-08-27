@@ -31,7 +31,6 @@ const navItems: NavItem[] = [
         icon: FolderKanban,
         badge: "activeProjects",
     },
-    { href: "/dashboard/tasks", label: "Tareas", icon: CheckSquare },
     { href: "/dashboard/time-tracker", label: "Time Tracker", icon: Clock },
     { href: "/dashboard/my-hours", label: "Mis Horas", icon: Calendar },
     { href: "/dashboard/hour-packages", label: "Paquetes", icon: Package },

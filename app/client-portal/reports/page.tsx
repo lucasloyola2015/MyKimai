@@ -301,7 +301,7 @@ export default function ClientReportsPage() {
                                 <div className="flex items-start justify-between">
                                     <div className="space-y-1">
                                         <p className="font-bold text-sm leading-tight text-foreground">
-                                            {entry.task?.name}
+                                            {entry.title || entry.task?.name || "—"}
                                         </p>
                                         <div className="flex items-center gap-2 text-[10px] text-muted-foreground uppercase font-medium tracking-tighter">
                                             <Folder className="h-3 w-3" /> {entry.task?.project?.name}

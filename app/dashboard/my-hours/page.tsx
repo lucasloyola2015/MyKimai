@@ -25,7 +25,7 @@ import {
 import { Pencil, Trash2, Plus, Coffee, X, Wrench, ChevronRight, ShieldCheck } from "lucide-react";
 import { getClients } from "@/lib/actions/clients";
 import { getProjects } from "@/lib/actions/projects";
-import { getTasks } from "@/lib/actions/tasks";
+import { getContainerTaskId } from "@/lib/actions/time-entries";
 import {
   getTimeEntries,
   updateTimeEntry,
@@ -128,9 +128,9 @@ export default function Page() {
     client_id: "",
     project_id: "",
     task_id: "",
+    title: "",
   });
   const [modalProjects, setModalProjects] = useState<projects[]>([]);
-  const [modalTasks, setModalTasks] = useState<any[]>([]);
   const [recalculatingIds, setRecalculatingIds] = useState<Set<string>>(new Set());
   /** Estado controlado por descanso: start/end en "HH:mm" para envío atómico (ambos siempre al servidor) */
   const [breakFormValues, setBreakFormValues] = useState<Record<string, { start: string; end: string }>>({});
@@ -161,11 +161,6 @@ export default function Page() {
     }
   }, [formData.client_id, isDialogOpen]);
 
-  useEffect(() => {
-    if (isDialogOpen && formData.project_id) {
-      loadModalTasks(formData.project_id);
-    }
-  }, [formData.project_id, isDialogOpen]);
 
   // Filtro de entradas con ventana temporal (90 días por defecto).
   const buildEntriesFilter = () => ({
@@ -216,15 +211,6 @@ export default function Page() {
     }
   };
 
-  const loadModalTasks = async (projectId: string) => {
-    try {
-      const data = await getTasks(projectId);
-      setModalTasks(data);
-    } catch (error) {
-      console.error("Error loading modal tasks:", error);
-    }
-  };
-
   const filteredProjects = selectedClient
     ? projects.filter((p) => p.client_id === selectedClient)
     : [];
@@ -247,6 +233,7 @@ export default function Page() {
       client_id: client?.id || "",
       project_id: project?.id || "",
       task_id: task?.id || "",
+      title: entry.title || task?.name || "",
     });
     const breakValues: Record<string, { start: string; end: string }> = {};
     (entry.time_entry_breaks || []).forEach((b: any) => {
@@ -365,11 +352,18 @@ export default function Page() {
         ? new Date(`${formData.end_date}T${formData.end_time}`)
         : null;
 
+      // Las tareas ya no se eligen: la entrada se ancla a la tarea contenedora
+      // del proyecto seleccionado y el detalle real va en el título.
+      const containerTaskId = formData.project_id
+        ? await getContainerTaskId(formData.project_id)
+        : null;
+
       const result = await updateTimeEntry(editingEntry.id, {
         description: formData.description || null,
         start_time: startDateTime,
         end_time: endDateTime,
-        task_id: formData.task_id,
+        title: formData.title.trim() || null,
+        task_id: containerTaskId || formData.task_id,
       });
 
       if (!result.success) {
@@ -497,9 +491,9 @@ export default function Page() {
       client_id: "",
       project_id: "",
       task_id: "",
+      title: "",
     });
     setModalProjects([]);
-    setModalTasks([]);
     setBreakFormValues({});
     setEditingEntry(null);
   };
@@ -705,7 +699,7 @@ export default function Page() {
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 mb-0.5">
                           <h3 className="font-bold text-slate-900 dark:text-slate-100 truncate uppercase tracking-tight text-sm">
-                            {format(new Date(entry.start_time), "dd/MM")} - {task?.name || "Tarea eliminada"}
+                            {format(new Date(entry.start_time), "dd/MM")} - {(entry as any).title || task?.name || "—"}
                           </h3>
                           {!entry.end_time && (
                             <span className="flex h-2 w-2 rounded-full bg-emerald-500 animate-pulse shrink-0" title="En curso" />
@@ -863,21 +857,14 @@ export default function Page() {
                   </Select>
                 </div>
                 <div className="grid gap-2">
-                  <Label htmlFor="modal_task">Tarea</Label>
-                  <Select
-                    value={formData.task_id}
-                    onValueChange={(value) => setFormData({ ...formData, task_id: value })}
-                    disabled={!formData.project_id}
-                  >
-                    <SelectTrigger id="modal_task">
-                      <SelectValue placeholder="Seleccionar tarea" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {modalTasks.map((t) => (
-                        <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <Label htmlFor="modal_title">Título</Label>
+                  <Input
+                    id="modal_title"
+                    value={formData.title}
+                    onChange={(e) => setFormData({ ...formData, title: e.target.value })}
+                    placeholder="En qué trabajaste"
+                    maxLength={255}
+                  />
                 </div>
               </div>
 

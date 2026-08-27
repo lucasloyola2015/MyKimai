@@ -392,7 +392,7 @@ export default function ReportsPage() {
                     <div className="space-y-1">
                       <div className="flex items-center gap-2">
                         <p className="font-bold text-base leading-tight flex items-center gap-2">
-                          {task?.name || "Tarea sin nombre"}
+                          {(entry as any).title || task?.name || "—"}
                           {!entry.billable && (
                             <span className="text-[9px] font-black text-white bg-orange-600 px-2 py-0.5 rounded uppercase tracking-tighter">
                               No Facturable

@@ -99,10 +99,11 @@ export function TopBar() {
     const project = task.projects;
     const client = project?.clients;
 
-    if (client?.name && project?.name && task.name) {
-      return `${client.name} → ${project.name} → ${task.name}`;
+    const label = (activeEntry as any).title || task.name;
+    if (client?.name && project?.name && label) {
+      return `${client.name} → ${project.name} → ${label}`;
     }
-    return task.name || "Tarea activa";
+    return label || "Tarea activa";
   };
 
   // Calcular tiempo transcurrido

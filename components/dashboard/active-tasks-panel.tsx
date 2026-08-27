@@ -37,7 +37,7 @@ function taskLabel(entry: ActiveTimeEntry): { task: string; sub: string } {
   const project = t?.projects;
   const client = project?.clients;
   return {
-    task: t?.name ?? "Tarea",
+    task: (entry as any).title || t?.name || "Tarea",
     sub: [client?.name, project?.name].filter(Boolean).join(" → "),
   };
 }

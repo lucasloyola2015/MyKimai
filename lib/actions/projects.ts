@@ -419,19 +419,20 @@ export async function getPortalProjectDetail(projectId: string) {
     if (!project) return null;
 
     // Procesar tareas: solo horas netas (sin montos; visibilidad monetaria solo en facturación).
-    const tasksWithStats = project.tasks.map(task => {
-        let taskMinutes = 0;
-
-        task.time_entries.forEach(entry => {
+    // §sin-tareas — el desglose se agrupa por TÍTULO de sesión (las tareas ya no
+    // se usan como objeto; el título es lo que el usuario escribe al cargar horas).
+    // Se conserva el nombre de la tarea como respaldo para entradas antiguas.
+    const byTitle = new Map<string, number>();
+    for (const task of project.tasks) {
+        for (const entry of task.time_entries) {
             const totals = computeEntryTotals(entry as any);
-            taskMinutes += totals.duration_neto;
-        });
-
-        return {
-            ...task,
-            total_hours: taskMinutes / 60,
-        };
-    });
+            const label = ((entry as any).title || task.name || "—").trim();
+            byTitle.set(label, (byTitle.get(label) || 0) + totals.duration_neto);
+        }
+    }
+    const tasksWithStats = Array.from(byTitle.entries())
+        .map(([name, minutes]) => ({ id: name, name, total_hours: minutes / 60 }))
+        .sort((a, b) => b.total_hours - a.total_hours);
 
     // Aplanar registros: duración neta + breaks para la barra de tiempo (auditoría visual de jornada).
     const allTimeEntries = project.tasks.flatMap(task =>
@@ -444,7 +445,7 @@ export async function getPortalProjectDetail(projectId: string) {
                 description: entry.description,
                 is_billed: entry.is_billed,
                 duration_neto: totals.duration_neto,
-                taskName: task.name,
+                taskName: (entry as any).title || task.name,
                 breaks: entry.time_entry_breaks ?? [],
             };
         })

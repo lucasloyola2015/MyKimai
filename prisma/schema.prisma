@@ -654,6 +654,8 @@ model time_entries {
   user_id           String              @db.Uuid
   task_id           String              @db.Uuid
   description       String?
+  /// Título libre de la sesión (reemplaza a la tarea como objeto seleccionable).
+  title             String?             @db.VarChar(255)
   start_time        DateTime            @db.Timestamptz(6)
   end_time          DateTime?           @db.Timestamptz(6)
   /// Duración bruta en MINUTOS enteros entre `start_time` y `end_time`.
