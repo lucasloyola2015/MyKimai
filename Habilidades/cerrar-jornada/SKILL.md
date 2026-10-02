@@ -24,11 +24,16 @@ node "${CLAUDE_SKILL_DIR}/scripts/jornada.mjs" --date 2026-10-01  # otro día ("
 ```
 
 Devuelve **bloques** de actividad (sesiones de Claude Code del repo y sus worktrees + commits del
-usuario), cortados por pausas de más de 45 min (`--gap <min>` para cambiarlo), redondeados a 5 min,
-con `start_time`/`end_time` listos para la API y `repo`/`n` para el `external_ref`.
+usuario), cortados por pausas de más de 45 min (`--gap <min>` para cambiarlo), sin la franja
+01:00–07:00 (agentes solos de madrugada; `--incluir-madrugada` la suma), redondeados a 5 min, con
+`start_time`/`end_time` listos para la API y `repo`/`n` para el `external_ref`.
 
+- **La fuente de verdad son las sesiones apoyadas en git.** Un reloj de MyKimai que quedó prendido
+  u olvidado no cuenta.
 - Sumá lo que sabés de la conversación para saber qué se hizo en cada bloque; `git log -p` o los
   diffs completan el detalle.
+- Un bloque largo con muy pocos mensajes del usuario (horas sin que escriba) puede ser un agente
+  trabajando solo: señalalo en la propuesta.
 - Un bloque `single_point` (un commit suelto) no tiene duración: preguntá cuánto duró, o descartalo.
 - Si no hay evidencia de horario (otro agente, trabajo fuera de la sesión), pedile los horarios al
   usuario.
@@ -57,10 +62,11 @@ Por bloque, en español y escrito para el cliente (qué se logró, en sus térmi
 
 ## 4. Solapamientos
 
-`list_time_entries` del día y `check_time_slot` de cada bloque con su `project_id`. Cada
-solapamiento se le presenta al usuario con sus opciones (ver abajo) y él decide.
+`list_time_entries` del día y `check_time_slot` de cada bloque con su `project_id` (el cliente de
+cada proyecto sale de `list_projects`). Resolvé cada solapamiento con las reglas de abajo y mostrá
+la acción en la propuesta; lo que las reglas no cubran, preguntalo.
 
-**Listo cuando:** cada solapamiento tiene una decisión explícita del usuario.
+**Listo cuando:** cada solapamiento tiene una acción según las reglas o una decisión del usuario.
 
 ## 5. Propuesta
 
@@ -74,7 +80,8 @@ OK explícito; si pide cambios, aplicalos y volvé a mostrar la tabla.
 
 - Crear: `create_time_entry` con `external_ref` = `<repo>:<date>:<n>` (del script). Re-correr el
   skill con el mismo `external_ref` actualiza esa hora en vez de duplicarla.
-- `allow_overlap: true` va solo en los bloques que el usuario confirmó como trabajo en paralelo.
+- `allow_overlap: true` va solo en los solapamientos que las reglas permiten (entre clientes
+  Illinois) o que el usuario confirmó.
 - Completar una hora existente: `update_time_entry` (título, descripción y/o horario).
 - Si la API responde `conflict`, ese bloque vuelve al paso 4.
 
@@ -85,12 +92,19 @@ OK explícito; si pide cambios, aplicalos y volvé a mostrar la tabla.
 Resumí: horas por proyecto, total, ids, y lo que quedó sin cargar con su motivo. En la app, estas
 horas aparecen con 🤖 en Mis Horas.
 
-## Opciones ante un solapamiento
+## Reglas ante un solapamiento
 
-- **Mismo proyecto** (`same_project: true`): completar la hora existente · ajustar el horario del
-  bloque · no cargar. La API rechaza siempre duplicar horas del mismo proyecto.
-- **Otro proyecto**: cargar en paralelo (`allow_overlap: true` con el OK del usuario) · ajustar el
-  horario · no cargar.
+Reglas de Lucas (Illinois Jeremias, Illinois Agustin e Illinois Ezequiel son clientes distintos de
+la misma empresa):
+
+- **Mismo proyecto** (`same_project: true`): completar la hora existente · ajustar el horario ·
+  no cargar. La API rechaza siempre duplicar horas del mismo proyecto.
+- **Mismo cliente, otro proyecto**: no se cobra dos veces → unificar en un solo proyecto, o correr
+  una franja a un hueco libre del mismo día.
+- **Illinois contra Illinois** (clientes distintos): se cargan en paralelo (`allow_overlap: true`).
+- **Illinois contra otro cliente**: **Illinois se queda con las horas; nunca se le recorta.** Se
+  recorta la hora del otro cliente (si ya existe, `update_time_entry`).
+- **Otros clientes entre sí**: se recorta lo nuevo para que no se superponga.
 - Una hora existente con duración absurda (p. ej. un timer que quedó corriendo días): señalásela
   al usuario; corregirla es decisión suya.
 
