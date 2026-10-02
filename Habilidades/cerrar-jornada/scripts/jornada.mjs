@@ -7,10 +7,13 @@
  *   node jornada.mjs [--date YYYY-MM-DD] [--gap 45] [--cwd <dir>]
  *
  * --gap: minutos sin actividad que cortan un bloque (pausa). Default 45.
- * Salida: JSON con los bloques (horarios ISO con offset -03:00, listos para la API).
+ * Salida: JSON con los bloques (horarios ISO con offset -03:00, listos para la API)
+ * y el proyecto de MyKimai del repo, si está mapeado:
+ *   1. `.mykimai.json` en la raíz del repo, o
+ *   2. el mapa central `~/.mykimai/proyectos.json` ({ "<ruta del repo>": { project_id, label } }).
  */
 
-import { createReadStream, existsSync, readdirSync, statSync } from "node:fs";
+import { createReadStream, existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { execFileSync } from "node:child_process";
@@ -59,6 +62,28 @@ const commonDir =
     git(["rev-parse", "--git-common-dir"], cwd);
 const repoRoot = commonDir ? dirname(resolve(cwd, commonDir)) : cwd;
 const repo = basename(repoRoot);
+
+// ── Proyecto de MyKimai del repo ─────────────────────────────────────────────
+const normPath = (p) => resolve(p).replaceAll("\\", "/").replace(/\/+$/, "").toLowerCase();
+function readJson(file) {
+    try {
+        return JSON.parse(readFileSync(file, "utf8"));
+    } catch {
+        return null;
+    }
+}
+function resolveProject() {
+    const local = readJson(join(repoRoot, ".mykimai.json"));
+    if (local?.project_id) return { ...local, source: ".mykimai.json" };
+    const map = readJson(join(homedir(), ".mykimai", "proyectos.json")) ?? {};
+    for (const [path, entry] of Object.entries(map)) {
+        if (normPath(path) === normPath(repoRoot) && entry?.project_id) {
+            return { ...entry, source: "~/.mykimai/proyectos.json" };
+        }
+    }
+    return null;
+}
+const project = resolveProject();
 
 // ── Sesiones de Claude Code del repo (y sus worktrees) ──────────────────────
 const sanitize = (p) => p.replace(/[^a-zA-Z0-9]/g, "-").toLowerCase();
@@ -135,6 +160,8 @@ const result = {
     date,
     timezone: TZ,
     repo,
+    repo_path: repoRoot,
+    project,
     gap_minutes: gapMin,
     evidence: {
         session_files: sessionFiles.length,

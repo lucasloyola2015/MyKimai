@@ -37,13 +37,21 @@ Si figura con error de autenticación, es que esa versión de Claude Code no exp
 servidores de usuario: borrarlo (`claude mcp remove mykimai -s user`) y registrarlo con la key
 escrita en el header. Queda guardada en `~/.claude.json`, que es privado de tu usuario.
 
-## 5. (Opcional) Proyecto por repo
+## 5. (Opcional) Mapa repo → proyecto
 
-En la raíz de cada repo, `.mykimai.json` evita preguntar el proyecto cada vez:
+`~/.mykimai/proyectos.json` le dice al skill a qué proyecto va el trabajo de cada carpeta (si falta,
+el skill pregunta y lo agrega):
 
 ```json
-{ "project_id": "<uuid de list_projects>", "label": "Cliente / Proyecto" }
+{
+  "C:/Users/loyol/Work/1-Juntas Illinois/MedidorDePotencia": {
+    "project_id": "<uuid de list_projects>",
+    "label": "Illinois Agustin / Medidor de Potencia"
+  }
+}
 ```
+
+Un `.mykimai.json` con `{ "project_id", "label" }` en la raíz de un repo tiene prioridad sobre el mapa.
 
 ## Otros agentes (Antigravity, etc.)
 

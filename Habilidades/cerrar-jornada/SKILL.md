@@ -37,11 +37,13 @@ con `start_time`/`end_time` listos para la API y `repo`/`n` para el `external_re
 
 ## 2. Proyecto
 
-Leé `.mykimai.json` en la raíz del repo: `{ "project_id": "<uuid>", "label": "Cliente / Proyecto" }`.
-Si no existe, `list_projects`, preguntá a qué proyecto corresponde el trabajo y ofrecé crear el
-archivo. Una jornada puede tocar varios proyectos: el proyecto se decide por bloque.
+El script ya devuelve `project` (`project_id` + `label`) si el repo está mapeado: `.mykimai.json` en
+la raíz del repo, o el mapa central `~/.mykimai/proyectos.json`
+(`{ "C:/ruta/del/repo": { "project_id": "<uuid>", "label": "Cliente / Proyecto" } }`).
+Si viene `null`, `list_projects`, preguntá a qué proyecto corresponde el trabajo y agregá el repo al
+mapa central. Una jornada puede tocar varios proyectos: el proyecto se decide por bloque.
 
-**Listo cuando:** cada bloque tiene un `project_id` que salió del archivo o del usuario.
+**Listo cuando:** cada bloque tiene un `project_id` que salió del mapa o del usuario.
 
 ## 3. Contenido
 
