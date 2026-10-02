@@ -158,23 +158,28 @@ for (const line of (log ?? "").split("\n").filter(Boolean)) {
 }
 
 // ── Bloques: actividad continua, cortada por pausas > gap ────────────────────
-// La franja 01:00–07:00 (hora AR) no cuenta: de madrugada trabajan agentes solos.
-// `--incluir-madrugada` la incluye.
-const includeNight = process.argv.includes("--incluir-madrugada");
+// La franja 01:00–07:00 (hora AR) es trabajo AUTÓNOMO de agentes: va en bloques propios
+// (autonomous: true) que se cargan aparte, con tarifa con descuento. `--sin-madrugada` la descarta.
+const dropNight = process.argv.includes("--sin-madrugada");
 const isNight = (t) => { const h = new Date(t.getTime() - AR_OFFSET_MS).getUTCHours(); return h >= 1 && h < 7; };
-const nightPoints = includeNight ? 0 : points.filter((p) => isNight(p.t)).length;
-const dayPoints = includeNight ? points : points.filter((p) => !isNight(p.t));
-dayPoints.sort((a, b) => a.t - b.t);
-const blocks = [];
-for (const p of dayPoints) {
-    const last = blocks.at(-1);
-    if (last && p.t - last.end <= gapMin * 60_000) {
-        last.end = p.t;
-        last.points.push(p);
-    } else {
-        blocks.push({ start: p.t, end: p.t, points: [p] });
+const nightPoints = points.filter((p) => isNight(p.t)).length;
+function buildBlocks(pts, autonomous) {
+    const out = [];
+    for (const p of [...pts].sort((a, b) => a.t - b.t)) {
+        const last = out.at(-1);
+        if (last && p.t - last.end <= gapMin * 60_000) {
+            last.end = p.t;
+            last.points.push(p);
+        } else {
+            out.push({ start: p.t, end: p.t, points: [p], autonomous });
+        }
     }
+    return out;
 }
+const blocks = [
+    ...buildBlocks(points.filter((p) => !isNight(p.t)), false),
+    ...(dropNight ? [] : buildBlocks(points.filter((p) => isNight(p.t)), true)),
+].sort((a, b) => a.start - b.start);
 
 const result = {
     date,
@@ -187,7 +192,7 @@ const result = {
         session_files: sessionFiles.length,
         session_events: points.filter((p) => p.kind === "session").length,
         commits: commits.length,
-        excluded_night_points: nightPoints,
+        night_points: nightPoints,
     },
     blocks: blocks.map((b, i) => {
         let start = round5(b.start);
@@ -205,6 +210,8 @@ const result = {
             // Evidencia para la descripción: lo que pidió el usuario en el bloque (hasta 12).
             prompts: b.points.filter((p) => p.prompt).map((p) => `${toArHm(p.t)} ${p.prompt}`).slice(0, 12),
             single_point: b.points.length === 1,
+            // Trabajo autónomo de agentes (01:00–07:00): cargar con autonomous: true.
+            autonomous: b.autonomous,
         };
     }),
     commits,

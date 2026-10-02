@@ -24,9 +24,10 @@ node "${CLAUDE_SKILL_DIR}/scripts/jornada.mjs" --date 2026-10-01  # otro día ("
 ```
 
 Devuelve **bloques** de actividad (sesiones de Claude Code del repo y sus worktrees + commits del
-usuario), cortados por pausas de más de 45 min (`--gap <min>` para cambiarlo), sin la franja
-01:00–07:00 (agentes solos de madrugada; `--incluir-madrugada` la suma), redondeados a 5 min, con
-`start_time`/`end_time` listos para la API y `repo`/`n` para el `external_ref`.
+usuario), cortados por pausas de más de 45 min (`--gap <min>` para cambiarlo), redondeados a 5 min,
+con `start_time`/`end_time` listos para la API y `repo`/`n` para el `external_ref`. Los bloques de
+la franja 01:00–07:00 vienen aparte con `autonomous: true`: es **trabajo autónomo** de agentes y
+se carga en entradas propias, con tarifa con descuento (ver paso 6).
 
 - **La fuente de verdad son las sesiones apoyadas en git.** Un reloj de MyKimai que quedó prendido
   u olvidado no cuenta.
@@ -86,6 +87,10 @@ Ejemplos:
 - 5 h: "Recepción: la carga de fotos desde el celular quedó sin los botones de ayuda. Compras: el bot
   separa las órdenes en dos listas con su saldo. Se publicó la versión 1.103 en producción."
 
+- **Trabajo autónomo** (`autonomous: true`): el título lo prefija solo el servidor con
+  "Trabajo autónomo: "; la descripción dice qué revisó o produjo el agente y termina con
+  "Trabajo autónomo de agente, facturado con descuento."
+
 **Listo cuando:** cada bloque tiene título y una descripción concreta, del largo que corresponde a
 su duración.
 
@@ -111,6 +116,9 @@ OK explícito; si pide cambios, aplicalos y volvé a mostrar la tabla.
   skill con el mismo `external_ref` actualiza esa hora en vez de duplicarla.
 - `allow_overlap: true` va solo en los solapamientos que las reglas permiten (entre clientes
   Illinois) o que el usuario confirmó.
+- Bloques `autonomous: true`: `create_time_entry` con `autonomous: true`. Van a la tarea "Trabajo
+  autónomo" del proyecto, que tiene su propia tarifa con descuento (si no tiene precio, la cascada
+  usa la del proyecto o la del cliente). Nunca se mezclan con las horas del usuario.
 - Completar una hora existente: `update_time_entry` (título, descripción y/o horario).
 - Si la API responde `conflict`, ese bloque vuelve al paso 4.
 

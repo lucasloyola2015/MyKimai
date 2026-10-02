@@ -30,6 +30,7 @@ import {
     type ApiUpdateEntryInput,
 } from "@/lib/validations/api-entries";
 import { judgeOverlaps, type OverlapView } from "./overlaps";
+import { AUTONOMOUS_TASK_NAME, autonomousTitle, discountedRate, isAutonomousTask } from "./autonomous";
 
 // ─── Helpers compartidos con las Server Actions ─────────────────────────────
 
@@ -115,15 +116,52 @@ export async function resolveContainerTaskId(projectId: string, ownerId: string)
     });
     if (!project) return null;
 
-    const general = project.tasks.find((t) => t.name === "General");
+    // La tarea "Trabajo autónomo" no es contenedora: tiene su propia tarifa con descuento.
+    const tasks = project.tasks.filter((t) => !isAutonomousTask(t.name));
+    const general = tasks.find((t) => t.name === "General");
     if (general) return general.id;
-    if (project.tasks.length === 1) return project.tasks[0].id;
+    if (tasks.length === 1) return tasks[0].id;
 
     const created = await prisma.tasks.create({
         data: {
             project_id: projectId,
             name: "General",
             is_billable: (project as any).is_billable ?? true,
+        },
+        select: { id: true },
+    });
+    return created.id;
+}
+
+/**
+ * Tarea "Trabajo autónomo" del proyecto (trabajo de agentes sin el usuario, p. ej. de madrugada).
+ * Si no existe se crea con la tarifa efectiva del proyecto (proyecto, si no cliente) con descuento
+ * (AUTONOMOUS_DISCOUNT). Si no hay tarifa de referencia queda sin precio y la cascada usa la del
+ * cliente.
+ */
+export async function resolveAutonomousTaskId(projectId: string, ownerId: string): Promise<string | null> {
+    const project = await prisma.projects.findFirst({
+        where: { id: projectId, clients: { user_id: ownerId } },
+        select: {
+            id: true,
+            is_billable: true,
+            rate: true,
+            clients: { select: { default_rate: true } },
+            tasks: { select: { id: true, name: true } },
+        },
+    });
+    if (!project) return null;
+
+    const existing = project.tasks.find((t) => isAutonomousTask(t.name));
+    if (existing) return existing.id;
+
+    const effective = project.rate ?? project.clients.default_rate;
+    const created = await prisma.tasks.create({
+        data: {
+            project_id: projectId,
+            name: AUTONOMOUS_TASK_NAME,
+            is_billable: project.is_billable ?? true,
+            rate: discountedRate(effective != null ? Number(effective) : null),
         },
         select: { id: true },
     });
@@ -179,6 +217,8 @@ export interface EntryView {
     hour_package_id: string | null;
     source: string;
     external_ref: string | null;
+    /** Trabajo autónomo de un agente (tarea "Trabajo autónomo", tarifa con descuento). */
+    autonomous: boolean;
     /** Solo con acceso financiero. */
     rate_applied?: number | null;
     amount?: number | null;
@@ -225,6 +265,7 @@ function toEntryView(entry: EntryWithRelations, financials: boolean): EntryView 
         hour_package_id: entry.consumed_from_package_id,
         source: entry.source,
         external_ref: entry.external_ref,
+        autonomous: isAutonomousTask(entry.tasks.name),
     };
     if (financials) {
         view.rate_applied = entry.rate_applied != null ? Number(entry.rate_applied) : null;
@@ -426,6 +467,7 @@ export async function createEntry(
                 start_time: data.start_time.toISOString(),
                 end_time: data.end_time.toISOString(),
                 allow_overlap: data.allow_overlap,
+                autonomous: data.autonomous,
             });
             return updated.ok ? { ok: true, data: { entry: updated.data, created: false } } : updated;
         }
@@ -446,7 +488,9 @@ export async function createEntry(
         return fail("conflict", verdict.error, { reason: verdict.reason, overlaps: verdict.overlaps });
     }
 
-    const taskId = await resolveContainerTaskId(data.project_id, ctx.ownerId);
+    const taskId = data.autonomous
+        ? await resolveAutonomousTaskId(data.project_id, ctx.ownerId)
+        : await resolveContainerTaskId(data.project_id, ctx.ownerId);
     if (!taskId) return fail("not_found", "Proyecto no encontrado o fuera de tu workspace.");
 
     try {
@@ -454,7 +498,7 @@ export async function createEntry(
             data: {
                 user_id: ctx.actorId,
                 task_id: taskId,
-                title: data.title,
+                title: data.autonomous ? autonomousTitle(data.title) : data.title,
                 description: data.description ?? null,
                 start_time: data.start_time,
                 end_time: data.end_time,
@@ -504,8 +548,11 @@ export async function updateEntry(
     const changesProject =
         patch.project_id !== undefined && patch.project_id !== entry.tasks.projects.id;
     const changesTimes = patch.start_time !== undefined || patch.end_time !== undefined;
+    const wasAutonomous = isAutonomousTask(entry.tasks.name);
+    const autonomous = patch.autonomous ?? wasAutonomous;
+    const changesTask = changesProject || autonomous !== wasAutonomous;
 
-    if (!entry.end_time && (changesTimes || changesProject)) {
+    if (!entry.end_time && (changesTimes || changesTask)) {
         return fail(
             "invalid",
             "El timer sigue en curso: solo se pueden cambiar título y descripción. Frenalo desde la app."
@@ -515,6 +562,15 @@ export async function updateEntry(
     const data: Prisma.time_entriesUncheckedUpdateInput = {};
     if (patch.title !== undefined) data.title = patch.title;
     if (patch.description !== undefined) data.description = patch.description;
+    // El trabajo autónomo siempre lleva el prefijo "Trabajo autónomo: " en el título; al dejar de
+    // serlo, se le quita.
+    const finalTitle = (patch.title ?? entry.title ?? entry.tasks.name ?? "").trim();
+    if (autonomous && finalTitle) {
+        const t = autonomousTitle(finalTitle);
+        if (t !== finalTitle || patch.title !== undefined) data.title = t;
+    } else if (!autonomous && wasAutonomous && isAutonomousTask(finalTitle.split(":")[0])) {
+        data.title = finalTitle.slice(finalTitle.indexOf(":") + 1).trim() || finalTitle;
+    }
 
     if (changesTimes || changesProject) {
         const start = patch.start_time ?? entry.start_time;
@@ -540,8 +596,11 @@ export async function updateEntry(
         }
     }
 
-    if (changesProject) {
-        const taskId = await resolveContainerTaskId(patch.project_id!, ctx.ownerId);
+    if (changesTask) {
+        const targetProjectId = patch.project_id ?? entry.tasks.projects.id;
+        const taskId = autonomous
+            ? await resolveAutonomousTaskId(targetProjectId, ctx.ownerId)
+            : await resolveContainerTaskId(targetProjectId, ctx.ownerId);
         if (!taskId) return fail("not_found", "Proyecto no encontrado o fuera de tu workspace.");
         data.task_id = taskId;
         Object.assign(data, await pricingFor(taskId));

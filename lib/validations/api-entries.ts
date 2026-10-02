@@ -85,6 +85,8 @@ export const apiCreateEntrySchema = z.object({
      * (trabajo en paralelo). Con el MISMO proyecto nunca se permite.
      */
     allow_overlap: z.boolean().optional().default(false),
+    /** Trabajo autónomo de un agente: va a la tarea "Trabajo autónomo" (tarifa con descuento). */
+    autonomous: z.boolean().optional().default(false),
 });
 export type ApiCreateEntryInput = z.input<typeof apiCreateEntrySchema>;
 
@@ -97,10 +99,12 @@ export const apiUpdateEntrySchema = z
         start_time: isoInstant.optional(),
         end_time: isoInstant.optional(),
         allow_overlap: z.boolean().optional().default(false),
+        autonomous: z.boolean().optional(),
     })
     .refine(
         (d) =>
             d.project_id !== undefined ||
+            d.autonomous !== undefined ||
             d.title !== undefined ||
             d.description !== undefined ||
             d.start_time !== undefined ||

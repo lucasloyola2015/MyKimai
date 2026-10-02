@@ -43,7 +43,8 @@ Reglas:
   - Mismo proyecto: no se puede duplicar (la API lo rechaza siempre).
   - Otro proyecto: solo con confirmación explícita del usuario → allow_overlap=true.
 - Usá external_ref estable (ej. "<repo>:<YYYY-MM-DD>:<n>") para que re-intentar no duplique.
-- Las horas cargadas por API quedan marcadas con 🤖. No se pueden tocar horas ya facturadas. Los montos los calcula el sistema: nunca los mandes.`;
+- Las horas cargadas por API quedan marcadas con 🤖. No se pueden tocar horas ya facturadas. Los montos los calcula el sistema: nunca los mandes.
+- Trabajo autónomo (un agente trabajando solo, típicamente de 01:00 a 07:00): cargalo aparte con autonomous=true. Va a la tarea "Trabajo autónomo" del proyecto, con tarifa con descuento, y el título se prefija solo con "Trabajo autónomo: ".`;
 
 const MAX_OUTPUT_CHARS = 200_000;
 
@@ -100,6 +101,12 @@ const allowOverlap = z
     .optional()
     .describe(
         "Solo con confirmación EXPLÍCITA del usuario: permite solaparse con horas de OTROS proyectos (trabajo en paralelo). Con el mismo proyecto nunca se permite."
+    );
+const autonomous = z
+    .boolean()
+    .optional()
+    .describe(
+        "Trabajo autónomo de un agente (sin el usuario, p. ej. de 01:00 a 07:00): va a la tarea 'Trabajo autónomo' del proyecto, que tiene tarifa con descuento. El título se prefija con 'Trabajo autónomo: '."
     );
 const ymd = z
     .string()
@@ -280,6 +287,7 @@ export function buildMcpServer(ctx: ApiContext): McpServer {
                         .optional()
                         .describe("Referencia estable para no duplicar al reintentar, ej. 'mykimai:2026-10-02:1'"),
                     allow_overlap: allowOverlap,
+                    autonomous,
                 },
                 annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
             },
@@ -302,6 +310,7 @@ export function buildMcpServer(ctx: ApiContext): McpServer {
                     start_time: instant("Inicio nuevo").optional(),
                     end_time: instant("Fin nuevo").optional(),
                     allow_overlap: allowOverlap,
+                    autonomous,
                 },
                 annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
             },
