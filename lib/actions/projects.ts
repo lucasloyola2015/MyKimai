@@ -49,6 +49,28 @@ export async function getProjects(clientId?: string) {
 }
 
 /**
+ * Fecha de la última hora cargada por proyecto (MAX(start_time)), para
+ * ordenar la vista de Proyectos por actividad. Solo proyectos del workspace;
+ * los que nunca tuvieron horas no aparecen en el mapa.
+ */
+export async function getProjectsLastActivity(): Promise<Record<string, Date>> {
+    // El portal no usa esta vista: no exponer actividad fuera del workspace.
+    if (await getPortalProjectFilter()) return {};
+
+    const ctx = await getOwnerContext();
+    const rows = await prisma.$queryRaw<Array<{ project_id: string; last_activity: Date }>>`
+        SELECT t.project_id::text AS project_id, MAX(te.start_time) AS last_activity
+        FROM time_entries te
+        INNER JOIN tasks t ON t.id = te.task_id
+        INNER JOIN projects p ON p.id = t.project_id
+        INNER JOIN clients c ON c.id = p.client_id
+        WHERE c.user_id = ${ctx.ownerId}::uuid
+        GROUP BY t.project_id
+    `;
+    return Object.fromEntries(rows.map((r) => [r.project_id, r.last_activity]));
+}
+
+/**
  * Obtiene un proyecto con todas sus relaciones
  */
 export async function getProjectWithRelations(id: string) {
