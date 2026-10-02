@@ -55,7 +55,11 @@ mapa central. Una jornada puede tocar varios proyectos: el proyecto se decide po
 Por bloque, en español, para el cliente (lo lee en su portal y en el anexo de la factura). Sale de la
 evidencia del bloque: `commits` y `prompts` (lo que pidió el usuario) que trae el script.
 
-- `title`: el tema del bloque, hasta ~80 caracteres.
+- `title`: **la tarea más importante del bloque**, dicha en concreto y hasta ~80 caracteres
+  ("Acceso con token personal a las herramientas", "Pantalla de Recepción en el celular"). Un
+  título genérico ("Correcciones varias", "Desarrollo", "Ajustes") no dice nada: si hubo varios
+  temas, nombrá el principal y dejá el resto para la descripción. Al completar una hora existente
+  con título genérico, proponé también el título nuevo.
 - `description`: **concreta y llana**. Qué se hizo y qué quedó funcionando, con los nombres que el
   cliente reconoce (pantallas, máquinas, reportes, funciones). Frases cortas, verbos en pasado
   ("Se corrigió…", "Se agregó…") o sustantivos ("Corrección del…"). Va directo al hecho: sin relato,
