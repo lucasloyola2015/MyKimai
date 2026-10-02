@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useSearchParams } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -46,6 +46,7 @@ import { toast } from "@/hooks/use-toast";
 import { cn, calculateNetDurationMinutes } from "@/lib/utils";
 import type { clients, projects, time_entries } from "@prisma/client";
 import { DayTimeline } from "@/components/dashboard/DayTimeline";
+import { dayKey, timelineStartHourByDay, DEFAULT_TIMELINE_START_HOUR } from "@/lib/utils/timeline";
 
 /**
  * Bruto/Pausas/Neto en MINUTOS. Para entradas completadas usa lo persistido
@@ -99,6 +100,11 @@ export default function Page() {
   const [clients, setClients] = useState<clients[]>([]);
   const [projects, setProjects] = useState<(projects & { clients: clients })[]>([]);
   const [entries, setEntries] = useState<time_entries[]>([]);
+  // Línea de tiempo: arranca 07:00 salvo que el día tenga horas antes (misma escala por día).
+  const timelineFromHour = useMemo(
+    () => timelineStartHourByDay(entries.map((e) => new Date(e.start_time))),
+    [entries]
+  );
   const [maintenancePreview, setMaintenancePreview] = useState<ConsolidationPreview[] | null>(null);
   const [isMaintenanceLoading, setIsMaintenanceLoading] = useState(false);
   const [selectedClient, setSelectedClient] = useState<string>("");
@@ -795,6 +801,7 @@ export default function Page() {
                         startTime={new Date(entry.start_time)}
                         endTime={entry.end_time ? new Date(entry.end_time) : null}
                         breaks={(entry as any).time_entry_breaks}
+                        fromHour={timelineFromHour.get(dayKey(new Date(entry.start_time))) ?? DEFAULT_TIMELINE_START_HOUR}
                       />
                     </div>
                   </div>

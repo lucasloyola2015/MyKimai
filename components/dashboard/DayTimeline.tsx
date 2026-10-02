@@ -16,12 +16,18 @@ interface DayTimelineProps {
     className?: string;
     /** Variante compacta: barra más baja y sin etiquetas 00h/24h (para tablas o listas). */
     compact?: boolean;
+    /** Hora (0–23) en la que arranca la barra; lo anterior no se dibuja. Default 0 (día completo). */
+    fromHour?: number;
 }
 
-export function DayTimeline({ startTime, endTime, breaks = [], className, compact = false }: DayTimelineProps) {
+export function DayTimeline({ startTime, endTime, breaks = [], className, compact = false, fromHour = 0 }: DayTimelineProps) {
     const dayStart = startOfDay(startTime);
     const dayEnd = endOfDay(startTime);
-    const TOTAL_MINUTES = 1440;
+    const startHour = Math.min(Math.max(Math.floor(fromHour), 0), 23);
+    const viewStart = new Date(dayStart.getTime() + startHour * 3_600_000);
+    const TOTAL_MINUTES = (24 - startHour) * 60;
+    // Marcas: la hora de inicio, las de 6/12/18 que queden lejos de ella, y 24h.
+    const ticks = [startHour, ...[6, 12, 18].filter((h) => h >= startHour + 3), 24];
 
     // Si no hay end_time y es el mismo día, usamos la hora actual (truncada al final del día)
     // Si no hay end_time y es un día pasado, usamos el final de ese día
@@ -30,7 +36,7 @@ export function DayTimeline({ startTime, endTime, breaks = [], className, compac
         : (isSameDay(new Date(), startTime) ? new Date() : dayEnd);
 
     const getPercentage = (date: Date) => {
-        const mins = differenceInMinutes(date, dayStart);
+        const mins = differenceInMinutes(date, viewStart);
         return Math.max(0, Math.min(100, (mins / TOTAL_MINUTES) * 100));
     };
 
@@ -105,12 +111,19 @@ export function DayTimeline({ startTime, endTime, breaks = [], className, compac
 
             {/* Ticks/Labels (ocultos en compacto) */}
             {!compact && (
-                <div className="flex justify-between px-0.5 text-[10px] font-medium text-muted-foreground">
-                    <span>00h</span>
-                    <span>06h</span>
-                    <span>12h</span>
-                    <span>18h</span>
-                    <span>24h</span>
+                <div className="relative h-3 px-0.5 text-[10px] font-medium text-muted-foreground">
+                    {ticks.map((h, i) => (
+                        <span
+                            key={h}
+                            className="absolute top-0"
+                            style={{
+                                left: `${((h - startHour) / (24 - startHour)) * 100}%`,
+                                transform: i === 0 ? "none" : i === ticks.length - 1 ? "translateX(-100%)" : "translateX(-50%)",
+                            }}
+                        >
+                            {String(h).padStart(2, "0")}h
+                        </span>
+                    ))}
                 </div>
             )}
         </div>
