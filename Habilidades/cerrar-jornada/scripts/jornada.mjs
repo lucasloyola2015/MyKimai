@@ -75,13 +75,16 @@ function readJson(file) {
 function resolveProject() {
     const local = readJson(join(repoRoot, ".mykimai.json"));
     if (local?.project_id) return { ...local, source: ".mykimai.json" };
+    // Una carpeta mapeada cubre también sus subcarpetas; gana la ruta más específica.
     const map = readJson(join(homedir(), ".mykimai", "proyectos.json")) ?? {};
+    const here = normPath(repoRoot);
+    let best = null;
     for (const [path, entry] of Object.entries(map)) {
-        if (normPath(path) === normPath(repoRoot) && entry?.project_id) {
-            return { ...entry, source: "~/.mykimai/proyectos.json" };
-        }
+        const key = normPath(path);
+        if (!entry?.project_id || (here !== key && !here.startsWith(key + "/"))) continue;
+        if (!best || key.length > best.key.length) best = { key, entry };
     }
-    return null;
+    return best ? { ...best.entry, source: "~/.mykimai/proyectos.json" } : null;
 }
 const project = resolveProject();
 
