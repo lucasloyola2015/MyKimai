@@ -132,11 +132,11 @@ npm test               # vitest (23 tests de dinero/fechas)  ·  npm run test:wa
 npx prisma generate    # regenerar cliente Prisma tras tocar schema.prisma
 ```
 
-### Aplicar una migración SQL (manual, Supabase)
-1. Supabase dashboard → proyecto MyKimai → **SQL Editor → New query**.
-2. Pegar el contenido del `.sql` (`supabase/migrations/`) y Run. Son idempotentes.
-3. ⚠️ El SQL Editor corre en transacción → **nada de `CREATE INDEX CONCURRENTLY`** (usar `CREATE INDEX`).
-4. Verificar con el patrón de script Node de la §1, o con el bloque comentado al final de cada `.sql`.
+### Aplicar una migración SQL (la aplica Claude, sin pedir permiso — ver CLAUDE.md "Acceso a Supabase")
+1. `node scripts/db.mjs apply supabase/migrations/X.sql` → dry-run (ROLLBACK).
+2. `node scripts/db.mjs apply supabase/migrations/X.sql --commit` → aplica.
+3. Verificar con `node scripts/db.mjs query "..."` (bloque "Verificación" al final de cada `.sql`).
+4. ⚠️ Corre en transacción → **nada de `CREATE INDEX CONCURRENTLY`**. Destructivas sobre datos → confirmar con Lucas.
 
 ### Publicar a producción
 ```bash

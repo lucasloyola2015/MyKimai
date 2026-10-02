@@ -44,11 +44,49 @@ proveedor (equipo) y multi-stakeholder del lado del cliente.
 4. **Roles del workspace:** `owner` (Lucas, único; muta todo), `admin` (team member que ve invoices),
    `collaborator` (team member que solo carga horas, NO ve invoices/payments). Gates en
    `lib/auth/owner-context.ts` (`canManageWorkspace`, `canSeeFinancials`).
-5. **Migraciones manuales.** Este proyecto NO usa `prisma migrate`. Tras tocar `prisma/schema.prisma`:
-   `npx prisma generate` + crear el `.sql` en `supabase/migrations/` (idempotente) para aplicar a mano
-   en el SQL Editor. **El SQL Editor corre en transacción → nada de `CREATE INDEX CONCURRENTLY`.**
+5. **Migraciones SQL — las aplica Claude directamente.** Este proyecto NO usa `prisma migrate`. Tras
+   tocar `prisma/schema.prisma`: `npx prisma generate` + crear el `.sql` idempotente en
+   `supabase/migrations/` y **aplicarlo sin pedir permiso** con `scripts/db.mjs` (autorizado por Lucas,
+   2026-10-02; ver "Acceso a Supabase"). Corre en transacción → **nada de `CREATE INDEX CONCURRENTLY`**.
 6. **Nunca subir secretos.** `.env.local` no se versiona. En docs/handoff, solo la **ubicación** del
    secreto, jamás el valor.
+
+## API para agentes de IA (MCP)
+
+Los agentes consultan y cargan horas por **`/api/mcp`** (MCP Streamable HTTP, stateless) con una
+**API key personal** (`Authorization: Bearer mk_...`, se gestionan en `/dashboard/settings/api-keys`).
+La key actúa como su usuario: el contexto se resuelve por request (`lib/auth/api-key.ts`).
+
+- **Capa de dominio** (`lib/domain/`): funciones que reciben el contexto por parámetro y filtran por
+  `ownerId`. Las usan la API y las Server Actions. **Nunca en un archivo `"use server"`** (expondría
+  el contexto como parámetro falsificable). Herramientas MCP en `lib/mcp/server.ts`.
+- Scopes: `read` · `write` (horas propias) · `financials` (solo rige con rol owner/admin).
+- Reglas de carga: el agente nunca manda montos; no toca horas facturadas; idempotencia por
+  `external_ref`; solapar con el **mismo** proyecto se rechaza siempre, con **otro** proyecto pide
+  confirmación (`allow_overlap`). Las horas de API quedan `source = 'api'` (🤖 en Mis Horas).
+- Skill del lado del agente: `Habilidades/cerrar-jornada/` (instalado en `~/.claude/skills/`).
+
+## Acceso a Supabase (DB de producción)
+
+Claude tiene acceso directo a la DB con **`node scripts/db.mjs`** (desde la raíz del repo o de un
+worktree). Lee `DATABASE_URL` del `.env.local` del checkout principal; nunca imprime la conexión.
+**No hace falta pedirle nada a Lucas** para usarlo: verificar, consultar y aplicar migraciones lo hace
+Claude solo.
+
+```bash
+node scripts/db.mjs query "SELECT ..."                    # READ ONLY: no puede escribir
+node scripts/db.mjs apply supabase/migrations/X.sql       # dry-run: corre y hace ROLLBACK
+node scripts/db.mjs apply supabase/migrations/X.sql --commit   # aplica (COMMIT)
+```
+
+- **Flujo de una migración:** dry-run → `--commit` → verificar con `query` (el bloque "Verificación"
+  al final de cada `.sql`). Todo en una transacción con `lock_timeout` corto: si falla, no queda nada a medias.
+- **Orden con el deploy:** si el código nuevo lee columnas/tablas nuevas, la migración va **antes** del
+  push a `main` (Prisma falla si la columna no existe).
+- **Única excepción — confirmar con Lucas antes:** operaciones destructivas o irreversibles sobre datos
+  (`DROP` de tabla/columna, `DELETE` / `UPDATE` / `TRUNCATE` masivos, tocar facturas o pagos ya emitidos).
+  Mostrar qué se borra/cambia y esperar el OK.
+- Es **producción real** (se factura a clientes con esto): el usuario `postgres` bypasea la RLS.
 
 ## Convenciones
 
