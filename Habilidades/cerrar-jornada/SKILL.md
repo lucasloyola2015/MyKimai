@@ -64,7 +64,8 @@ evidencia del bloque: `commits` y `prompts` (lo que pidió el usuario) que trae 
   cliente reconoce (pantallas, máquinas, reportes, funciones). Frases cortas, verbos en pasado
   ("Se corrigió…", "Se agregó…") o sustantivos ("Corrección del…"). Va directo al hecho: sin relato,
   sin adjetivos de venta, sin justificar el tiempo, sin nombrar herramientas (Claude, IA, git), rutas
-  internas ni secretos.
+  internas ni secretos. Palabras del cliente, no siglas de programador: "alta, edición y baja" en
+  vez de ABM/CRUD; nada de PR, API, commit ni deploy (vale para el título también).
 - **El largo sigue a la duración**: una sesión corta hizo poco y se dice en pocas palabras; una
   larga hizo más y lleva más texto.
 
