@@ -704,6 +704,11 @@ export default function Page() {
                           {!entry.end_time && (
                             <span className="flex h-2 w-2 rounded-full bg-emerald-500 animate-pulse shrink-0" title="En curso" />
                           )}
+                          {(entry as any).source === "api" && (
+                            <span className="shrink-0 text-xs leading-none" title="Cargada por un agente de IA (API)" aria-label="Cargada por un agente de IA">
+                              🤖
+                            </span>
+                          )}
                           {!entry.billable && (
                             <div className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-orange-100 dark:bg-orange-500/10 text-[8px] font-black text-orange-700 dark:text-orange-400 uppercase tracking-tighter">
                               <ShieldCheck className="w-2.5 h-2.5" />

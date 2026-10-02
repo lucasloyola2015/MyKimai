@@ -12,7 +12,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { LogOut, User, Settings } from "lucide-react";
+import { LogOut, User, Settings, KeyRound } from "lucide-react";
 import type { User as SupabaseUser } from "@supabase/supabase-js";
 
 export function UserMenu() {
@@ -95,6 +95,10 @@ export function UserMenu() {
         <DropdownMenuItem onClick={() => router.push("/dashboard/settings")}>
           <Settings className="mr-2 h-4 w-4" />
           <span>Configuración</span>
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={() => router.push("/dashboard/settings/api-keys")}>
+          <KeyRound className="mr-2 h-4 w-4" />
+          <span>API keys</span>
         </DropdownMenuItem>
         <DropdownMenuSeparator />
         <DropdownMenuItem onClick={handleLogout} className="text-destructive">

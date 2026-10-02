@@ -12,6 +12,11 @@ import { formatTime24 } from "@/lib/date-format";
 import { getUsdExchangeRate } from "./exchange";
 import { resolveRate } from "@/lib/utils/rates";
 import {
+    calculateRate,
+    findPackageForEntry,
+    resolveContainerTaskId,
+} from "@/lib/domain/time-entries";
+import {
     startTimeEntrySchema,
     stopTimeEntrySchema,
     deleteTimeEntrySchema,
@@ -211,73 +216,6 @@ export async function getLastCompletedEntry() {
     });
 
     return entry;
-}
-
-/**
- * Calcula la tarifa aplicable para una tarea
- * Cascada: task.rate → project.rate → client.default_rate → 0
- */
-/**
- * Calcula la tarifa aplicable para una tarea usando resolveRate (SSOT).
- * Aplica el blindaje de facturabilidad antes de la cascada.
- */
-async function calculateRate(taskId: string): Promise<number> {
-    const task = await prisma.tasks.findUnique({
-        where: { id: taskId },
-        include: {
-            projects: {
-                include: {
-                    clients: true,
-                },
-            },
-        },
-    });
-
-    if (!task) return 0;
-
-    const isBillable = !!(task as any).is_billable && !!(task.projects as any).is_billable && !!(task.projects.clients as any).is_billable;
-    if (!isBillable) return 0;
-
-    const { rate } = resolveRate({
-        task,
-        project: task.projects,
-        client: task.projects.clients,
-    });
-
-    return rate ?? 0;
-}
-
-/**
- * §4.3 — Encuentra el paquete de horas que debe consumir una entrada facturable.
- * Reglas: paquete del mismo cliente, y del proyecto si el paquete es por-proyecto
- * (los paquetes con project_id NULL aplican a todo el cliente); no vencido; con
- * saldo disponible (hours_used < hours). Prefiere el paquete POR-PROYECTO sobre el
- * general del cliente, y dentro de cada grupo elige FIFO (el comprado primero).
- * Devuelve el id del paquete o null si no hay ninguno elegible.
- */
-async function findPackageForEntry(
-    clientId: string,
-    projectId: string
-): Promise<string | null> {
-    const candidates = await prisma.hour_packages.findMany({
-        where: {
-            client_id: clientId,
-            OR: [{ project_id: null }, { project_id: projectId }],
-        },
-    });
-
-    const now = new Date();
-    const eligible = candidates
-        .filter((p) => !p.expires_at || p.expires_at >= now)
-        .filter((p) => Number(p.hours) - Number(p.hours_used) > 0)
-        .sort((a, b) => {
-            const aProj = a.project_id ? 0 : 1;
-            const bProj = b.project_id ? 0 : 1;
-            if (aProj !== bProj) return aProj - bProj; // proyecto-específico primero
-            return new Date(a.purchased_at).getTime() - new Date(b.purchased_at).getTime(); // FIFO
-        });
-
-    return eligible[0]?.id ?? null;
 }
 
 /**
@@ -1409,40 +1347,6 @@ export async function recalculateUnbilledEntries(filter: {
     revalidatePath("/dashboard/time-tracker");
 
     return entries.length;
-}
-
-/**
- * §sin-tareas — Resuelve la "tarea contenedora" de un proyecto.
- *
- * Las tareas ya no se eligen desde la UI: el detalle real de cada sesión vive en
- * `time_entries.title`. Pero `tasks` sigue siendo el vínculo entre las horas y su
- * proyecto/cliente (lo usan todas las consultas de scoping y facturación), así que
- * cada proyecto necesita una tarea que sostenga esa relación.
- *
- * Estrategia (en orden): usar una tarea llamada "General" si existe; si no, y el
- * proyecto tiene exactamente UNA tarea, reutilizarla (continuidad con los datos
- * actuales); en cualquier otro caso, crear "General".
- */
-async function resolveContainerTaskId(projectId: string, ownerId: string): Promise<string | null> {
-    const project = await prisma.projects.findFirst({
-        where: { id: projectId, clients: { user_id: ownerId } },
-        select: { id: true, is_billable: true, tasks: { select: { id: true, name: true } } },
-    });
-    if (!project) return null;
-
-    const general = project.tasks.find((t) => t.name === "General");
-    if (general) return general.id;
-    if (project.tasks.length === 1) return project.tasks[0].id;
-
-    const created = await prisma.tasks.create({
-        data: {
-            project_id: projectId,
-            name: "General",
-            is_billable: (project as any).is_billable ?? true,
-        },
-        select: { id: true },
-    });
-    return created.id;
 }
 
 /**

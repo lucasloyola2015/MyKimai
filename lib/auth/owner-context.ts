@@ -43,6 +43,16 @@ export interface OwnerContext {
 
 export const getOwnerContext = cache(async (): Promise<OwnerContext> => {
     const user = await getAuthUser();
+    return resolveOwnerContextForUser(user.id);
+});
+
+/**
+ * Resuelve el owner context de un user.id ya autenticado por otro medio
+ * (p.ej. una API key, ver lib/auth/api-key.ts). Misma regla que
+ * `getOwnerContext`, sin depender de la cookie de sesión.
+ */
+export async function resolveOwnerContextForUser(userId: string): Promise<OwnerContext> {
+    const user = { id: userId };
 
     // ¿Es team member activo de algún owner?
     // Lookup explícito antes de chequear "es owner" para que un user pueda
@@ -89,7 +99,7 @@ export const getOwnerContext = cache(async (): Promise<OwnerContext> => {
         isOwner: true,
         role: "owner",
     };
-});
+}
 
 /**
  * Variante que devuelve null si la auth falla (no throw).
