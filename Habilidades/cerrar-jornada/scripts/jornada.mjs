@@ -119,8 +119,19 @@ for (const file of sessionFiles) {
         if ((entry.type !== "user" && entry.type !== "assistant") || !entry.timestamp) continue;
         const t = new Date(entry.timestamp);
         if (t < dayStart || t >= dayEnd) continue;
-        points.push({ t, kind: "session" });
+        points.push({ t, kind: "session", prompt: humanPrompt(entry) });
     }
+}
+
+/** Texto que escribió el usuario (no resultados de herramientas ni mensajes entre sesiones). */
+function humanPrompt(entry) {
+    if (entry.type !== "user") return null;
+    const c = entry.message?.content;
+    const text = typeof c === "string" ? c : Array.isArray(c) && !c.some((x) => x.type === "tool_result")
+        ? c.filter((x) => x.type === "text").map((x) => x.text).join(" ")
+        : "";
+    if (!text || text.startsWith("<") || /^(Another Claude session|\[Request interrupted|\[Image|\(Re-invocation|This session is being continued|Base directory for this skill)/.test(text)) return null;
+    return text.replace(/\s+/g, " ").trim().slice(0, 160);
 }
 
 // ── Commits del usuario en el día ────────────────────────────────────────────
@@ -191,6 +202,8 @@ const result = {
             raw: { first: toArIso(b.start), last: toArIso(b.end) },
             session_events: b.points.filter((p) => p.kind === "session").length,
             commits: b.points.filter((p) => p.kind === "commit").map((p) => p.label),
+            // Evidencia para la descripción: lo que pidió el usuario en el bloque (hasta 12).
+            prompts: b.points.filter((p) => p.prompt).map((p) => `${toArHm(p.t)} ${p.prompt}`).slice(0, 12),
             single_point: b.points.length === 1,
         };
     }),

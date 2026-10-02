@@ -52,13 +52,36 @@ mapa central. Una jornada puede tocar varios proyectos: el proyecto se decide po
 
 ## 3. Contenido
 
-Por bloque, en español y escrito para el cliente (qué se logró, en sus términos):
+Por bloque, en español, para el cliente (lo lee en su portal y en el anexo de la factura). Sale de la
+evidencia del bloque: `commits` y `prompts` (lo que pidió el usuario) que trae el script.
 
-- `title`: hasta ~80 caracteres.
-- `description`: 2–4 líneas. Solo lo entregado al cliente: sin rutas internas, secretos ni
-  detalles de las herramientas usadas.
+- `title`: el tema del bloque, hasta ~80 caracteres.
+- `description`: **concreta y llana**. Qué se hizo y qué quedó funcionando, con los nombres que el
+  cliente reconoce (pantallas, máquinas, reportes, funciones). Frases cortas, verbos en pasado
+  ("Se corrigió…", "Se agregó…") o sustantivos ("Corrección del…"). Va directo al hecho: sin relato,
+  sin adjetivos de venta, sin justificar el tiempo, sin nombrar herramientas (Claude, IA, git), rutas
+  internas ni secretos.
+- **El largo sigue a la duración**: una sesión corta hizo poco y se dice en pocas palabras; una
+  larga hizo más y lleva más texto.
 
-**Listo cuando:** cada bloque tiene título y descripción.
+  | Duración del bloque | Largo de la descripción |
+  |---|---|
+  | menos de 1 h | una frase, hasta ~15 palabras |
+  | 1 a 3 h | 1–2 frases, hasta ~35 palabras |
+  | 3 a 6 h | 2–4 frases, hasta ~70 palabras |
+  | más de 6 h | 4–7 frases, hasta ~120 palabras |
+
+- **Un solo párrafo**: el portal y la factura no respetan saltos de línea ni viñetas. Para varios
+  temas, frases separadas por punto o temas separados por punto y coma ("Recepción: …; Compras: …").
+
+Ejemplos:
+- 20 min: "Corrección del filtro de fechas en el reporte de horas."
+- 2 h: "Se agregó el alta, edición y baja de listas de correo en la configuración. Quedó en producción."
+- 5 h: "Recepción: la carga de fotos desde el celular quedó sin los botones de ayuda. Compras: el bot
+  separa las órdenes en dos listas con su saldo. Se publicó la versión 1.103 en producción."
+
+**Listo cuando:** cada bloque tiene título y una descripción concreta, del largo que corresponde a
+su duración.
 
 ## 4. Solapamientos
 
