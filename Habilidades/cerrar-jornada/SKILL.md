@@ -32,8 +32,9 @@ usuario), cortados por pausas de más de 45 min (`--gap <min>` para cambiarlo), 
   u olvidado no cuenta.
 - Sumá lo que sabés de la conversación para saber qué se hizo en cada bloque; `git log -p` o los
   diffs completan el detalle.
-- Un bloque largo con muy pocos mensajes del usuario (horas sin que escriba) puede ser un agente
-  trabajando solo: señalalo en la propuesta.
+- **El trabajo de los agentes se factura igual que el del usuario**: los lanza él, paga sus tokens
+  y responde por el resultado. Un bloque largo en el que el usuario casi no escribe porque un agente
+  está trabajando cuenta completo; nunca se descuenta por eso.
 - Un bloque `single_point` (un commit suelto) no tiene duración: preguntá cuánto duró, o descartalo.
 - Si no hay evidencia de horario (otro agente, trabajo fuera de la sesión), pedile los horarios al
   usuario.
