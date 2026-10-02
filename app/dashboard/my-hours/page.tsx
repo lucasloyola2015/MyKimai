@@ -46,6 +46,7 @@ import { toast } from "@/hooks/use-toast";
 import { cn, calculateNetDurationMinutes } from "@/lib/utils";
 import type { clients, projects, time_entries } from "@prisma/client";
 import { DayTimeline } from "@/components/dashboard/DayTimeline";
+import { EntryDescription } from "@/components/dashboard/EntryDescription";
 import { dayKey, timelineStartHourByDay, DEFAULT_TIMELINE_START_HOUR } from "@/lib/utils/timeline";
 
 /**
@@ -794,6 +795,15 @@ export default function Page() {
                         </div>
                       </div>
                     </div>
+
+                    {/* DESCRIPCIÓN (editable en el lugar) */}
+                    <EntryDescription
+                      entryId={entry.id}
+                      description={entry.description}
+                      onSaved={(description) =>
+                        setEntries((prev) => prev.map((e) => (e.id === entry.id ? { ...e, description } : e)))
+                      }
+                    />
 
                     {/* LÍNEA DE TIEMPO (Solo se muestra el componente) */}
                     <div className="mt-2">

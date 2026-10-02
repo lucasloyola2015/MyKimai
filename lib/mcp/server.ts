@@ -44,6 +44,7 @@ Reglas:
   - Otro proyecto: solo con confirmación explícita del usuario → allow_overlap=true.
 - Usá external_ref estable (ej. "<repo>:<YYYY-MM-DD>:<n>") para que re-intentar no duplique.
 - Las horas cargadas por API quedan marcadas con 🤖. No se pueden tocar horas ya facturadas. Los montos los calcula el sistema: nunca los mandes.
+- Menos de 30 minutos trabajados no se registra. Una sesión corta solo entra si el mismo cliente retoma después de una pausa: se carga UNA entrada que abarca las dos sesiones, con la pausa en el medio (breaks). Lo que pasa durante una pausa no cuenta como solapamiento.
 - Trabajo autónomo (un agente trabajando solo, típicamente de 01:00 a 07:00): cargalo aparte con autonomous=true. Va a la tarea "Trabajo autónomo" del proyecto, con tarifa con descuento, y el título se prefija solo con "Trabajo autónomo: ".`;
 
 const MAX_OUTPUT_CHARS = 200_000;
@@ -107,6 +108,13 @@ const autonomous = z
     .optional()
     .describe(
         "Trabajo autónomo de un agente (sin el usuario, p. ej. de 01:00 a 07:00): va a la tarea 'Trabajo autónomo' del proyecto, que tiene tarifa con descuento. El título se prefija con 'Trabajo autónomo: '."
+    );
+const breaks = z
+    .array(z.object({ start_time: instant("Inicio de la pausa"), end_time: instant("Fin de la pausa") }))
+    .max(20)
+    .optional()
+    .describe(
+        "Pausas dentro de la entrada (no se cobran). Se usan para unir una sesión corta (< 30 min) con otra del mismo cliente: una sola entrada con una pausa en el medio. En update_time_entry reemplazan todas las pausas ([] = ninguna)."
     );
 const ymd = z
     .string()
@@ -288,6 +296,7 @@ export function buildMcpServer(ctx: ApiContext): McpServer {
                         .describe("Referencia estable para no duplicar al reintentar, ej. 'mykimai:2026-10-02:1'"),
                     allow_overlap: allowOverlap,
                     autonomous,
+                    breaks,
                 },
                 annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
             },
@@ -311,6 +320,7 @@ export function buildMcpServer(ctx: ApiContext): McpServer {
                     end_time: instant("Fin nuevo").optional(),
                     allow_overlap: allowOverlap,
                     autonomous,
+                    breaks,
                 },
                 annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
             },

@@ -23,24 +23,28 @@ node "${CLAUDE_SKILL_DIR}/scripts/jornada.mjs"                    # hoy, hora de
 node "${CLAUDE_SKILL_DIR}/scripts/jornada.mjs" --date 2026-10-01  # otro día ("ayer" → su fecha)
 ```
 
-Devuelve **bloques** de actividad (sesiones de Claude Code del repo y sus worktrees + commits del
-usuario), cortados por pausas de más de 45 min (`--gap <min>` para cambiarlo), redondeados a 5 min,
-con `start_time`/`end_time` listos para la API y `repo`/`n` para el `external_ref`. Los bloques de
-la franja 01:00–07:00 vienen aparte con `autonomous: true`: es **trabajo autónomo** de agentes y
-se carga en entradas propias, con tarifa con descuento (ver paso 6).
+Devuelve la **jornada** del proyecto del repo como `entries`: una entrada por día, de la primera a
+la última actividad, con sus `breaks` (pausas) en el medio, lista para la API (`start_time`,
+`end_time`, `breaks`; `repo` y `date` para el `external_ref`). Cómo se arma:
 
-- **La fuente de verdad son las sesiones apoyadas en git.** Un reloj de MyKimai que quedó prendido
-  u olvidado no cuenta.
-- Sumá lo que sabés de la conversación para saber qué se hizo en cada bloque; `git log -p` o los
-  diffs completan el detalle.
+- **Actividad** = cualquier evento de las sesiones de Claude Code del repo y sus worktrees,
+  **incluidos los subagentes en segundo plano**, más los commits del usuario. La fuente de verdad son
+  las sesiones apoyadas en git: un reloj de MyKimai que quedó prendido u olvidado no cuenta.
 - **El trabajo de los agentes se factura igual que el del usuario**: los lanza él, paga sus tokens
-  y responde por el resultado. Un bloque largo en el que el usuario casi no escribe porque un agente
-  está trabajando cuenta completo; nunca se descuenta por eso.
-- Un bloque `single_point` (un commit suelto) no tiene duración: preguntá cuánto duró, o descartalo.
-- Si no hay evidencia de horario (otro agente, trabajo fuera de la sesión), pedile los horarios al
+  y responde por el resultado. Si el usuario se va y deja agentes trabajando, el reloj sigue.
+- **Pausa**: tras 15 minutos sin ningún evento (todos los agentes terminaron y el usuario no volvió)
+  empieza una pausa; termina cuando vuelve la actividad (`--pausa <min>` para cambiarlo). Las pausas
+  son las nativas de MyKimai y no se cobran.
+- **Trabajo autónomo**: la franja 01:00–07:00 sale como otra entrada con `autonomous: true` (ver
+  paso 6).
+- **Menos de 30 minutos trabajados no se registra** (queda en `discarded_short`). La API rechaza
+  entradas así y no cuenta como solapamiento lo que pasa durante una pausa.
+- Sumá lo que sabés de la conversación para saber qué se hizo; `git log -p` o los diffs completan el
+  detalle. Si no hay evidencia de horario (trabajo fuera de las sesiones), pedile los horarios al
   usuario.
 
-**Listo cuando:** cada bloque tiene inicio y fin respaldados por el script o dichos por el usuario.
+**Listo cuando:** cada entrada tiene inicio, fin y pausas respaldados por el script o dichos por el
+usuario.
 
 ## 2. Proyecto
 
@@ -48,16 +52,16 @@ El script ya devuelve `project` (`project_id` + `label`) si el repo está mapead
 la raíz del repo, o el mapa central `~/.mykimai/proyectos.json`
 (`{ "C:/ruta/del/repo": { "project_id": "<uuid>", "label": "Cliente / Proyecto" } }`).
 Si viene `null`, `list_projects`, preguntá a qué proyecto corresponde el trabajo y agregá el repo al
-mapa central. Una jornada puede tocar varios proyectos: el proyecto se decide por bloque.
+mapa central. Si la jornada tocó varios repos, corré el script en cada uno: una entrada por proyecto.
 
-**Listo cuando:** cada bloque tiene un `project_id` que salió del mapa o del usuario.
+**Listo cuando:** cada entrada tiene un `project_id` que salió del mapa o del usuario.
 
 ## 3. Contenido
 
-Por bloque, en español, para el cliente (lo lee en su portal y en el anexo de la factura). Sale de la
-evidencia del bloque: `commits` y `prompts` (lo que pidió el usuario) que trae el script.
+Por entrada, en español, para el cliente (lo lee en su portal y en el anexo de la factura). Sale de la
+evidencia de la entrada: `commits` y `prompts` (lo que pidió el usuario) que trae el script.
 
-- `title`: **la tarea más importante del bloque**, dicha en concreto y hasta ~80 caracteres
+- `title`: **la tarea más importante de la jornada**, dicha en concreto y hasta ~80 caracteres
   ("Acceso con token personal a las herramientas", "Pantalla de Recepción en el celular"). Un
   título genérico ("Correcciones varias", "Desarrollo", "Ajustes") no dice nada: si hubo varios
   temas, nombrá el principal y dejá el resto para la descripción. Al completar una hora existente
@@ -71,7 +75,7 @@ evidencia del bloque: `commits` y `prompts` (lo que pidió el usuario) que trae 
 - **El largo sigue a la duración**: una sesión corta hizo poco y se dice en pocas palabras; una
   larga hizo más y lleva más texto.
 
-  | Duración del bloque | Largo de la descripción |
+  | Horas trabajadas | Largo de la descripción |
   |---|---|
   | menos de 1 h | una frase, hasta ~15 palabras |
   | 1 a 3 h | 1–2 frases, hasta ~35 palabras |
@@ -91,12 +95,12 @@ Ejemplos:
   "Trabajo autónomo: "; la descripción dice qué revisó o produjo el agente y termina con
   "Trabajo autónomo de agente, facturado con descuento."
 
-**Listo cuando:** cada bloque tiene título y una descripción concreta, del largo que corresponde a
+**Listo cuando:** cada entrada tiene título y una descripción concreta, del largo que corresponde a
 su duración.
 
 ## 4. Solapamientos
 
-`list_time_entries` del día y `check_time_slot` de cada bloque con su `project_id` (el cliente de
+`list_time_entries` del día y `check_time_slot` de cada entrada con su `project_id` (el cliente de
 cada proyecto sale de `list_projects`). Resolvé cada solapamiento con las reglas de abajo y mostrá
 la acción en la propuesta; lo que las reglas no cubran, preguntalo.
 
@@ -112,17 +116,17 @@ OK explícito; si pide cambios, aplicalos y volvé a mostrar la tabla.
 
 ## 6. Carga
 
-- Crear: `create_time_entry` con `external_ref` = `<repo>:<date>:<n>` (del script). Re-correr el
+- Crear: `create_time_entry` con `external_ref` = `<repo>:<date>:<n>` (del script) y sus `breaks`. Re-correr el
   skill con el mismo `external_ref` actualiza esa hora en vez de duplicarla.
 - `allow_overlap: true` va solo en los solapamientos que las reglas permiten (entre clientes
   Illinois) o que el usuario confirmó.
-- Bloques `autonomous: true`: `create_time_entry` con `autonomous: true`. Van a la tarea "Trabajo
+- Entradas `autonomous: true`: `create_time_entry` con `autonomous: true`. Van a la tarea "Trabajo
   autónomo" del proyecto, que tiene su propia tarifa con descuento (si no tiene precio, la cascada
   usa la del proyecto o la del cliente). Nunca se mezclan con las horas del usuario.
 - Completar una hora existente: `update_time_entry` (título, descripción y/o horario).
-- Si la API responde `conflict`, ese bloque vuelve al paso 4.
+- Si la API responde `conflict`, esa entrada vuelve al paso 4.
 
-**Listo cuando:** cada bloque aprobado tiene su respuesta OK (id + `created`/actualizada).
+**Listo cuando:** cada entrada aprobada tiene su respuesta OK (id + `created`/actualizada).
 
 ## 7. Cierre
 

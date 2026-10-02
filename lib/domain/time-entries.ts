@@ -31,6 +31,7 @@ import {
 } from "@/lib/validations/api-entries";
 import { judgeOverlaps, type OverlapView } from "./overlaps";
 import { AUTONOMOUS_TASK_NAME, autonomousTitle, discountedRate, isAutonomousTask } from "./autonomous";
+import { checkBreaks, segmentsOverlap, workedSegments, type BreakLike } from "./segments";
 
 // ─── Helpers compartidos con las Server Actions ─────────────────────────────
 
@@ -212,6 +213,8 @@ export interface EntryView {
     /** Minutos netos (descontadas pausas). null si el timer sigue corriendo. */
     duration_minutes: number | null;
     break_minutes: number;
+    /** Pausas de la entrada (horario AR en ISO). */
+    breaks: { start_time: string; end_time: string | null }[];
     billable: boolean;
     is_billed: boolean;
     hour_package_id: string | null;
@@ -257,6 +260,10 @@ function toEntryView(entry: EntryWithRelations, financials: boolean): EntryView 
         start_time: entry.start_time.toISOString(),
         end_time: entry.end_time ? entry.end_time.toISOString() : null,
         duration_minutes: entry.end_time ? entry.duration_neto ?? 0 : null,
+        breaks: entry.time_entry_breaks.map((b) => ({
+            start_time: b.start_time.toISOString(),
+            end_time: b.end_time ? b.end_time.toISOString() : null,
+        })),
         break_minutes: entry.end_time
             ? Math.max((entry.duration_total ?? 0) - (entry.duration_neto ?? 0), 0)
             : 0,
@@ -361,7 +368,8 @@ async function findOverlaps(
     start: Date,
     end: Date,
     projectId: string | null,
-    excludeId?: string
+    excludeId?: string,
+    breaks: BreakLike[] = []
 ): Promise<OverlapView[]> {
     const rows = await prisma.time_entries.findMany({
         where: {
@@ -376,11 +384,22 @@ async function findOverlaps(
             start_time: true,
             end_time: true,
             tasks: { select: { name: true, projects: { select: { id: true, name: true } } } },
+            time_entry_breaks: { select: { start_time: true, end_time: true } },
         },
         orderBy: { start_time: "asc" },
-        take: 20,
+        take: 50,
     });
-    return rows.map((r) => ({
+    // Solo choca lo TRABAJADO: lo que pasa durante una pausa (de cualquiera de las dos) no cuenta.
+    const mine = workedSegments(start, end, breaks);
+    const now = new Date();
+    return rows.filter((r) => {
+        const theirs = workedSegments(
+            r.start_time,
+            r.end_time ?? now,
+            r.time_entry_breaks.map((b) => ({ start: b.start_time, end: b.end_time }))
+        );
+        return segmentsOverlap(mine, theirs);
+    }).slice(0, 20).map((r) => ({
         id: r.id,
         title: r.title ?? r.tasks.name,
         project_id: r.tasks.projects.id,
@@ -468,12 +487,19 @@ export async function createEntry(
                 end_time: data.end_time.toISOString(),
                 allow_overlap: data.allow_overlap,
                 autonomous: data.autonomous,
+                breaks: (data.breaks ?? []).map((b) => ({
+                    start_time: b.start_time.toISOString(),
+                    end_time: b.end_time.toISOString(),
+                })),
             });
             return updated.ok ? { ok: true, data: { entry: updated.data, created: false } } : updated;
         }
     }
 
-    const rangeError = checkEntryRange(data.start_time, data.end_time);
+    const newBreaks = (data.breaks ?? []).map((b) => ({ start: b.start_time, end: b.end_time }));
+    const breaksError = checkBreaks(data.start_time, data.end_time, newBreaks);
+    if (breaksError) return fail("invalid", breaksError);
+    const rangeError = checkEntryRange(data.start_time, data.end_time, new Date(), newBreaks);
     if (rangeError) return fail("invalid", rangeError);
 
     if (!(await projectInWorkspace(data.project_id, ctx.ownerId))) {
@@ -481,7 +507,7 @@ export async function createEntry(
     }
 
     const verdict = judgeOverlaps(
-        await findOverlaps(ctx.actorId, data.start_time, data.end_time, data.project_id),
+        await findOverlaps(ctx.actorId, data.start_time, data.end_time, data.project_id, undefined, newBreaks),
         data.allow_overlap
     );
     if (!verdict.ok) {
@@ -494,7 +520,8 @@ export async function createEntry(
     if (!taskId) return fail("not_found", "Proyecto no encontrado o fuera de tu workspace.");
 
     try {
-        const entry = await prisma.time_entries.create({
+        const pricing = await pricingFor(taskId);
+        const created = await prisma.time_entries.create({
             data: {
                 user_id: ctx.actorId,
                 task_id: taskId,
@@ -502,13 +529,19 @@ export async function createEntry(
                 description: data.description ?? null,
                 start_time: data.start_time,
                 end_time: data.end_time,
-                ...(await pricingFor(taskId)),
+                ...pricing,
                 source: "api",
                 api_key_id: ctx.apiKeyId ?? null,
                 external_ref: data.external_ref ?? null,
+                // Pausas nativas (time_entry_breaks): el trigger recalcula la duración neta y el monto.
+                ...(newBreaks.length
+                    ? { time_entry_breaks: { create: newBreaks.map((b) => ({ start_time: b.start, end_time: b.end })) } }
+                    : {}),
             },
-            include: entryInclude,
+            select: { id: true },
         });
+        // Releer después de que el trigger de pausas recalculó la entrada.
+        const entry = await prisma.time_entries.findUniqueOrThrow({ where: { id: created.id }, include: entryInclude });
         return { ok: true, data: { entry: toEntryView(entry, ctx.financials), created: true } };
     } catch (error) {
         if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
@@ -548,11 +581,12 @@ export async function updateEntry(
     const changesProject =
         patch.project_id !== undefined && patch.project_id !== entry.tasks.projects.id;
     const changesTimes = patch.start_time !== undefined || patch.end_time !== undefined;
+    const changesBreaks = patch.breaks !== undefined;
     const wasAutonomous = isAutonomousTask(entry.tasks.name);
     const autonomous = patch.autonomous ?? wasAutonomous;
     const changesTask = changesProject || autonomous !== wasAutonomous;
 
-    if (!entry.end_time && (changesTimes || changesTask)) {
+    if (!entry.end_time && (changesTimes || changesTask || changesBreaks)) {
         return fail(
             "invalid",
             "El timer sigue en curso: solo se pueden cambiar título y descripción. Frenalo desde la app."
@@ -572,10 +606,17 @@ export async function updateEntry(
         data.title = finalTitle.slice(finalTitle.indexOf(":") + 1).trim() || finalTitle;
     }
 
-    if (changesTimes || changesProject) {
+    const effectiveBreaks: BreakLike[] = patch.breaks
+        ? patch.breaks.map((b) => ({ start: b.start_time, end: b.end_time }))
+        : entry.time_entry_breaks.map((b) => ({ start: b.start_time, end: b.end_time }));
+    if (changesTimes || changesProject || changesBreaks) {
         const start = patch.start_time ?? entry.start_time;
         const end = patch.end_time ?? entry.end_time!;
-        const rangeError = checkEntryRange(start, end);
+        if (patch.breaks) {
+            const breaksError = checkBreaks(start, end, effectiveBreaks as { start: Date; end: Date }[]);
+            if (breaksError) return fail("invalid", breaksError);
+        }
+        const rangeError = checkEntryRange(start, end, new Date(), effectiveBreaks);
         if (rangeError) return fail("invalid", rangeError);
 
         const targetProjectId = patch.project_id ?? entry.tasks.projects.id;
@@ -584,7 +625,7 @@ export async function updateEntry(
         }
 
         const verdict = judgeOverlaps(
-            await findOverlaps(ctx.actorId, start, end, targetProjectId, entry.id),
+            await findOverlaps(ctx.actorId, start, end, targetProjectId, entry.id, effectiveBreaks),
             patch.allow_overlap
         );
         if (!verdict.ok) {
@@ -609,10 +650,14 @@ export async function updateEntry(
     // Re-dispara el trigger de duración/monto.
     data.updated_at = new Date();
 
-    const updated = await prisma.time_entries.update({
-        where: { id: entry.id },
-        data,
-        include: entryInclude,
-    });
+    if (patch.breaks) {
+        // Reemplaza las pausas nativas; el trigger de pausas recalcula la entrada.
+        data.time_entry_breaks = {
+            deleteMany: {},
+            create: patch.breaks.map((b) => ({ start_time: b.start_time, end_time: b.end_time })),
+        };
+    }
+    await prisma.time_entries.update({ where: { id: entry.id }, data, select: { id: true } });
+    const updated = await prisma.time_entries.findUniqueOrThrow({ where: { id: entry.id }, include: entryInclude });
     return { ok: true, data: toEntryView(updated, ctx.financials) };
 }

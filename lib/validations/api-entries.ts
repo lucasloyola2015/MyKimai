@@ -11,11 +11,14 @@
 import { z } from "zod";
 import { fromZonedTime } from "date-fns-tz";
 import { AR_TZ } from "@/lib/timezone";
+import { workedMinutes, type BreakLike } from "@/lib/domain/segments";
 
 const uuid = z.string().uuid({ message: "ID inválido (esperado UUID)" });
 
 /** Duración máxima de una entrada cargada por API. */
 export const MAX_ENTRY_MINUTES = 24 * 60;
+/** Duración mínima: menos de 30 minutos no se registra (regla de Lucas). */
+export const MIN_ENTRY_MINUTES = 30;
 /** Tolerancia para relojes desfasados al cargar una entrada que termina "ahora". */
 export const FUTURE_TOLERANCE_MS = 5 * 60_000;
 /** Rango máximo de consulta de horas. */
@@ -56,9 +59,14 @@ const arDayOrInstant = (edge: "start" | "end") =>
  * Reglas de rango de una entrada terminada. Devuelve el mensaje de error o null.
  * Se usa para el create y para el estado resultante de un update parcial.
  */
-export function checkEntryRange(start: Date, end: Date, now: Date = new Date()): string | null {
+export function checkEntryRange(start: Date, end: Date, now: Date = new Date(), breaks: BreakLike[] = []): string | null {
     if (end.getTime() <= start.getTime()) {
         return "end_time debe ser posterior a start_time.";
+    }
+    // Se mide lo TRABAJADO (rango menos pausas): una sesión corta solo entra unida a otra del mismo
+    // cliente, con una pausa en el medio.
+    if (workedMinutes(start, end, breaks) < MIN_ENTRY_MINUTES) {
+        return `Una entrada debe tener al menos ${MIN_ENTRY_MINUTES} minutos trabajados; menos no se registra (una sesión corta se une a otra del mismo cliente con una pausa en el medio).`;
     }
     if (end.getTime() > now.getTime() + FUTURE_TOLERANCE_MS) {
         return "No se pueden cargar horas en el futuro.";
@@ -70,6 +78,11 @@ export function checkEntryRange(start: Date, end: Date, now: Date = new Date()):
 }
 
 const title = z.string().trim().min(1, "El título es obligatorio").max(255);
+/** Pausas dentro de la entrada (p. ej. para unir una sesión corta con otra del mismo cliente). */
+const breaks = z
+    .array(z.object({ start_time: isoInstant, end_time: isoInstant }))
+    .max(20)
+    .optional();
 const description = z.string().trim().max(2000).nullable().optional();
 
 export const apiCreateEntrySchema = z.object({
@@ -87,6 +100,7 @@ export const apiCreateEntrySchema = z.object({
     allow_overlap: z.boolean().optional().default(false),
     /** Trabajo autónomo de un agente: va a la tarea "Trabajo autónomo" (tarifa con descuento). */
     autonomous: z.boolean().optional().default(false),
+    breaks,
 });
 export type ApiCreateEntryInput = z.input<typeof apiCreateEntrySchema>;
 
@@ -100,11 +114,14 @@ export const apiUpdateEntrySchema = z
         end_time: isoInstant.optional(),
         allow_overlap: z.boolean().optional().default(false),
         autonomous: z.boolean().optional(),
+        /** Reemplaza TODAS las pausas de la entrada ([] = sin pausas). */
+        breaks,
     })
     .refine(
         (d) =>
             d.project_id !== undefined ||
             d.autonomous !== undefined ||
+            d.breaks !== undefined ||
             d.title !== undefined ||
             d.description !== undefined ||
             d.start_time !== undefined ||

@@ -31,6 +31,27 @@ describe("checkEntryRange", () => {
         ).toMatch(/futuro/);
     });
 
+    it("rechaza entradas de menos de 30 minutos", () => {
+        expect(
+            checkEntryRange(new Date("2026-10-02T12:00:00Z"), new Date("2026-10-02T12:29:00Z"), now)
+        ).toMatch(/30 minutos/);
+        // 20 min + pausa + 15 min: 35 trabajados → se registra unido.
+        expect(
+            checkEntryRange(new Date("2026-10-02T12:00:00Z"), new Date("2026-10-02T13:15:00Z"), now, [
+                { start: new Date("2026-10-02T12:20:00Z"), end: new Date("2026-10-02T13:00:00Z") },
+            ])
+        ).toBeNull();
+        // 10 min + pausa + 10 min: 20 trabajados → no se registra.
+        expect(
+            checkEntryRange(new Date("2026-10-02T12:00:00Z"), new Date("2026-10-02T13:00:00Z"), now, [
+                { start: new Date("2026-10-02T12:10:00Z"), end: new Date("2026-10-02T12:50:00Z") },
+            ])
+        ).toMatch(/30 minutos/);
+        expect(
+            checkEntryRange(new Date("2026-10-02T12:00:00Z"), new Date("2026-10-02T12:30:00Z"), now)
+        ).toBeNull();
+    });
+
     it("rechaza entradas de más de 24 h", () => {
         expect(
             checkEntryRange(new Date("2026-09-30T12:00:00Z"), new Date("2026-10-01T12:01:00Z"), now)
