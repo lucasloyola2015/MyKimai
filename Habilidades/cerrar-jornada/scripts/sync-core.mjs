@@ -145,7 +145,7 @@ export const clipSegments = (segs, from, to) =>
     segs.map(([a, z]) => [Math.max(a, from), Math.min(z, to)]).filter(([a, z]) => z > a);
 
 /**
- * Tramos de una ventana: el redondeo no puede sacarlos de ella (un evento suelto a las 20:58 no
+ * Tramos de una ventana: el redondeo no puede sacarlos de ella (un evento suelto a las 23:58 no
  * puede invadir la noche, que es otra entrada del mismo proyecto).
  */
 export const windowSegments = (times, window, pauseMin = DEFAULT_PAUSE_MIN) =>

@@ -551,7 +551,7 @@ async function plan(opts) {
     if (!windows.length) return result;
 
     const spans = windows.map((w) => ({ ...w, ...dayWindow(w.date, w.scope) }));
-    // Una pausa antes y después de cada ventana: la continuidad no se corta en las 07:00 ni en las 21:00.
+    // Una pausa antes y después de cada ventana: la continuidad no se corta en las 07:00 ni a medianoche.
     const from = minOf(spans.map((s) => s.start)) - pauseMs;
     const to = maxOf(spans.map((s) => s.end)) + pauseMs;
 

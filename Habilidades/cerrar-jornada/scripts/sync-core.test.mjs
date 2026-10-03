@@ -106,11 +106,12 @@ test("windowSegments: un evento suelto a las 23:58 no invade la noche", () => {
     assert.deepEqual(spans(windowSegments([at("23:58")], dayWindow(D))), []);
 });
 
-test("windowSegments: con los eventos vecinos, la continuidad no se corta a las 21:00 (ni a las 07:00)", () => {
-    // Actividad 19:00–20:30, un evento a las 21:10 y después 21:15–23:00: el hueco de 40 min no es pausa.
-    const times = [...every5("19:00", "20:30"), at("21:10"), ...every5("21:15", "23:00")];
-    assert.deepEqual(spans(windowSegments(times, dayWindow(D))), ["19:00–21:00"]);
-    assert.deepEqual(spans(windowSegments(times, dayWindow(D, "night"))), ["21:00–23:00"]);
+test("windowSegments: con los eventos vecinos, la continuidad no se corta a medianoche (ni a las 07:00)", () => {
+    // Actividad 22:00–23:30, un evento a las 00:10 y después 00:15–02:00: el hueco de 40 min no es pausa.
+    const N = "2026-10-06";
+    const times = [...every5("22:00", "23:30"), at("00:10", N), ...[0, 1, 2, 3].flatMap((h) => [at(`0${h}:15`, N), at(`0${h}:45`, N)]).filter((t) => t <= at("02:00", N))];
+    assert.deepEqual(spans(windowSegments(times, dayWindow(D))), ["22:00–00:00"]);
+    assert.deepEqual(spans(windowSegments(times, dayWindow(D, "night"))), ["00:00–01:45"]);
 });
 
 test("windowsToProcess: fechas completas (jornada + noche), recién a las 7 del día siguiente", () => {
@@ -445,9 +446,11 @@ test("Al unificar, la principal es la hora propia que ya existe (se actualiza; n
 });
 
 test("Huérfanas: solo de esta ventana y sin candidata conocida (válida, inválida o absorbida)", () => {
-    // Una hora propia de la jornada no es huérfana para la noche.
-    const deDia = manual("endpoints", "20:00", "22:00", { external_ref: autoRef("endpoints", D, false) });
-    const noche = resolveWindow({ window: win("night"), candidates: [cand("ia-agent", [seg("21:00", "23:00")], { autonomous: true })], existing: [deDia], projects: PROJECTS, now: at("23:59") });
+    // Una hora propia de la jornada (que Lucas estiró pasada la medianoche) no es huérfana para la noche.
+    const N = "2026-10-06";
+    const deDia = manual("endpoints", "22:00", "22:00", { end_time: new Date(at("01:00", N)).toISOString(), external_ref: autoRef("endpoints", D, false) });
+    const nocturna = { ...cand("ia-agent", [[at("00:00", N), at("02:00", N)]], { autonomous: true }) };
+    const noche = resolveWindow({ window: win("night"), candidates: [nocturna], existing: [deDia], projects: PROJECTS, now: at("07:00", N) });
     assert.equal(noche.entries.length, 1);
     assert.equal(noche.doubts.filter((d) => d.kind === "hora_huerfana").length, 0);
     // Un proyecto que pasó a inactivo no deja huérfana su hora: los otros clientes van en paralelo.
