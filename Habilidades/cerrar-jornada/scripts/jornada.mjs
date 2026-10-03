@@ -48,8 +48,10 @@ const pauseMin = Number(args.pausa ?? args.gap ?? DEFAULT_PAUSE_MIN);
 const dropNight = process.argv.includes("--sin-noche") || process.argv.includes("--sin-madrugada");
 const DAY = dayWindow(date, "day"); // 07:00–24:00
 const NIGHT = dayWindow(date, "night"); // 00:00 → 07:00 del día siguiente
-const dayStart = new Date(DAY.start);
-const dayEnd = new Date(NIGHT.end);
+// Una pausa antes y después: la actividad vecina da continuidad en los bordes (07:00 y 24:00).
+const PAUSE_MS = pauseMin * 60_000;
+const dayStart = new Date(DAY.start - PAUSE_MS);
+const dayEnd = new Date(NIGHT.end + PAUSE_MS);
 
 function git(gitArgs, cwd) {
     try {
@@ -132,10 +134,10 @@ for (const line of (log ?? "").split("\n").filter(Boolean)) {
 }
 
 // ── Una entrada por ventana (jornada / noche autónoma) con pausas ───────────
-function jornada(pts, autonomous, window) {
+function jornada(nearPts, pts, autonomous, window) {
     if (!pts.length) return null;
     // Tramos de actividad continua (se corta tras `pauseMin` minutos sin eventos), redondeados a 5 min.
-    const merged = windowSegments(pts.map((p) => p.t.getTime()), window, pauseMin);
+    const merged = windowSegments(nearPts.map((p) => p.t.getTime()), window, pauseMin);
     if (!merged.length) return null;
     const start = merged[0][0];
     const end = merged.at(-1)[1];
@@ -157,8 +159,11 @@ function jornada(pts, autonomous, window) {
     };
 }
 
-const inWindow = (w) => points.filter((p) => p.t.getTime() >= w.start && p.t.getTime() < w.end);
-const entries = [jornada(inWindow(DAY), false, DAY), dropNight ? null : jornada(inWindow(NIGHT), true, NIGHT)]
+// Los tramos se arman con la actividad de la ventana y la de la pausa vecina, y se recortan a la
+// ventana (windowSegments); la evidencia es solo la de adentro.
+const near = (w) => points.filter((p) => p.t.getTime() >= w.start - PAUSE_MS && p.t.getTime() < w.end + PAUSE_MS);
+const inside = (w) => points.filter((p) => p.t.getTime() >= w.start && p.t.getTime() < w.end);
+const entries = [jornada(near(DAY), inside(DAY), false, DAY), dropNight ? null : jornada(near(NIGHT), inside(NIGHT), true, NIGHT)]
     .filter(Boolean);
 const discarded = entries.filter((e) => e.minutes < MIN_WORKED_MIN).map((e) => `${e.from_to} (${e.minutes} min trabajados${e.autonomous ? ", autónomo" : ""})`);
 

@@ -77,10 +77,12 @@ export function windowsToProcess({ lastFullDay, nowMs, floor, maxDaysBack = 7 })
  * contigua mientras esté completa en el plan y no haya tenido errores reintentables (red, error
  * interno, textos faltantes), que se vuelven a intentar en la corrida siguiente.
  */
-export function advanceLastFullDay({ lastFullDay, floor, completeDates, blockedDates = [] }) {
+export function advanceLastFullDay({ lastFullDay, floor, completeDates, blockedDates = [], skippedTo = null }) {
     const complete = new Set(completeDates);
     const blocked = new Set(blockedDates);
     let last = lastFullDay ?? addDays(floor, -1);
+    // Las fechas que el plan salteó por el tope de 7 días ya quedaron informadas: no traban el avance.
+    if (skippedTo && skippedTo > last) last = skippedTo;
     for (let d = addDays(last, 1); complete.has(d) && !blocked.has(d); d = addDays(d, 1)) last = d;
     return last === addDays(floor, -1) ? lastFullDay ?? null : last;
 }
@@ -211,9 +213,10 @@ function mergeEvidence(tagged) {
 
 /**
  * Une las candidatas del MISMO cliente que se superponen (y las que se encadenan con ellas) en una
- * sola, en el proyecto con más tiempo trabajado; sus tramos se suman como una hora continua.
+ * sola, en el proyecto con más tiempo trabajado. La hora unificada se arma con los EVENTOS de todas
+ * (no con sus tramos): un hueco de menos de una pausa entre un proyecto y el otro es trabajo continuo.
  */
-export function unifySameClient(candidates, projects) {
+export function unifySameClient(candidates, projects, window, pauseMin = DEFAULT_PAUSE_MIN) {
     const parent = candidates.map((_, i) => i);
     const find = (i) => (parent[i] === i ? i : (parent[i] = find(parent[i])));
     for (let i = 0; i < candidates.length; i++) {
@@ -230,9 +233,13 @@ export function unifySameClient(candidates, projects) {
     return [...groups.values()].map((group) => {
         if (group.length === 1) return group[0];
         const [main, ...others] = [...group].sort((x, y) => workedMinutes(y.segments) - workedMinutes(x.segments) || x.firstEvent - y.firstEvent);
+        const withTimes = group.every((c) => Array.isArray(c.times)) && window;
         return {
             ...main,
-            segments: mergeSegments(group.flatMap((c) => c.segments)),
+            times: withTimes ? group.flatMap((c) => c.times) : undefined,
+            segments: withTimes
+                ? windowSegments(group.flatMap((c) => c.times), window, pauseMin)
+                : mergeSegments(group.flatMap((c) => c.segments)),
             firstEvent: minOf(group.map((c) => c.firstEvent)),
             evidence: mergeEvidence([main, ...others].map((c) => [name(c), c.evidence])),
             unified: others.map((c) => ({ ref: c.ref, project_id: c.project_id, project: name(c) })),
@@ -251,18 +258,24 @@ const describe = (e) => `"${e.title ?? "(sin título)"}" (${e.project.name}, ${t
  * - Clientes distintos en paralelo: no se recorta nada; las dos llevan `allow_overlap`.
  * - Si el MISMO proyecto ya tiene horas cargadas por otro en la ventana (misma clase: jornada o
  *   noche), se asume cargado a mano: lo que sobre de 30 min o más es una duda, no una carga.
+ * - Un timer en curso o una hora desmedida no recorta (sería tragarse trabajo real): de otro
+ *   proyecto, la candidata va en paralelo; del mismo, es una duda (la API no deja duplicar).
+ * - Una hora del agente (`auto:`) que ya no tiene actividad propia en esta ventana (p. ej. se
+ *   remapeó la carpeta) no se duplica en paralelo con otra: es una duda.
  * - Menos de 30 minutos trabajados no se registra.
  *
  * @param {object} p
- * @param {{start:number,end:number}} p.window
- * @param {Array} p.candidates  { ref, date, project_id, autonomous, segments, firstEvent, evidence }
+ * @param {{start:number,end:number,date?:string}} p.window
+ * @param {Array} p.candidates  { ref, date, project_id, autonomous, segments, times?, firstEvent, evidence }
  * @param {Array} p.existing    entradas de la API (EntryView) que tocan la ventana
  * @param {Map}   p.projects    id → proyecto de la API (con client y is_billable)
+ * @param {Set}   [p.frozenRefs] refs propias congeladas (editadas, facturadas): obstáculos legítimos
  */
-export function resolveWindow({ window, candidates, existing, projects, now }) {
+export function resolveWindow({ window, candidates, existing, projects, now, pauseMin = DEFAULT_PAUSE_MIN, frozenRefs = new Set() }) {
     const entries = [];
     const discarded = [];
     const doubts = [];
+    const projectOf = (e) => projects.get(e.project.id) ?? { id: e.project.id, name: e.project.name, client: e.client };
 
     const valid = [];
     for (const c of candidates) {
@@ -278,29 +291,25 @@ export function resolveWindow({ window, candidates, existing, projects, now }) {
             valid.push(c);
         }
     }
-    const unified = unifySameClient(valid, projects).sort((a, b) => a.firstEvent - b.firstEvent || a.ref.localeCompare(b.ref));
+    const unified = unifySameClient(valid, projects, window, pauseMin).sort((a, b) => a.firstEvent - b.firstEvent || a.ref.localeCompare(b.ref));
 
     const refs = new Set(unified.map((c) => c.ref));
-    // Un timer en curso (quizás olvidado) o una hora desmedida no se usa para recortar: sería
-    // tragarse trabajo real sin avisar. Queda como duda.
+    const others = existing.filter((e) => !refs.has(e.external_ref ?? ""));
     const sane = (e) => e.end_time && Date.parse(e.end_time) - Date.parse(e.start_time) <= MAX_SANE_ENTRY_MIN * MIN;
-    for (const e of existing.filter((x) => !refs.has(x.external_ref ?? "") && !sane(x))) {
+    const segsOf = (e) => clipSegments(entrySegments(e, now), window.start, window.end);
+    const suspicious = others.filter((e) => !sane(e)).map((e) => ({ entry: e, project: projectOf(e), segs: segsOf(e) }));
+    for (const { entry: e } of suspicious) {
         doubts.push({
             kind: e.end_time ? "hora_desmedida" : "hora_en_curso", ref: `existente:${e.id}`, date: window.date ?? null,
-            entry_id: e.id, project: projects.get(e.project.id) ?? { id: e.project.id, name: e.project.name, client: e.client },
+            entry_id: e.id, project: projectOf(e),
             message: e.end_time
                 ? `La hora ${describe(e)} dura más de ${MAX_SANE_ENTRY_MIN / 60} h: no la usé para recortar nada. ¿Quedó un timer prendido?`
                 : `Hay un timer en curso desde ${toArIso(Date.parse(e.start_time)).slice(0, 16).replace("T", " ")} (${e.project.name}): no lo usé para recortar nada. ¿Quedó prendido?`,
         });
     }
-    const obstacles = existing
-        .filter((e) => !refs.has(e.external_ref ?? "") && sane(e))
-        .map((e) => ({
-            entry: e,
-            project: projects.get(e.project.id) ?? { id: e.project.id, name: e.project.name, client: e.client },
-            segs: clipSegments(entrySegments(e, now), window.start, window.end),
-        }))
-        .filter((o) => o.segs.length);
+    const obstacles = others.filter(sane).map((e) => ({ entry: e, project: projectOf(e), segs: segsOf(e) })).filter((o) => o.segs.length);
+    // Horas propias sin actividad propia en esta ventana ni congeladas: quedaron huérfanas.
+    const orphans = obstacles.filter((o) => (o.entry.external_ref ?? "").startsWith(AUTO_REF_PREFIX) && !frozenRefs.has(o.entry.external_ref));
 
     for (const c of unified) {
         const project = projects.get(c.project_id);
@@ -308,9 +317,25 @@ export function resolveWindow({ window, candidates, existing, projects, now }) {
         const rawMinutes = workedMinutes(c.segments);
         let segs = c.segments;
         let allowOverlap = false;
+        const unifiedNote = c.unified?.length ? ` (hora unificada con ${c.unified.map((u) => u.project).join(", ")})` : "";
         const notes = c.unified?.length ? [`unificada con ${c.unified.map((u) => u.project).join(", ")} (mismo cliente, en paralelo)`] : [];
-        const sameProject = obstacles.filter((o) => o.project.id === c.project_id && o.entry.autonomous === c.autonomous);
 
+        const timer = suspicious.find((s) => s.project.id === c.project_id && s.entry.autonomous === c.autonomous && segmentsIntersect(segs, s.segs));
+        if (timer) {
+            doubts.push({ ...base, kind: "choca_con_timer", project, ...toEntryTimes(segs),
+                message: `"${project.name}"${unifiedNote} tiene ${workedMinutes(segs)} min de actividad, pero se cruza con ${describe(timer.entry)} del mismo proyecto, que parece un timer olvidado: no lo cargué.` });
+            continue;
+        }
+        if (suspicious.some((s) => segmentsIntersect(segs, s.segs))) allowOverlap = true;
+
+        const orphan = orphans.find((o) => o.project.id !== c.project_id && segmentsIntersect(segs, o.segs));
+        if (orphan) {
+            doubts.push({ ...base, kind: "hora_huerfana", project, ...toEntryTimes(segs),
+                message: `"${project.name}"${unifiedNote} tiene ${workedMinutes(segs)} min de actividad, pero se cruza con ${describe(orphan.entry)}, que cargó este agente y ya no tiene actividad propia (¿se remapeó la carpeta?). No lo cargué para no cobrar dos veces: corregí o borrá esa hora.` });
+            continue;
+        }
+
+        const sameProject = obstacles.filter((o) => o.project.id === c.project_id && o.entry.autonomous === c.autonomous);
         for (const o of obstacles) {
             if (sameProject.includes(o) || !segmentsIntersect(segs, o.segs)) continue;
             if (sameClient(project, o.project)) {
@@ -328,7 +353,7 @@ export function resolveWindow({ window, candidates, existing, projects, now }) {
             const already = sameProject.map((o) => describe(o.entry));
             if (workedMinutes(rest) >= MIN_WORKED_MIN) {
                 doubts.push({ ...base, kind: "cargado_a_mano_parcial", project, ...toEntryTimes(rest), existing: already,
-                    message: `"${project.name}" ya tiene horas cargadas a mano ese día (${already.join("; ")}), pero hay ${workedMinutes(rest)} min de actividad fuera de ellas.` });
+                    message: `"${project.name}"${unifiedNote} ya tiene horas cargadas a mano ese día (${already.join("; ")}), pero hay ${workedMinutes(rest)} min de actividad fuera de ellas.` });
             } else {
                 discarded.push({ ...base, project, raw_minutes: rawMinutes, reason: `ya cargado a mano: ${already.join("; ")}` });
             }
@@ -419,46 +444,68 @@ export function isCrossSessionMessage(entry) {
 /** Texto que escribió el usuario (no resultados de herramientas, mensajes entre sesiones ni avisos). */
 export function humanPrompt(entry) {
     if (entry.type !== "user" || entry.isSidechain || entry.isMeta) return null;
-    const text = userText(entry);
+    // Las sesiones en un worktree abren con un <system-reminder> pegado al pedido real.
+    const text = (userText(entry) ?? "").replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, "").trim();
     if (!text || text.startsWith("<") || /^(Another Claude session|\[Cross-session|\[Request interrupted|\[Image|\(Re-invocation|This session is being continued|Base directory for this skill)/.test(text)) return null;
     return text.replace(/\s+/g, " ").trim().slice(0, 160);
 }
 
+/** Prefijo de los avisos de dudas del agente (doubtText en sync.mjs). */
+export const DOUBT_PREFIX = "[Agente de horas de MyKimai]";
+
 /**
- * Uso de herramienta que es administración de horas: correr el agente o el cierre de jornada, las
- * herramientas de MyKimai, el skill cerrar-jornada, o tocar los archivos de ~/.mykimai (mapa,
- * plan, dudas). Editar el CÓDIGO del agente no lo es: es desarrollo.
+ * Uso de herramienta que es administración de horas: EJECUTAR el agente o el cierre de jornada,
+ * las herramientas de MyKimai, repartir dudas (sesiones y barra lateral de Claude Desktop), el
+ * skill cerrar-jornada y su procedimiento, o tocar los archivos de ~/.mykimai (mapa, plan, dudas).
+ * Desarrollar el agente (editar, buscar o commitear su código) no lo es.
  */
 export function isBillingToolUse(use) {
     const input = use.input ?? {};
-    if (/^mcp__mykimai__/.test(use.name)) return true;
+    if (/^mcp__(mykimai|ccd_session_mgmt|ccd_sidebar)__/.test(use.name)) return true;
     if (use.name === "Skill") return /cerrar-jornada/.test(String(input.skill ?? ""));
-    if (use.name === "Bash" || use.name === "PowerShell") return /\b(sync|jornada)\.mjs\b/.test(String(input.command ?? ""));
-    return /[\\/]\.mykimai[\\/]/i.test(String(input.file_path ?? input.path ?? input.notebook_path ?? ""));
+    if (use.name === "ToolSearch") return /mykimai|ccd_session_mgmt|ccd_sidebar/.test(String(input.query ?? ""));
+    if (use.name === "Bash" || use.name === "PowerShell") {
+        const cmd = String(input.command ?? "");
+        return /\bnode\b[^|;&\n]*cerrar-jornada[\\/]scripts[\\/](sync|jornada)\.mjs\b/.test(cmd) || /[\\/]\.mykimai[\\/]/i.test(cmd);
+    }
+    const path = String(input.file_path ?? input.path ?? input.notebook_path ?? "");
+    if (/[\\/]\.mykimai[\\/]/i.test(path)) return true;
+    return (use.name === "Read" || use.name === "Grep") && /cerrar-jornada[\\/](AGENTE|SKILL)\.md$/i.test(path);
 }
 
+/** Herramientas que no dicen nada de qué se está haciendo (ni trabajo ni administración). */
+const NEUTRAL_TOOLS = new Set(["ToolSearch", "TodoWrite"]);
+
 /**
- * Clase de un evento de la sesión principal para `adminMask`: `prompt` (un mensaje de texto del
- * usuario abre un turno), `cross` (un mensaje de otra sesión abre un turno), u `other`; `billing`
- * si el asistente usó una herramienta de administración de horas, `tool` si usó cualquier otra.
+ * Clase de un evento de la sesión principal para `adminMask`: `prompt` (un mensaje del usuario, o
+ * de otra sesión que no es un aviso de duda, abre un turno), `cross` (el aviso de una duda del
+ * agente abre un turno), u `other`; `billing` si el asistente usó una herramienta de administración
+ * de horas, `tool` si usó una de trabajo.
  */
 export function turnEvent(entry) {
-    if (entry.type === "user" && !entry.isMeta && userText(entry) !== null) {
-        return { kind: isCrossSessionMessage(entry) ? "cross" : "prompt", billing: false, tool: false };
+    if (entry.type === "user") {
+        const text = userText(entry);
+        // Los mensajes entre sesiones llegan como isMeta con origin "peer"; las devoluciones de
+        // subagentes (con senderTaskId) son parte del turno.
+        const peer = !entry.origin?.senderTaskId && (entry.origin?.kind === "peer" || /<cross-session-message|^\s*Another Claude session/.test(text ?? ""));
+        if (peer) return { kind: (text ?? "").includes(DOUBT_PREFIX) ? "cross" : "prompt", billing: false, tool: false };
+        if (!entry.isMeta && text !== null) return { kind: "prompt", billing: false, tool: false };
     }
     const uses = entry.type === "assistant" && Array.isArray(entry.message?.content)
         ? entry.message.content.filter((x) => x.type === "tool_use")
         : [];
     const billing = uses.some(isBillingToolUse);
-    return { kind: "other", billing, tool: uses.length > 0 && !billing };
+    const tool = uses.some((u) => !isBillingToolUse(u) && !NEUTRAL_TOOLS.has(u.name));
+    return { kind: "other", billing, tool: tool && !billing };
 }
 
 /**
  * Qué eventos de una sesión NO son trabajo para el cliente (true = se descarta):
- * - el turno que abre un mensaje de otra sesión (el aviso de una duda y lo que responde Claude);
- * - en cualquier turno, la administración de horas desde la primera herramienta de ese tipo hasta
- *   el fin del turno (resolver una duda, cerrar la jornada); si el turno arranca directamente con
- *   eso, el turno entero (el prompt de Lucas incluido).
+ * - el turno que abre el aviso de una duda del agente (el aviso y lo que responde Claude);
+ * - en cualquier turno, el bloque de administración de horas: de la primera a la última
+ *   herramienta de ese tipo, con lo que sigue hasta la próxima herramienta de trabajo (resolver
+ *   una duda, repartirlas, cerrar la jornada). Si el turno arranca directamente con eso, también
+ *   el prompt. El trabajo del mismo turno antes o después del bloque cuenta.
  */
 export function adminMask(events) {
     const mask = events.map(() => false);
@@ -469,11 +516,18 @@ export function adminMask(events) {
             return;
         }
         let first = -1;
-        for (let i = start; i < end; i++) if (events[i].billing) { first = i; break; }
+        let last = -1;
+        for (let i = start; i < end; i++) {
+            if (!events[i].billing) continue;
+            if (first < 0) first = i;
+            last = i;
+        }
         if (first < 0) return;
         let from = start;
         for (let i = start; i < first; i++) if (events[i].tool) { from = first; break; }
-        for (let i = from; i < end; i++) mask[i] = true;
+        let to = end;
+        for (let i = last + 1; i < end; i++) if (events[i].tool) { to = i; break; }
+        for (let i = from; i < to; i++) mask[i] = true;
     };
     let start = 0;
     for (let i = 1; i < events.length; i++) {

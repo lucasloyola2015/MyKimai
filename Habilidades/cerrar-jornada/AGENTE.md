@@ -51,8 +51,13 @@ node C:/Users/loyol/.claude/skills/cerrar-jornada/scripts/sync.mjs apply --texto
 EOF
 ```
 
+Los textos van sin barras invertidas (el heredoc las colapsa y el JSON se rompe). Si apply responde
+que los textos no son JSON válido, corregilos y volvé a correr el mismo comando; si dice que el
+plan es viejo, volvé al paso 1 (nunca `--forzar`).
+
 Cada resultado es `create`/`update`/`noop`/`skip`, `error` (rechazo definitivo: pasa a duda) o
 `retry` (falla pasajera o texto faltante: esa fecha se vuelve a procesar en la próxima corrida).
+apply ya deja las dudas en dudas.json; el paso 4 lo confirma.
 
 **Listo cuando:** apply devolvió sus resultados.
 

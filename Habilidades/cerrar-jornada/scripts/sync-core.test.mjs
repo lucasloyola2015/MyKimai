@@ -2,7 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-    adminMask, advanceLastFullDay, agentTaskText, autoRef, buildSegments, dayWindow, decideAction, entrySegments,
+    adminMask, advanceLastFullDay, isBillingToolUse, agentTaskText, autoRef, buildSegments, dayWindow, decideAction, entrySegments,
     fingerprint, frozenReason, humanPrompt, isNight, isSyncPrompt, matchFolder, resolveWindow, spread, subtractSegments,
     toArHm, toEntryTimes, turnEvent, windowSegments, windowsToProcess, workdayOf, workedMinutes,
 } from "./sync-core.mjs";
@@ -102,6 +102,13 @@ test("dayWindow y workdayOf: la noche (00 a 07 del día siguiente) es de la fech
 test("windowSegments: un evento suelto a las 23:58 no invade la noche", () => {
     assert.deepEqual(spans(windowSegments([at("23:30"), at("23:58")], dayWindow(D))), ["23:30–00:00"]);
     assert.deepEqual(spans(windowSegments([at("23:58")], dayWindow(D))), []);
+});
+
+test("windowSegments: con los eventos vecinos, la continuidad no se corta a las 21:00 (ni a las 07:00)", () => {
+    // Actividad 19:00–20:30, un evento a las 21:10 y después 21:15–23:00: el hueco de 40 min no es pausa.
+    const times = [...every5("19:00", "20:30"), at("21:10"), ...every5("21:15", "23:00")];
+    assert.deepEqual(spans(windowSegments(times, dayWindow(D))), ["19:00–21:00"]);
+    assert.deepEqual(spans(windowSegments(times, dayWindow(D, "night"))), ["21:00–23:00"]);
 });
 
 test("windowsToProcess: fechas completas (jornada + noche), recién a las 7 del día siguiente", () => {
@@ -279,46 +286,102 @@ const toolResult = () => ({ type: "user", message: { content: [{ type: "tool_res
 const assistant = (...tools) => ({ type: "assistant", message: { content: tools.length ? tools.map(([name, input]) => ({ type: "tool_use", name, input })) : [{ type: "text", text: "listo" }] } });
 const mask = (entries) => adminMask(entries.map(turnEvent));
 
-test("adminMask: el turno que abre el aviso de una duda (otra sesión) no es trabajo", () => {
+// Formato real de un mensaje entre sesiones (send_message): isMeta, origen "peer".
+const peerMsg = (text) => ({ type: "user", isMeta: true, origin: { kind: "peer" }, message: { content: `Another Claude session sent a message:\n<cross-session-message from="local_x">${text}</cross-session-message>` } });
+
+test("adminMask: el turno que abre el aviso de una duda (formato real) no es trabajo", () => {
     const m = mask([
         userMsg("arreglá el bot"), assistant(["Bash", { command: "npm test" }]), toolResult(), assistant(),
-        userMsg("<cross-session-message from=\"Reparto\">[Agente de horas de MyKimai] duda…"), assistant(),
+        peerMsg("[Agente de horas de MyKimai] Trabajo en una carpeta sin proyecto…"), assistant(),
         userMsg("seguí con el bot"), assistant(["Edit", { file_path: "bot.ts" }]),
     ]);
     assert.deepEqual(m, [false, false, false, false, true, true, false, false]);
 });
 
-test("adminMask: resolver una duda o cerrar la jornada no es trabajo; lo previo del turno sí", () => {
+test("adminMask: otros mensajes entre sesiones son trabajo y abren un turno normal", () => {
+    const m = mask([peerMsg("revisá el PR del bot"), assistant(["Bash", { command: "gh pr view 12" }]), toolResult()]);
+    assert.deepEqual(m, [false, false, false]);
+});
+
+test("adminMask: resolver una duda o cerrar la jornada no es trabajo; el resto del turno sí", () => {
     const resolver = mask([
         userMsg("ponelo en IA Agent"), assistant(["Edit", { file_path: "C:\\Users\\loyol\\.mykimai\\proyectos.json" }]), toolResult(),
         assistant(["Bash", { command: "node C:/Users/loyol/.claude/skills/cerrar-jornada/scripts/sync.mjs plan --date 2026-10-05" }]),
     ]);
     assert.deepEqual(resolver, [true, true, true, true]);
-    const mezclado = mask([
+    const antes = mask([
         userMsg("terminá el bot y cerrá la jornada"), assistant(["Edit", { file_path: "bot.ts" }]), toolResult(),
         assistant(["mcp__mykimai__create_time_entry", { title: "x" }]), toolResult(), assistant(),
     ]);
-    assert.deepEqual(mezclado, [false, false, false, true, true, true]);
-    // Desarrollar el agente (editar su código) es trabajo, no administración de horas.
-    const desarrollo = mask([
-        userMsg("agregá el modo simular"), assistant(["Edit", { file_path: "C:/repo/Habilidades/cerrar-jornada/scripts/sync.mjs" }]), toolResult(),
+    assert.deepEqual(antes, [false, false, false, true, true, true]);
+    // Cargar y después seguir con el cliente en el mismo turno: lo de después cuenta.
+    const despues = mask([
+        userMsg("dale"), assistant(["mcp__mykimai__create_time_entry", { title: "x" }]), toolResult(),
+        assistant(["Edit", { file_path: "src/dxf.ts" }]), toolResult(), assistant(["Bash", { command: "npm test" }]), toolResult(), assistant(),
     ]);
-    assert.deepEqual(desarrollo, [false, false, false]);
+    assert.deepEqual(despues, [true, true, true, false, false, false, false, false]);
+    // Repartir dudas (lo pide el hook) en medio de un turno de trabajo: solo se descarta el reparto.
+    const reparto = mask([
+        userMsg("seguí con el bot"), assistant(["ToolSearch", { query: "select:mcp__ccd_session_mgmt__send_message" }]),
+        assistant(["Read", { file_path: "C:/Users/loyol/.mykimai/sync/dudas.json" }]), toolResult(),
+        assistant(["mcp__ccd_session_mgmt__send_message", { session_id: "x", message: "y" }]), toolResult(),
+        assistant(["Edit", { file_path: "bot.ts" }]), toolResult(),
+    ]);
+    assert.deepEqual(reparto, [true, true, true, true, true, true, false, false]);
 });
 
-test("humanPrompt: los mensajes meta (cuerpos de skills) y los avisos entre sesiones no son pedidos de Lucas", () => {
+test("isBillingToolUse: ejecutar el agente es administración; desarrollarlo (grep, git, editar) no", () => {
+    const bash = (command) => isBillingToolUse({ name: "Bash", input: { command } });
+    assert.equal(bash("node C:/Users/loyol/.claude/skills/cerrar-jornada/scripts/sync.mjs apply --textos -"), true);
+    assert.equal(bash("cat C:/Users/loyol/.mykimai/sync/dudas.json"), true);
+    assert.equal(bash("grep -n foo Habilidades/cerrar-jornada/scripts/sync.mjs"), false);
+    assert.equal(bash("git commit -m 'fix: sync.mjs'"), false);
+    assert.equal(isBillingToolUse({ name: "Edit", input: { file_path: "C:/repo/Habilidades/cerrar-jornada/scripts/sync.mjs" } }), false);
+    assert.equal(isBillingToolUse({ name: "Read", input: { file_path: "C:/Users/loyol/.claude/skills/cerrar-jornada/AGENTE.md" } }), true);
+    assert.equal(isBillingToolUse({ name: "ToolSearch", input: { query: "select:Read,Edit" } }), false);
+});
+
+test("humanPrompt: sin mensajes meta ni avisos; el pedido real aunque venga después de un <system-reminder>", () => {
     assert.equal(humanPrompt(userMsg("Generá el handoff…", { isMeta: true })), null);
     assert.equal(humanPrompt(userMsg("[Cross-session delivery notice] held")), null);
     assert.equal(humanPrompt(userMsg("arreglá el bot")), "arreglá el bot");
+    const worktree = { type: "user", message: { content: [{ type: "text", text: "<system-reminder>\nYou are operating in a git worktree\n</system-reminder>" }, { type: "text", text: "Necesito una API key" }] } };
+    assert.equal(humanPrompt(worktree), "Necesito una API key");
 });
 
-test("Un timer en curso o una hora desmedida no recortan nada: quedan como duda", () => {
-    const timer = manual("gps", "08:00", "08:00", { end_time: null });
-    const larga = manual("ia-agent", "00:00", "23:00");
-    const r = resolve([cand("ia-agent", [seg("09:00", "12:00")]), cand("gps", [seg("13:00", "15:00")])], [timer, larga]);
+test("Un timer en curso o una hora desmedida no recortan: en paralelo si son de otro proyecto, duda si son del mismo", () => {
+    const timer = manual("banco", "08:00", "08:00", { end_time: null });
+    const larga = manual("gps", "00:00", "23:00");
+    const r = resolve([cand("ia-agent", [seg("09:00", "12:00")]), cand("endpoints", [seg("13:00", "15:00")])], [timer, larga]);
     assert.equal(workedMinutes(byRef(r, "ia-agent").segments), 180);
-    assert.equal(workedMinutes(byRef(r, "gps").segments), 120);
+    assert.equal(byRef(r, "ia-agent").allow_overlap, true);
+    assert.equal(byRef(r, "endpoints").allow_overlap, true);
     assert.deepEqual(r.doubts.map((d) => d.kind).sort(), ["hora_desmedida", "hora_en_curso"]);
+    // Del mismo proyecto: la API no deja duplicar, así que no se carga.
+    const mismo = resolve([cand("banco", [seg("09:00", "11:00")])], [timer]);
+    assert.equal(mismo.entries.length, 0);
+    assert.ok(mismo.doubts.some((d) => d.kind === "choca_con_timer"));
+});
+
+test("Una hora del agente que quedó huérfana (carpeta remapeada) no se duplica en paralelo: duda", () => {
+    const vieja = manual("endpoints", "09:00", "12:00", { external_ref: autoRef("endpoints", D, false) });
+    const r = resolve([cand("ia-agent", [seg("09:00", "12:00")])], [vieja]);
+    assert.equal(r.entries.length, 0);
+    assert.equal(r.doubts[0].kind, "hora_huerfana");
+    // Si está congelada (Lucas la editó), es un obstáculo legítimo: van en paralelo.
+    const congelada = resolveWindow({ window: dayWindow(D), candidates: [cand("ia-agent", [seg("09:00", "12:00")])], existing: [vieja], projects: PROJECTS, now: at("23:59"), frozenRefs: new Set([vieja.external_ref]) });
+    assert.equal(congelada.entries[0].allow_overlap, true);
+});
+
+test("La hora unificada se arma con los eventos: un hueco menor a la pausa entre proyectos es continuo", () => {
+    const withTimes = (projectId, ...ranges) => {
+        const times = ranges.flatMap(([a, z]) => every5(a, z));
+        return { ...cand(projectId, buildSegments(times)), times };
+    };
+    // Medidor 09:00–10:00 y 11:30–12:00 (con su propia pausa en el medio); Easy CAD 09:30–10:45.
+    const r = resolve([withTimes("medidor", ["09:00", "10:00"], ["11:30", "12:00"]), withTimes("easycad", ["09:30", "10:45"])]);
+    assert.equal(r.entries.length, 1);
+    assert.deepEqual(spans(r.entries[0].segments), ["09:00–12:00"]);
 });
 
 test("frozenReason: facturada, editada, de origen desconocido o borrada; si no, se puede ajustar", () => {
@@ -341,6 +404,8 @@ test("advanceLastFullDay: avanza de a una fecha contigua, sin saltear ni pasar e
     // Un error reintentable el 05 frena ahí: el 05 se vuelve a procesar.
     assert.equal(advanceLastFullDay({ lastFullDay: "2026-10-03", floor, completeDates: ["2026-10-04", "2026-10-05", "2026-10-06"], blockedDates: ["2026-10-05"] }), "2026-10-04");
     assert.equal(advanceLastFullDay({ floor, completeDates: [] }), null);
+    // Más de 7 días sin correr: lo salteado ya se informó y no traba el avance.
+    assert.equal(advanceLastFullDay({ lastFullDay: "2026-10-03", floor, completeDates: ["2026-10-07", "2026-10-08"], skippedTo: "2026-10-06" }), "2026-10-08");
 });
 
 test("spread: reparte la evidencia a lo largo de toda la franja", () => {

@@ -28,7 +28,7 @@ import { homedir } from "node:os";
 import { execFileSync } from "node:child_process";
 import { createInterface } from "node:readline";
 import {
-    DEFAULT_PAUSE_MIN, MIN_WORKED_MIN,
+    DEFAULT_PAUSE_MIN, DOUBT_PREFIX, MIN_WORKED_MIN,
     addDays, adminMask, advanceLastFullDay, agentTaskText, arYmd, autoRef, dayWindow, decideAction,
     fingerprint, frozenReason, humanPrompt, isSyncPrompt, matchFolder, maxOf, minOf, normPath, rawUserText,
     resolveWindow, spread, toArHm, toArIso, toEntryTimes, turnEvent, windowSegments, windowsToProcess,
@@ -129,12 +129,21 @@ async function api(tool, args) {
         throw new RetryableError(`${tool}: sin conexión con MyKimai (${err.message})`);
     }
     if (!res.ok) throw new RetryableError(`${tool}: HTTP ${res.status}`);
-    const body = await res.json();
+    let body;
+    try {
+        body = await res.json();
+    } catch {
+        throw new RetryableError(`${tool}: respuesta ilegible del servidor`);
+    }
     if (body.error) throw new RetryableError(`${tool}: ${body.error.message}`);
+    const text = body.result?.content?.[0]?.text ?? "{}";
     let data;
     try {
-        data = JSON.parse(body.result?.content?.[0]?.text ?? "{}");
+        data = JSON.parse(text);
     } catch {
+        // Un error que no es JSON lo arma el SDK (p. ej. validación de los argumentos): reintentar
+        // no lo arregla.
+        if (body.result?.isError) return { ok: false, data: { code: "invalid", error: text.slice(0, 300) } };
         throw new RetryableError(`${tool}: respuesta ilegible del servidor`);
     }
     if (body.result?.isError && !data.code) throw new RetryableError(`${tool}: ${data.error ?? "error interno"}`);
@@ -184,19 +193,22 @@ async function firstCwdOf(file) {
     return null;
 }
 
-/** Qué hizo un subagente: la descripción de su .meta.json (o el encargo, sin el arnés de workflows). */
+/**
+ * Qué hizo un subagente: la descripción de su .meta.json; en los de workflows esa descripción es
+ * una etiqueta interna ("verificar:datos"), así que primero va su encargo real.
+ */
 function agentDescription(file, task) {
-    try {
-        const meta = JSON.parse(readFileSync(file.replace(/\.jsonl$/, ".meta.json"), "utf8"));
-        if (meta?.description) return meta.workflowPhase ? `${meta.description} (${meta.workflowPhase})` : meta.description;
-    } catch { /* sin meta */ }
-    return task;
+    let meta = null;
+    try { meta = JSON.parse(readFileSync(file.replace(/\.jsonl$/, ".meta.json"), "utf8")); } catch { /* sin meta */ }
+    if (meta?.agentType === "workflow-subagent" && task) return task;
+    return meta?.description ?? task;
 }
 
 /**
- * Eventos de usuario/asistente dentro de [from, to). Cada evento cuenta para la carpeta donde ARRANCÓ
- * su sesión (un `cd` a otro repo no cambia de cliente); los subagentes, la de su sesión madre.
- * Se descartan las sesiones del propio agente y la administración de horas (adminMask).
+ * Eventos de usuario/asistente dentro de [from, to). Cada evento lleva la carpeta donde ARRANCÓ su
+ * sesión (un `cd` a otro repo no cambia de cliente; los subagentes, la de su sesión madre) y la de
+ * su línea (por si la de arranque no es de ningún proyecto). Se descartan las sesiones del propio
+ * agente (marca en su PRIMER mensaje) y la administración de horas (adminMask).
  */
 async function readTranscripts(files, from, to) {
     const raw = [];
@@ -207,12 +219,16 @@ async function readTranscripts(files, from, to) {
         const rl = createInterface({ input: createReadStream(file, "utf8"), crlfDelay: Infinity });
         const events = [];
         let task = null;
+        let firstUserSeen = false;
         for await (const line of rl) {
             let e;
             try { e = JSON.parse(line); } catch { continue; }
             if (e.type !== "user" && e.type !== "assistant") continue;
             if (!agent && e.sessionId && e.cwd && !startCwd.has(e.sessionId)) startCwd.set(e.sessionId, e.cwd);
-            if (!agent && isSyncPrompt(rawUserText(e))) marked.add(e.sessionId);
+            if (!agent && !firstUserSeen && e.type === "user") {
+                firstUserSeen = true;
+                if (isSyncPrompt(rawUserText(e))) marked.add(e.sessionId);
+            }
             if (agent && !task && e.type === "user") task = agentTaskText(rawUserText(e));
             events.push({
                 t: e.timestamp ? Date.parse(e.timestamp) : NaN,
@@ -240,6 +256,17 @@ async function readTranscripts(files, from, to) {
         .map((p) => ({ ...p, cwd: startCwd.get(p.session) ?? p.lineCwd }))
         .filter((p) => p.cwd);
     return { points, agentTasks };
+}
+
+/**
+ * Carpeta y mapeo de un evento: la de arranque de su sesión; si esa no es de ningún proyecto (sin
+ * mapa o ignorada) y la de la línea sí, la de la línea (no se pierde trabajo en un repo de cliente).
+ */
+function placeOf(map, p) {
+    const start = classify(map, p.cwd);
+    if (start.hit?.entry?.project_id || !p.lineCwd || p.lineCwd === p.cwd) return start;
+    const line = classify(map, p.lineCwd);
+    return line.hit?.entry?.project_id ? line : start;
 }
 
 // ── Evidencia: commits ───────────────────────────────────────────────────────
@@ -296,7 +323,8 @@ function readCommits(roots, from, to) {
     for (const root of roots) {
         const email = git(["config", "user.email"], root);
         if (!email) continue;
-        const log = git(["log", "--all", `--since=${new Date(from - 86_400_000).toISOString()}`, `--author=${email}`, "--format=%h%x09%aI%x09%s"], root);
+        // Sin los stashes (no son commits de trabajo).
+        const log = git(["log", "--exclude=refs/stash", "--all", `--since=${new Date(from - 86_400_000).toISOString()}`, `--author=${email}`, "--format=%h%x09%aI%x09%s"], root);
         for (const line of (log ?? "").split("\n").filter(Boolean)) {
             const [hash, when, ...subject] = line.split("\t");
             const t = Date.parse(when);
@@ -311,9 +339,21 @@ function readCommits(roots, from, to) {
 }
 
 // ── plan ─────────────────────────────────────────────────────────────────────
+/** `.mykimai.json` en la raíz del repo: manda sobre el mapa central (igual que en jornada.mjs). */
+const localMapping = (root) => memo(`local:${root}`, () => {
+    if (!root) return null;
+    try {
+        const local = JSON.parse(readFileSync(join(root, ".mykimai.json"), "utf8").replace(/^﻿/, ""));
+        return local?.project_id ? local : null;
+    } catch {
+        return null;
+    }
+});
+
 function classify(map, cwd) {
     const root = repoRoot(cwd);
-    const hit = matchFolder(map, cwd, root);
+    const local = localMapping(root);
+    const hit = local ? { key: normPath(root), path: root, entry: local } : matchFolder(map, cwd, root);
     return { folder: root ?? cwd, hit };
 }
 
@@ -362,14 +402,16 @@ function evidenceOf(points, agentTasks, allPoints) {
 }
 
 async function plan(opts) {
-    // --now simula la hora de la corrida (pruebas); por defecto, ahora.
-    const nowMs = typeof opts.now === "string" ? Date.parse(opts.now) : Date.now();
+    // --now simula la hora de la corrida (pruebas): ese plan no se puede aplicar.
+    const simulatedNow = typeof opts.now === "string";
+    const nowMs = simulatedNow ? Date.parse(opts.now) : Date.now();
     if (Number.isNaN(nowMs)) throw new Error("--now debe ser ISO 8601 con zona horaria");
     const pauseMin = Number(opts.pausa ?? DEFAULT_PAUSE_MIN);
+    const pauseMs = pauseMin * 60_000;
     const state = readJson(STATE_FILE, {});
     const map = readJson(MAP_FILE, {});
     if (typeof opts.date === "string" && !/^\d{4}-\d{2}-\d{2}$/.test(opts.date)) throw new Error("--date debe ser YYYY-MM-DD");
-    const simulate = Boolean(opts.simular);
+    const simulate = Boolean(opts.simular) || simulatedNow;
     const picked = typeof opts.date === "string"
         ? { windows: [{ date: opts.date, scope: "day" }, { date: opts.date, scope: "night" }], skipped: null }
         : windowsToProcess({ lastFullDay: state.last_full_day, nowMs, floor: FLOOR_DATE, maxDaysBack: MAX_DAYS_BACK });
@@ -385,66 +427,94 @@ async function plan(opts) {
     if (!windows.length) return result;
 
     const spans = windows.map((w) => ({ ...w, ...dayWindow(w.date, w.scope) }));
-    const from = minOf(spans.map((s) => s.start));
-    const to = maxOf(spans.map((s) => s.end));
+    // Una pausa antes y después de cada ventana: la continuidad no se corta en las 07:00 ni en las 21:00.
+    const from = minOf(spans.map((s) => s.start)) - pauseMs;
+    const to = maxOf(spans.map((s) => s.end)) + pauseMs;
 
     const { points: sessionPoints, agentTasks } = await readTranscripts(listTranscripts(from), from, to);
     const points = [...sessionPoints, ...readCommits(commitRoots(uniq(sessionPoints.map((p) => p.cwd)), map), from, to)];
+    const placed = points.map((p) => ({ ...p, ...placeOf(map, p) }));
 
     const projectList = (await apiOrThrow("list_projects", { include_inactive: true })).projects;
     const projects = new Map(projectList.map((p) => [p.id, p]));
     // La noche de la última fecha termina al día siguiente; un día antes por lo que arrancó la víspera.
-    const listed = simulate
-        ? { entries: [] }
-        : await apiOrThrow("list_time_entries", { from: addDays(windows[0].date, -1), to: addDays(windows.at(-1).date, 2) });
-    if (listed.truncated) throw new Error("La API devolvió la lista de horas truncada; acotar el rango.");
+    // Aparte, los timers que siguen abiertos (o desmedidos) aunque hayan arrancado mucho antes.
+    let entries = [];
+    if (!simulate) {
+        const listed = await apiOrThrow("list_time_entries", { from: addDays(windows[0].date, -1), to: addDays(windows.at(-1).date, 2) });
+        if (listed.truncated) throw new Error("La API devolvió la lista de horas truncada; acotar el rango.");
+        const older = await apiOrThrow("list_time_entries", { from: addDays(windows[0].date, -21), to: addDays(windows[0].date, -2) });
+        const longOrOpen = (older.entries ?? []).filter((e) => !e.end_time || Date.parse(e.end_time) > from);
+        entries = [...listed.entries, ...longOrOpen.filter((e) => !listed.entries.some((x) => x.id === e.id))];
+    }
     const stateEntries = simulate ? {} : state.entries ?? {};
+    const byRef = (ref) => entries.find((x) => x.external_ref === ref);
 
     const seenDoubts = new Set();
     for (const w of spans) {
         const byProject = new Map();
         const unmapped = new Map();
-        for (const p of points) {
-            if (!(p.t >= w.start && p.t < w.end)) continue;
-            const { folder, hit } = classify(map, p.cwd);
-            if (hit?.entry?.ignorar) continue;
-            if (!hit) {
-                const u = unmapped.get(normPath(folder)) ?? { folder, points: [] };
-                u.points.push(p);
-                unmapped.set(normPath(folder), u);
+        for (const p of placed) {
+            // Los eventos de la pausa vecina solo dan continuidad: la pertenencia la decide el recorte.
+            if (!(p.t >= w.start - pauseMs && p.t < w.end + pauseMs)) continue;
+            const inside = p.t >= w.start && p.t < w.end;
+            if (p.hit?.entry?.ignorar) continue;
+            if (!p.hit?.entry?.project_id) {
+                const u = unmapped.get(normPath(p.folder)) ?? { folder: p.folder, points: [] };
+                u.points.push({ ...p, inside });
+                unmapped.set(normPath(p.folder), u);
                 continue;
             }
             const autonomous = w.scope === "night";
-            const ref = autoRef(hit.entry.project_id, w.date, autonomous);
-            const c = byProject.get(ref) ?? { ref, date: w.date, project_id: hit.entry.project_id, label: hit.entry.label, autonomous, points: [] };
-            c.points.push(p);
+            const ref = autoRef(p.hit.entry.project_id, w.date, autonomous);
+            const c = byProject.get(ref) ?? { ref, date: w.date, project_id: p.hit.entry.project_id, label: p.hit.entry.label, autonomous, points: [] };
+            c.points.push({ ...p, inside });
             byProject.set(ref, c);
         }
 
         // Una hora propia congelada (facturada, editada a mano o borrada) se respeta tal como está:
-        // no se recalcula y, si existe, cuenta con sus tramos reales para las demás.
+        // no se recalcula y, si existe, cuenta con sus tramos reales para las demás. Una hora que el
+        // agente ya cargó unificada en otra sigue la suerte de esa otra.
+        const frozenRefs = new Set();
         const candidates = [];
+        const discard = (c, segments, reason) => {
+            const proj = projects.get(c.project_id);
+            result.discarded.push({ ref: c.ref, date: c.date, window: w.scope, project: proj ? `${proj.client.name} / ${proj.name}` : c.label, autonomous: c.autonomous, raw_minutes: workedMinutes(segments), reason });
+        };
         for (const c of byProject.values()) {
-            const segments = windowSegments(c.points.map((p) => p.t), w, pauseMin);
+            const inside = c.points.filter((p) => p.inside);
+            if (!inside.length) continue;
+            const times = c.points.map((p) => p.t);
+            const segments = windowSegments(times, w, pauseMin);
             if (!segments.length) continue;
-            const current = listed.entries.find((x) => x.external_ref === c.ref);
-            const frozen = frozenReason(current, stateEntries[c.ref]);
-            if (frozen) {
-                const proj = projects.get(c.project_id);
-                result.discarded.push({ ref: c.ref, date: c.date, window: w.scope, project: proj ? `${proj.client.name} / ${proj.name}` : c.label, autonomous: c.autonomous, raw_minutes: workedMinutes(segments), reason: frozen });
-                continue;
+            const rec = stateEntries[c.ref];
+            if (rec?.member_of) {
+                const mainFrozen = frozenReason(byRef(rec.member_of), stateEntries[rec.member_of]);
+                if (mainFrozen) {
+                    discard(c, segments, `ya va unificada en ${rec.member_of}, que quedó así: ${mainFrozen}`);
+                    continue;
+                }
+            } else {
+                const current = byRef(c.ref);
+                // Sin registro local pero con la misma referencia: se adopta si coincide (decideAction).
+                const frozen = current && !rec ? null : frozenReason(current, rec);
+                if (frozen) {
+                    if (current) frozenRefs.add(c.ref);
+                    discard(c, segments, frozen);
+                    continue;
+                }
             }
-            candidates.push({ ...c, segments, firstEvent: minOf(c.points.map((p) => p.t)), evidence: evidenceOf(c.points, agentTasks, sessionPoints) });
+            candidates.push({ ...c, times, segments, firstEvent: minOf(inside.map((p) => p.t)), evidence: evidenceOf(inside, agentTasks, sessionPoints) });
         }
-        const existing = listed.entries.filter((e) => {
+        const existing = entries.filter((e) => {
             const s = Date.parse(e.start_time);
             const z = e.end_time ? Date.parse(e.end_time) : nowMs;
             return s < w.end && z > w.start;
         });
-        const resolved = resolveWindow({ window: w, candidates, existing, projects, now: nowMs });
+        const resolved = resolveWindow({ window: w, candidates, existing, projects, now: nowMs, pauseMin, frozenRefs });
 
         for (const e of resolved.entries) {
-            const current = listed.entries.find((x) => x.external_ref === e.ref);
+            const current = byRef(e.ref);
             const decision = decideAction(e, current, stateEntries[e.ref]);
             result.actions.push({
                 ...decision,
@@ -474,10 +544,12 @@ async function plan(opts) {
             result.doubts.push({ ...d, window: w.scope, project: d.project ? { id: d.project.id, name: d.project.name, client: d.project.client?.name } : null });
         }
         for (const u of unmapped.values()) {
+            const inside = u.points.filter((p) => p.inside);
+            if (!inside.length) continue;
             const segs = windowSegments(u.points.map((p) => p.t), w, pauseMin);
             const item = { date: w.date, window: w.scope, folder: u.folder, minutes: workedMinutes(segs), worked_spans: toEntryTimes(segs).worked_spans };
             if (item.minutes >= MIN_WORKED_MIN) {
-                result.doubts.push({ kind: "carpeta_sin_proyecto", ref: `carpeta:${normPath(u.folder)}:${w.date}:${w.scope}`, ...item, evidence: evidenceOf(u.points, agentTasks, sessionPoints),
+                result.doubts.push({ kind: "carpeta_sin_proyecto", ref: `carpeta:${normPath(u.folder)}:${w.date}:${w.scope}`, ...item, evidence: evidenceOf(inside, agentTasks, sessionPoints),
                     message: `Trabajo en una carpeta sin proyecto de MyKimai (${u.folder}): ${item.minutes} min.` });
             } else {
                 result.ignored.push({ ...item, reason: `carpeta sin proyecto y menos de ${MIN_WORKED_MIN} min` });
@@ -498,7 +570,13 @@ async function readTextos(opts) {
     if (opts.textos === "-") {
         const text = (await readStdin()).replace(/^﻿/, "").trim();
         if (!text) return {};
-        try { return JSON.parse(text); } catch (err) { throw new Error(`Los textos de stdin no son JSON válido (${err.message}).`); }
+        try {
+            return JSON.parse(text);
+        } catch (err) {
+            const pos = Number(err.message.match(/position (\d+)/)?.[1] ?? 0);
+            const near = JSON.stringify(text.slice(Math.max(0, pos - 40), pos + 40));
+            throw new Error(`Los textos de stdin no son JSON válido (${err.message}; cerca de ${near}). Corregilos (sin barras invertidas) y volvé a correr el mismo comando.`);
+        }
     }
     return typeof opts.textos === "string" ? readJson(opts.textos, {}) : {};
 }
@@ -507,14 +585,18 @@ async function apply(opts) {
     const planFile = typeof opts.plan === "string" ? opts.plan : DEFAULT_PLAN;
     const p = readJson(planFile, null);
     if (!p) throw new Error(`No hay plan en ${planFile}: correr antes \`sync.mjs plan\`.`);
-    if (p.simulated) throw new Error("Ese plan es una simulación (--simular): no se carga.");
-    if (!opts.forzar && Date.now() - Date.parse(p.generated_at) > MAX_PLAN_AGE_MS) {
-        throw new Error(`El plan es de ${p.generated_at}: volvé a correr \`sync.mjs plan\` (o --forzar).`);
+    if (p.simulated) throw new Error("Ese plan es una simulación (--simular o --now): no se carga.");
+    const age = Date.now() - Date.parse(p.generated_at);
+    if (age < -5 * 60_000) throw new Error(`El plan dice ser de ${p.generated_at}, en el futuro: no se carga.`);
+    if (age > MAX_PLAN_AGE_MS && !opts.forzar) {
+        throw new Error(`El plan es de ${p.generated_at}: volvé a correr \`sync.mjs plan\`${p.auto ? "" : " (o --forzar)"}.`);
     }
     const textos = await readTextos(opts);
     const dryRun = Boolean(opts["dry-run"]);
     const state = readJson(STATE_FILE, {});
     state.entries ??= {};
+    // Cada carga exitosa queda registrada en el momento: un corte a mitad no deja horas sin dueño.
+    const saveState = () => !dryRun && writeJson(STATE_FILE, state, { backup: true });
 
     // Revalidar contra lo que hay AHORA en MyKimai (Lucas pudo editar o borrar desde el plan).
     const dates = uniq(p.actions.map((a) => a.date)).sort();
@@ -575,7 +657,11 @@ async function apply(opts) {
                 }
                 entry = r.data.entry ?? r.data;
             }
-            state.entries[a.ref] = { entry_id: entry.id, fingerprint: fingerprint(entry), written_at: new Date().toISOString() };
+            const writtenAt = new Date().toISOString();
+            state.entries[a.ref] = { entry_id: entry.id, fingerprint: fingerprint(entry), written_at: writtenAt };
+            // Los proyectos unificados en esta hora siguen su suerte (si la borrás, no vuelven solos).
+            for (const u of a.unified ?? []) state.entries[u.ref] = { member_of: a.ref, written_at: writtenAt };
+            saveState();
             results.push({ ref: a.ref, date: a.date, action: kind, entry_id: entry.id, project: a.project.name, title: entry.title, from_to: `${toArHm(Date.parse(entry.start_time))}–${toArHm(Date.parse(entry.end_time))}`, minutes: entry.duration_minutes, amount: entry.amount });
         } catch (err) {
             if (!(err instanceof RetryableError)) throw err;
@@ -586,44 +672,40 @@ async function apply(opts) {
 
     if (!dryRun && p.auto) {
         // Una fecha queda sincronizada con su jornada y su noche completas y sin errores reintentables,
-        // y solo de a una fecha contigua (nunca se saltea una).
+        // de a una fecha contigua; lo salteado por el tope de 7 días ya quedó informado en el plan.
         const completeDates = uniq(p.windows.map((w) => w.date))
             .filter((d) => ["day", "night"].every((scope) => p.windows.some((w) => w.date === d && w.scope === scope && w.complete)));
-        state.last_full_day = advanceLastFullDay({ lastFullDay: state.last_full_day, floor: FLOOR_DATE, completeDates, blockedDates: [...blocked] }) ?? undefined;
+        state.last_full_day = advanceLastFullDay({ lastFullDay: state.last_full_day, floor: FLOOR_DATE, completeDates, blockedDates: [...blocked], skippedTo: p.skipped_days?.to ?? null }) ?? undefined;
     }
     const out = { dry_run: dryRun, plan: planFile, plan_generated_at: p.generated_at, last_full_day: state.last_full_day ?? null, retry_dates: [...blocked].sort(), results };
     if (!dryRun) {
         state.last_run = { at: new Date().toISOString(), plan: planFile, errors: results.filter((r) => r.action === "error").length, retries: results.filter((r) => r.action === "retry").length };
-        writeJson(STATE_FILE, state, { backup: true });
+        saveState();
         writeJson(APPLY_FILE, out);
+        // Las dudas quedan guardadas ya, aunque el paso de dudas no llegue a correr.
+        out.dudas_pending = mergeDudas(p, results).pending;
     }
     return out;
 }
 
 // ── dudas ────────────────────────────────────────────────────────────────────
 /**
- * Junta las dudas del plan y los errores definitivos del apply con el mensaje para cada una y las
- * sesiones (carpeta y franja) donde pasó ese trabajo. Las de corridas anteriores que nadie repartió
- * siguen pendientes; las avisadas se olvidan a las dos semanas.
+ * Junta en dudas.json las dudas del plan y los errores definitivos de su apply, con el mensaje para
+ * cada una y las sesiones (carpeta y franja) donde pasó ese trabajo. Idempotente por id: una duda ya
+ * avisada no se vuelve a avisar; las de corridas anteriores que nadie repartió siguen pendientes; las
+ * avisadas se olvidan a las dos semanas.
  */
-function dudas(opts) {
-    const planFile = typeof opts.plan === "string" ? opts.plan : DEFAULT_PLAN;
-    const p = readJson(planFile, null);
-    if (!p) throw new Error("No hay plan: correr antes `sync.mjs plan`.");
-    const applied = readJson(APPLY_FILE, { results: [] });
+function mergeDudas(p, applyResults) {
     const previous = new Map((readJson(DUDAS_FILE, {}).dudas ?? []).map((d) => [d.id, d]));
-
     const items = p.doubts.map((d) => ({ ...d, id: `${d.kind}|${d.ref}` }));
-    // Solo los errores de este plan (el apply.json puede ser de otra corrida).
-    const appliedHere = applied.plan_generated_at === p.generated_at ? applied.results : [];
-    for (const r of appliedHere.filter((x) => x.action === "error")) {
+    for (const r of applyResults.filter((x) => x.action === "error")) {
         const a = p.actions.find((x) => x.ref === r.ref);
         if (!a) continue;
+        const overlaps = (r.details?.overlaps ?? []).map((o) => `"${o.title}" (${o.project})`).join("; ");
         items.push({ kind: "error_al_cargar", id: `error|${a.ref}`, date: a.date, window: a.window, ref: a.ref, project: a.project,
             minutes: a.minutes, worked_spans: a.worked_spans, evidence: a.evidence,
-            message: `No pude cargar "${a.project.client} / ${a.project.name}": ${r.error ?? r.code}.` });
+            message: `No pude cargar "${a.project.client} / ${a.project.name}": ${r.error ?? r.code}${overlaps ? ` (choca con ${overlaps})` : ""}.` });
     }
-
     const dudasOut = items.map((d) => ({
         id: d.id,
         kind: d.kind,
@@ -647,6 +729,17 @@ function dudas(opts) {
     }
     const out = { generated_at: toArIso(Date.now()), pending: dudasOut.filter((d) => !d.notified_at).length, dudas: dudasOut };
     writeJson(DUDAS_FILE, out);
+    return out;
+}
+
+function dudas(opts) {
+    const planFile = typeof opts.plan === "string" ? opts.plan : DEFAULT_PLAN;
+    const p = readJson(planFile, null);
+    if (!p) throw new Error("No hay plan: correr antes `sync.mjs plan`.");
+    if (p.simulated) throw new Error("Ese plan es una simulación: no tiene dudas para repartir.");
+    const applied = readJson(APPLY_FILE, { results: [] });
+    // Solo los errores de este plan (el apply.json puede ser de otra corrida).
+    const out = mergeDudas(p, applied.plan_generated_at === p.generated_at ? applied.results : []);
     return { dudas_file: DUDAS_FILE, ...out };
 }
 
@@ -657,6 +750,8 @@ const QUESTION = {
     proyecto_inexistente: "¿a qué proyecto va? El mapa de carpetas apunta a uno que no existe.",
     hora_en_curso: "si quedó prendido, frenalo o corregilo en Mis Horas.",
     hora_desmedida: "si quedó un timer prendido, corregí esa hora en Mis Horas.",
+    choca_con_timer: "corregí ese timer en Mis Horas y decime si cargo esta actividad.",
+    hora_huerfana: "¿la corrijo, la borro o la dejo así?",
     error_al_cargar: "¿cómo lo resuelvo?",
 };
 
@@ -664,7 +759,7 @@ function doubtText(d) {
     const day = d.date ? `${d.date.slice(8, 10)}/${d.date.slice(5, 7)}${d.window === "night" ? " (noche)" : ""}` : "";
     const when = [day, d.worked_spans?.length ? `franjas ${d.worked_spans.join(", ")}` : "", d.minutes ? `${d.minutes} min` : ""].filter(Boolean).join(" · ");
     return [
-        `[Agente de horas de MyKimai] ${d.message}`,
+        `${DOUBT_PREFIX} ${d.message}`,
         when && `(${when})`,
         `Lucas: ${QUESTION[d.kind] ?? "¿cómo lo resuelvo?"}`,
         "(Para Claude: no hagas nada hasta que Lucas conteste. Después resolvelo con \"Agente de las 7\" del skill cerrar-jornada, mostrale la tabla antes de cargar y, al terminar, desfijá esta sesión.)",
