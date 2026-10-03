@@ -19,24 +19,26 @@ Desde el repo de trabajo, corré el script del skill (`scripts/jornada.mjs` dent
 de este skill; en Claude Code, `${CLAUDE_SKILL_DIR}`):
 
 ```bash
-node "${CLAUDE_SKILL_DIR}/scripts/jornada.mjs"                    # hoy, hora de Argentina
-node "${CLAUDE_SKILL_DIR}/scripts/jornada.mjs" --date 2026-10-01  # otro día ("ayer" → su fecha)
+node "${CLAUDE_SKILL_DIR}/scripts/jornada.mjs"                    # la fecha en curso, hora de Argentina
+node "${CLAUDE_SKILL_DIR}/scripts/jornada.mjs" --date 2026-10-01  # otra fecha ("ayer" → su fecha)
 ```
 
-Devuelve la **jornada** del proyecto del repo como `entries`: una entrada por día, de la primera a
-la última actividad, con sus `breaks` (pausas) en el medio, lista para la API (`start_time`,
-`end_time`, `breaks`; `repo` y `date` para el `external_ref`). Cómo se arma:
+Devuelve la **jornada** del proyecto del repo como `entries`: una entrada para la jornada de esa
+fecha (07:00–21:00), de la primera a la última actividad, con sus `breaks` (pausas) en el medio,
+lista para la API (`start_time`, `end_time`, `breaks`; `repo` y `date` para el `external_ref`), y
+otra para su noche si hubo trabajo autónomo. Cómo se arma:
 
 - **Actividad** = cualquier evento de las sesiones de Claude Code del repo y sus worktrees,
   **incluidos los subagentes en segundo plano**, más los commits del usuario. La fuente de verdad son
   las sesiones apoyadas en git: un reloj de MyKimai que quedó prendido u olvidado no cuenta.
 - **El trabajo de los agentes se factura igual que el del usuario**: los lanza él, paga sus tokens
   y responde por el resultado. Si el usuario se va y deja agentes trabajando, el reloj sigue.
-- **Pausa**: tras 15 minutos sin ningún evento (todos los agentes terminaron y el usuario no volvió)
+- **Pausa**: tras 1 hora sin ningún evento (todos los agentes terminaron y el usuario no volvió)
   empieza una pausa; termina cuando vuelve la actividad (`--pausa <min>` para cambiarlo). Las pausas
   son las nativas de MyKimai y no se cobran.
-- **Trabajo autónomo**: la franja 01:00–07:00 sale como otra entrada con `autonomous: true` (ver
-  paso 6).
+- **Trabajo autónomo**: la jornada de Lucas es de 07:00 a 21:00; lo que pasa de 21:00 a 07:00 del
+  día siguiente lo hacen los agentes solos y sale como otra entrada, una por noche (puede cruzar la
+  medianoche), con `autonomous: true` (ver paso 6).
 - **Menos de 30 minutos trabajados no se registra** (queda en `discarded_short`). La API rechaza
   entradas así y no cuenta como solapamiento lo que pasa durante una pausa.
 - Sumá lo que sabés de la conversación para saber qué se hizo; `git log -p` o los diffs completan el
@@ -118,12 +120,15 @@ OK explícito; si pide cambios, aplicalos y volvé a mostrar la tabla.
 
 - Crear: `create_time_entry` con `external_ref` = `<repo>:<date>:<n>` (del script) y sus `breaks`. Re-correr el
   skill con el mismo `external_ref` actualiza esa hora en vez de duplicarla.
-- `allow_overlap: true` va solo en los solapamientos que las reglas permiten (entre clientes
-  Illinois) o que el usuario confirmó.
+- `allow_overlap: true` va solo en los solapamientos que las reglas permiten (clientes distintos en
+  paralelo) o que el usuario confirmó.
 - Entradas `autonomous: true`: `create_time_entry` con `autonomous: true`. Van a la tarea "Trabajo
   autónomo" del proyecto, que tiene su propia tarifa con descuento (si no tiene precio, la cascada
   usa la del proyecto o la del cliente). Nunca se mezclan con las horas del usuario.
 - Completar una hora existente: `update_time_entry` (título, descripción y/o horario).
+- Una hora con `external_ref` `auto:<project_id>:<fecha>[:autonomo]` la cargó el **agente de las 7**
+  (ver abajo): si la jornada cubre ese mismo proyecto y día, completá esa hora con
+  `update_time_entry` en vez de crear otra.
 - Si la API responde `conflict`, esa entrada vuelve al paso 4.
 
 **Listo cuando:** cada entrada aprobada tiene su respuesta OK (id + `created`/actualizada).
@@ -138,16 +143,28 @@ horas aparecen con 🤖 en Mis Horas.
 Reglas de Lucas (Illinois Jeremias, Illinois Agustin e Illinois Ezequiel son clientes distintos de
 la misma empresa):
 
+- **Clientes distintos en paralelo**: la superposición vale y **ninguna de las dos se recorta**
+  (`allow_overlap: true`): ninguno se entera del trabajo del otro. Vale también entre los tres
+  clientes de Illinois.
+- **Mismo cliente, dos proyectos en paralelo**: no se cobra dos veces → se **unifican en una sola
+  hora continua**, en el proyecto con más tiempo trabajado; la descripción cuenta lo de los dos.
 - **Mismo proyecto** (`same_project: true`): completar la hora existente · ajustar el horario ·
   no cargar. La API rechaza siempre duplicar horas del mismo proyecto.
-- **Mismo cliente, otro proyecto**: no se cobra dos veces → unificar en un solo proyecto, o correr
-  una franja a un hueco libre del mismo día.
-- **Illinois contra Illinois** (clientes distintos): se cargan en paralelo (`allow_overlap: true`).
-- **Illinois contra otro cliente**: **Illinois se queda con las horas; nunca se le recorta.** Se
-  recorta la hora del otro cliente (si ya existe, `update_time_entry`).
-- **Otros clientes entre sí**: se recorta lo nuevo para que no se superponga.
 - Una hora existente con duración absurda (p. ej. un timer que quedó corriendo días): señalásela
   al usuario; corregirla es decisión suya.
+
+## Agente de las 7 (carga automática)
+
+Todos los días a las 07:00 una tarea programada de Claude Desktop carga sola, sin propuesta, las
+horas de la fecha anterior (su jornada y su noche de trabajo autónomo) de **todas** las carpetas
+mapeadas, con estas mismas reglas (`scripts/sync.mjs`, lógica en `scripts/sync-core.mjs`). Lo que
+no sabe resolver (carpeta sin proyecto, un proyecto ya cargado a mano con actividad de más) se lo
+pregunta a Lucas en la sesión donde pasó. Procedimiento de la corrida: [AGENTE.md](AGENTE.md).
+
+Cuando Lucas contesta una duda del agente en una sesión: mapeá la carpeta en
+`~/.mykimai/proyectos.json` (o `"ignorar": true`; `"solo_esta_carpeta": true` para no cubrir las
+subcarpetas), y cargá ese día con `node "${CLAUDE_SKILL_DIR}/scripts/sync.mjs" plan --date <fecha>`
+→ textos (paso 3) → `apply`, como en [AGENTE.md](AGENTE.md), mostrándole antes la tabla.
 
 ## Editar horas ya cargadas
 

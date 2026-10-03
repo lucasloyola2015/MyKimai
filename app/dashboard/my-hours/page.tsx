@@ -22,7 +22,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Pencil, Trash2, Plus, Coffee, X, Wrench, ChevronRight, ShieldCheck } from "lucide-react";
+import { Pencil, Trash2, Plus, Coffee, X, ShieldCheck } from "lucide-react";
 import { getClients } from "@/lib/actions/clients";
 import { getProjects } from "@/lib/actions/projects";
 import { getContainerTaskId } from "@/lib/actions/time-entries";
@@ -33,12 +33,9 @@ import {
   addTimeEntryBreak,
   updateTimeEntryBreak,
   deleteTimeEntryBreak,
-  previewConsolidation,
-  executeConsolidation,
   recalculateTimeEntryRate,
   assignEntryPackage,
   getAssignablePackages,
-  type ConsolidationPreview
 } from "@/lib/actions/time-entries";
 import { format, differenceInMinutes } from "date-fns";
 import { formatTime24 } from "@/lib/date-format";
@@ -106,8 +103,6 @@ export default function Page() {
     () => timelineStartHourByDay(entries.map((e) => new Date(e.start_time))),
     [entries]
   );
-  const [maintenancePreview, setMaintenancePreview] = useState<ConsolidationPreview[] | null>(null);
-  const [isMaintenanceLoading, setIsMaintenanceLoading] = useState(false);
   const [selectedClient, setSelectedClient] = useState<string>("");
   const [selectedProject, setSelectedProject] = useState<string>("");
   // §paginación — por defecto mostrar últimos 90 días (no traer años de historial).
@@ -445,49 +440,6 @@ export default function Page() {
       if (updated) setEditingEntry(updated);
     }
   };
-  const handlePreview = async () => {
-    setIsMaintenanceLoading(true);
-    try {
-      const previews = await previewConsolidation();
-      setMaintenancePreview(previews);
-      if (previews.length === 0) {
-        toast({
-          title: "Limpieza",
-          description: "No se encontraron registros fragmentados para consolidar.",
-        });
-      }
-    } catch (error) {
-      toast({
-        title: "Error",
-        description: "Error al generar vista previa de mantenimiento",
-        variant: "destructive",
-      });
-    } finally {
-      setIsMaintenanceLoading(false);
-    }
-  };
-
-  const handleExecuteConsolidation = async () => {
-    setIsMaintenanceLoading(true);
-    try {
-      const results = await executeConsolidation();
-      toast({
-        title: "Éxito",
-        description: `Consolidación completada: ${results.consolidated} grupos procesados, ${results.removed} registros eliminados, ${results.breaksCreated} pausas automáticas creadas.`,
-      });
-      setMaintenancePreview(null);
-      loadEntries();
-    } catch (error) {
-      toast({
-        title: "Error",
-        description: "Error al ejecutar consolidación de mantenimiento",
-        variant: "destructive",
-      });
-    } finally {
-      setIsMaintenanceLoading(false);
-    }
-  };
-
   const resetForm = () => {
     setFormData({
       description: "",
@@ -573,100 +525,6 @@ export default function Page() {
               {showAll ? "Ver últimos 90 días" : "Ver todo el historial"}
             </Button>
           </div>
-        </CardContent>
-      </Card>
-
-      {/* Herramientas de Limpieza */}
-      <Card className="border-orange-200/30 bg-orange-50/5 dark:bg-orange-500/[0.03] overflow-hidden">
-        <CardHeader className="bg-orange-100/30 dark:bg-orange-500/10 pb-4">
-          <div className="flex items-center gap-2">
-            <Wrench className="w-5 h-5 text-orange-600" />
-            <CardTitle className="text-sm font-bold text-orange-800 uppercase tracking-wider">
-              Herramientas de Limpieza
-            </CardTitle>
-          </div>
-        </CardHeader>
-        <CardContent className="pt-6 space-y-4">
-          {!maintenancePreview ? (
-            <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-              <div>
-                <p className="text-sm text-orange-900 font-medium">Unificador de Registros</p>
-                <p className="text-xs text-orange-700/80">Busca registros del mismo cliente en el mismo día y los une creando pausas automáticas.</p>
-              </div>
-              <Button
-                variant="outline"
-                size="sm"
-                className="bg-white dark:bg-slate-900 border-orange-200/50 dark:border-orange-500/20 hover:bg-orange-100 dark:hover:bg-orange-500/20 text-orange-700 dark:text-orange-400 font-bold shrink-0"
-                onClick={handlePreview}
-                disabled={isMaintenanceLoading}
-              >
-                {isMaintenanceLoading ? "Analizando..." : "Analizar Registros"}
-                <ChevronRight className="ml-2 w-4 h-4" />
-              </Button>
-            </div>
-          ) : (
-            <div className="space-y-4">
-              <div className="bg-white/80 dark:bg-slate-900/50 rounded-xl border border-orange-100/50 dark:border-orange-500/10 overflow-hidden">
-                <table className="w-full text-xs">
-                  <thead className="bg-orange-50/50 border-b border-orange-100 text-orange-900 font-bold">
-                    <tr>
-                      <th className="px-3 py-2 text-left">Fecha</th>
-                      <th className="px-3 py-2 text-left">Cliente</th>
-                      <th className="px-3 py-2 text-center">Fragmentos</th>
-                      <th className="px-3 py-2 text-center">Pausas Nuevas</th>
-                      <th className="px-3 py-2 text-right">Duración Total</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-orange-50/50">
-                    {maintenancePreview.map((p, i) => (
-                      <tr key={i} className="hover:bg-orange-50/30 transition-colors">
-                        <td className="px-3 py-2 text-orange-800 font-medium">{p.date}</td>
-                        <td className="px-3 py-2 text-slate-700">{p.clientName}</td>
-                        <td className="px-3 py-2 text-center">
-                          <span className="bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded-md font-bold">
-                            {p.originalCount}
-                          </span>
-                        </td>
-                        <td className="px-3 py-2 text-center text-slate-500">{p.newBreaksCount}</td>
-                        <td className="px-3 py-2 text-right text-slate-600 font-mono">
-                          {Math.floor(p.totalDuration / 60)}h {p.totalDuration % 60}m
-                        </td>
-                      </tr>
-                    ))}
-                    {maintenancePreview.length === 0 && (
-                      <tr>
-                        <td colSpan={5} className="px-3 py-8 text-center text-slate-400 italic">
-                          No se encontraron registros para unificar.
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-
-              <div className="flex justify-end gap-3 pt-2">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="text-orange-700 font-bold hover:bg-orange-100"
-                  onClick={() => setMaintenancePreview(null)}
-                  disabled={isMaintenanceLoading}
-                >
-                  Cancelar
-                </Button>
-                {maintenancePreview.length > 0 && (
-                  <Button
-                    size="sm"
-                    className="bg-orange-600 hover:bg-orange-700 text-white font-bold"
-                    onClick={handleExecuteConsolidation}
-                    disabled={isMaintenanceLoading}
-                  >
-                    {isMaintenanceLoading ? "Procesando..." : "Ejecutar Unificación"}
-                  </Button>
-                )}
-              </div>
-            </div>
-          )}
         </CardContent>
       </Card>
 

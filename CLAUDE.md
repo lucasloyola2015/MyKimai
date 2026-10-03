@@ -64,10 +64,16 @@ La key actúa como su usuario: el contexto se resuelve por request (`lib/auth/ap
 - Reglas de carga: el agente nunca manda montos; no toca horas facturadas; idempotencia por
   `external_ref`; solapar con el **mismo** proyecto se rechaza siempre, con **otro** proyecto pide
   confirmación (`allow_overlap`). Las horas de API quedan `source = 'api'` (🤖 en Mis Horas).
-- **Trabajo autónomo** (agentes solos, 01:00–07:00): `autonomous: true` → tarea oculta "Trabajo
+- **Trabajo autónomo** (agentes solos, 21:00–07:00; la jornada de Lucas es 07–21): `autonomous: true` → tarea oculta "Trabajo
   autónomo" de cada proyecto, creada con tarifa = efectiva × (1 − 50%) (`lib/domain/autonomous.ts`);
   la cascada tarea > proyecto > cliente hace el resto. La contenedora de horas la ignora.
-- Skill del lado del agente: `Habilidades/cerrar-jornada/` (instalado en `~/.claude/skills/`).
+- Skill del lado del agente: `Habilidades/cerrar-jornada/` (instalado en `~/.claude/skills/`; tras
+  editarlo, reinstalar la carpeta completa). Tests: `node --test Habilidades/cerrar-jornada/scripts/sync-core.test.mjs`.
+- **Agente de las 7**: tarea programada de Claude Desktop `mykimai-agente-horas` que carga sola las
+  horas de las fechas cerradas (`scripts/sync.mjs`, refs `auto:<project_id>:<fecha>`). Una corrida
+  programada no puede escribir en otras sesiones: las dudas las reparte la próxima sesión donde Lucas
+  escribe (hook `UserPromptSubmit` → `scripts/dudas-hook.mjs`). Procedimiento:
+  `Habilidades/cerrar-jornada/AGENTE.md`.
 
 ## Acceso a Supabase (DB de producción)
 

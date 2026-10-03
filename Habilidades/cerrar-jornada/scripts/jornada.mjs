@@ -2,17 +2,18 @@
 /**
  * Evidencia de la jornada para el skill cerrar-jornada (hora de Argentina). Solo Node, sin deps.
  *
- *   node jornada.mjs [--date YYYY-MM-DD] [--pausa 15] [--cwd <dir>] [--sin-madrugada]
+ *   node jornada.mjs [--date YYYY-MM-DD] [--pausa 60] [--cwd <dir>] [--sin-noche]
  *
  * Modelo (reglas de Lucas):
  * - Actividad = cualquier evento de las sesiones de Claude Code del repo (y sus worktrees), INCLUIDOS
  *   los subagentes que trabajan en segundo plano, más los commits del usuario. Un agente trabajando
  *   es trabajo, aunque el usuario no esté.
- * - El reloj corre mientras hay actividad. Tras `--pausa` minutos sin ningún evento (default 15)
+ * - El reloj corre mientras hay actividad. Tras `--pausa` minutos sin ningún evento (default 60)
  *   empieza una PAUSA, que termina cuando la actividad vuelve.
- * - Resultado: UNA entrada por día para el proyecto del repo, de la primera a la última actividad,
- *   con las pausas en el medio (pausas nativas de MyKimai). La franja 01:00–07:00 es trabajo
- *   AUTÓNOMO y sale como otra entrada aparte (`autonomous: true`); `--sin-madrugada` la descarta.
+ * - Resultado: para la fecha, UNA entrada de la jornada (07:00–21:00) para el proyecto del repo, de
+ *   la primera a la última actividad, con las pausas en el medio (pausas nativas de MyKimai). La
+ *   noche (21:00 → 07:00 del día siguiente) es trabajo AUTÓNOMO de los agentes y sale como otra
+ *   entrada aparte (`autonomous: true`); `--sin-noche` la descarta.
  * - Menos de 30 minutos trabajados no se registra.
  *
  * Proyecto de MyKimai del repo: `.mykimai.json` en la raíz, o el mapa central
@@ -20,14 +21,16 @@
  */
 
 import { createReadStream, existsSync, readFileSync, readdirSync, statSync } from "node:fs";
-import { basename, dirname, join, resolve, sep } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { execFileSync } from "node:child_process";
 import { createInterface } from "node:readline";
+import {
+    DEFAULT_PAUSE_MIN, MIN_WORKED_MIN, dayWindow, humanPrompt, matchFolder, toArHm, toArIso, windowSegments,
+    workdayOf, workedMinutes,
+} from "./sync-core.mjs";
 
 const TZ = "America/Argentina/Buenos_Aires";
-const AR_OFFSET_MS = 3 * 60 * 60 * 1000; // Argentina: UTC-3 todo el año
-const MIN_WORKED_MIN = 30;
 
 function parseArgs(argv) {
     const out = {};
@@ -38,19 +41,15 @@ function parseArgs(argv) {
 }
 const args = parseArgs(process.argv.slice(2));
 
-const todayAr = new Intl.DateTimeFormat("en-CA", { timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
-const date = typeof args.date === "string" ? args.date : todayAr;
+// Por defecto, la fecha en curso: a las 02:00 todavía es la noche de ayer.
+const date = typeof args.date === "string" ? args.date : workdayOf(Date.now());
 if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error("--date debe ser YYYY-MM-DD");
-const pauseMin = Number(args.pausa ?? args.gap ?? 15);
-const dropNight = process.argv.includes("--sin-madrugada");
-const dayStart = new Date(`${date}T00:00:00-03:00`);
-const dayEnd = new Date(dayStart.getTime() + 86_400_000);
-
-/** ISO con offset de Argentina, ej. 2026-10-02T09:15:00-03:00 */
-const toArIso = (d) => new Date(d.getTime() - AR_OFFSET_MS).toISOString().slice(0, 19) + "-03:00";
-const toArHm = (d) => toArIso(d).slice(11, 16);
-const round5 = (d) => new Date(Math.round(d.getTime() / 300_000) * 300_000);
-const isNight = (t) => { const h = new Date(t.getTime() - AR_OFFSET_MS).getUTCHours(); return h >= 1 && h < 7; };
+const pauseMin = Number(args.pausa ?? args.gap ?? DEFAULT_PAUSE_MIN);
+const dropNight = process.argv.includes("--sin-noche") || process.argv.includes("--sin-madrugada");
+const DAY = dayWindow(date, "day"); // 07:00–21:00
+const NIGHT = dayWindow(date, "night"); // 21:00 → 07:00 del día siguiente
+const dayStart = new Date(DAY.start);
+const dayEnd = new Date(NIGHT.end);
 
 function git(gitArgs, cwd) {
     try {
@@ -66,22 +65,14 @@ const repoRoot = commonDir ? dirname(resolve(cwd, commonDir)) : cwd;
 const repo = basename(repoRoot);
 
 // ── Proyecto de MyKimai del repo ─────────────────────────────────────────────
-const normPath = (p) => resolve(p).replaceAll("\\", "/").replace(/\/+$/, "").toLowerCase();
 function readJson(file) {
-    try { return JSON.parse(readFileSync(file, "utf8")); } catch { return null; }
+    try { return JSON.parse(readFileSync(file, "utf8").replace(/^﻿/, "")); } catch { return null; }
 }
 function resolveProject() {
     const local = readJson(join(repoRoot, ".mykimai.json"));
     if (local?.project_id) return { ...local, source: ".mykimai.json" };
-    const map = readJson(join(homedir(), ".mykimai", "proyectos.json")) ?? {};
-    const here = normPath(repoRoot);
-    let best = null;
-    for (const [path, entry] of Object.entries(map)) {
-        const key = normPath(path);
-        if (!entry?.project_id || (here !== key && !here.startsWith(key + "/"))) continue;
-        if (!best || key.length > best.key.length) best = { key, entry };
-    }
-    return best ? { ...best.entry, source: "~/.mykimai/proyectos.json" } : null;
+    const hit = matchFolder(readJson(join(homedir(), ".mykimai", "proyectos.json")) ?? {}, repoRoot);
+    return hit?.entry?.project_id ? { ...hit.entry, source: "~/.mykimai/proyectos.json" } : null;
 }
 const project = resolveProject();
 
@@ -108,17 +99,6 @@ if (existsSync(projectsDir)) {
         const key = dir.toLowerCase();
         if (key === prefix || key.startsWith(prefix + "-")) collect(join(projectsDir, dir), false);
     }
-}
-
-/** Texto que escribió el usuario (no resultados de herramientas, mensajes entre sesiones ni avisos). */
-function humanPrompt(entry) {
-    if (entry.type !== "user") return null;
-    const c = entry.message?.content;
-    const text = typeof c === "string" ? c : Array.isArray(c) && !c.some((x) => x.type === "tool_result")
-        ? c.filter((x) => x.type === "text").map((x) => x.text).join(" ")
-        : "";
-    if (!text || text.startsWith("<") || /^(Another Claude session|\[Request interrupted|\[Image|\(Re-invocation|This session is being continued|Base directory for this skill)/.test(text)) return null;
-    return text.replace(/\s+/g, " ").trim().slice(0, 160);
 }
 
 const points = []; // { t, kind: 'session' | 'agent' | 'commit', prompt?, label? }
@@ -151,34 +131,16 @@ for (const line of (log ?? "").split("\n").filter(Boolean)) {
     points.push({ t, kind: "commit", label: `${hash} ${subject.join("\t")}` });
 }
 
-// ── Jornada: una entrada por clase (día / madrugada autónoma) con pausas ─────
-function jornada(pts, autonomous) {
+// ── Una entrada por ventana (jornada / noche autónoma) con pausas ───────────
+function jornada(pts, autonomous, window) {
     if (!pts.length) return null;
-    const sorted = [...pts].sort((a, b) => a.t - b.t);
-    // Tramos de actividad continua: se corta cuando pasan más de `pauseMin` minutos sin eventos.
-    const spans = [];
-    for (const p of sorted) {
-        const last = spans.at(-1);
-        if (last && p.t - last.end <= pauseMin * 60_000) last.end = p.t;
-        else spans.push({ start: p.t, end: p.t });
-    }
-    const rounded = spans.map((s) => {
-        const a = round5(s.start);
-        let z = round5(s.end);
-        if (z <= a) z = new Date(a.getTime() + 300_000);
-        return [a, z];
-    });
-    // Unir tramos que el redondeo dejó pegados o encimados.
-    const merged = [];
-    for (const [a, z] of rounded) {
-        const last = merged.at(-1);
-        if (last && a <= last[1]) last[1] = z > last[1] ? z : last[1];
-        else merged.push([a, z]);
-    }
+    // Tramos de actividad continua (se corta tras `pauseMin` minutos sin eventos), redondeados a 5 min.
+    const merged = windowSegments(pts.map((p) => p.t.getTime()), window, pauseMin);
+    if (!merged.length) return null;
     const start = merged[0][0];
     const end = merged.at(-1)[1];
     const breaks = merged.slice(1).map(([a], i) => [merged[i][1], a]);
-    const workedMin = Math.round(merged.reduce((t, [a, z]) => t + (z - a), 0) / 60_000);
+    const workedMin = workedMinutes(merged);
     return {
         autonomous,
         start_time: toArIso(start),
@@ -195,7 +157,8 @@ function jornada(pts, autonomous) {
     };
 }
 
-const entries = [jornada(points.filter((p) => !isNight(p.t)), false), dropNight ? null : jornada(points.filter((p) => isNight(p.t)), true)]
+const inWindow = (w) => points.filter((p) => p.t.getTime() >= w.start && p.t.getTime() < w.end);
+const entries = [jornada(inWindow(DAY), false, DAY), dropNight ? null : jornada(inWindow(NIGHT), true, NIGHT)]
     .filter(Boolean);
 const discarded = entries.filter((e) => e.minutes < MIN_WORKED_MIN).map((e) => `${e.from_to} (${e.minutes} min trabajados${e.autonomous ? ", autónomo" : ""})`);
 
