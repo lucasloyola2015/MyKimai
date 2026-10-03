@@ -80,26 +80,28 @@ test("entrySegments: lo trabajado de una entrada cargada, al minuto hacia afuera
     assert.deepEqual(spans(entrySegments(e, at("23:00"))), ["09:00–10:01", "10:15–11:00"]);
 });
 
-// ── Jornada 07–21 y noche autónoma 21–07 ─────────────────────────────────────
-test("isNight: de 21:00 a 07:00 es trabajo autónomo", () => {
-    assert.equal(isNight(at("20:59")), false);
-    assert.equal(isNight(at("21:00")), true);
+// ── Jornada 07–24 y noche autónoma 00–07 ─────────────────────────────────────
+test("isNight: de 00:00 a 07:00 es trabajo autónomo", () => {
+    assert.equal(isNight(at("21:00")), false);
+    assert.equal(isNight(at("23:59")), false);
+    assert.equal(isNight(at("00:00")), true);
     assert.equal(isNight(at("00:30")), true);
     assert.equal(isNight(at("06:59")), true);
     assert.equal(isNight(at("07:00")), false);
 });
 
-test("dayWindow y workdayOf: la noche empieza a las 21 y es de la fecha en que empezó", () => {
+test("dayWindow y workdayOf: la noche (00 a 07 del día siguiente) es de la fecha anterior", () => {
     const night = dayWindow(D, "night");
-    assert.equal(night.start, at("21:00"));
+    assert.equal(night.start, at("00:00", "2026-10-06"));
+    assert.equal(dayWindow(D).end, at("00:00", "2026-10-06"));
     assert.equal(night.end, at("07:00", "2026-10-06"));
     assert.equal(workdayOf(at("02:00", "2026-10-06")), D);
     assert.equal(workdayOf(at("07:00", "2026-10-06")), "2026-10-06");
 });
 
-test("windowSegments: un evento suelto a las 20:58 no invade la noche", () => {
-    assert.deepEqual(spans(windowSegments([at("20:30"), at("20:58")], dayWindow(D))), ["20:30–21:00"]);
-    assert.deepEqual(spans(windowSegments([at("20:58")], dayWindow(D))), []);
+test("windowSegments: un evento suelto a las 23:58 no invade la noche", () => {
+    assert.deepEqual(spans(windowSegments([at("23:30"), at("23:58")], dayWindow(D))), ["23:30–00:00"]);
+    assert.deepEqual(spans(windowSegments([at("23:58")], dayWindow(D))), []);
 });
 
 test("windowsToProcess: fechas completas (jornada + noche), recién a las 7 del día siguiente", () => {

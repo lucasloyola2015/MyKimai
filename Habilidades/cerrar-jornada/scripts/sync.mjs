@@ -7,7 +7,7 @@
  *   node sync.mjs apply [--plan <plan.json>] [--textos <textos.json> | --textos -] [--dry-run] [--forzar]
  *   node sync.mjs dudas [--plan <plan.json>]
  *
- * plan:  cada fecha tiene su jornada (07:00–21:00) y su noche (21:00 → 07:00 del día siguiente,
+ * plan:  cada fecha tiene su jornada (07:00–24:00) y su noche (00:00 → 07:00 del día siguiente,
  *        trabajo autónomo). Sin --date, las fechas COMPLETAS (ya terminó su noche) desde la última
  *        sincronizada (máx. 7, nunca antes de FLOOR_DATE). Con --date, esa fecha. No escribe nada en
  *        MyKimai. --simular calcula como si no hubiera nada cargado (para comparar reglas; apply lo
@@ -35,7 +35,7 @@ import {
     workedMinutes,
 } from "./sync-core.mjs";
 
-// Primera fecha del agente: su noche (02/10 21:00 → 03/10 07:00) es la primera que carga solo.
+// Primera fecha del agente: su noche (03/10 00:00 → 07:00) es la primera que carga solo.
 // Lo anterior se cargó a mano (y lo que ya está cargado, el agente lo respeta).
 const FLOOR_DATE = "2026-10-02";
 const MAX_DAYS_BACK = 7;

@@ -135,7 +135,7 @@ export async function resolveContainerTaskId(projectId: string, ownerId: string)
 }
 
 /**
- * Tarea "Trabajo autónomo" del proyecto (trabajo de agentes sin el usuario, de 21:00 a 07:00).
+ * Tarea "Trabajo autónomo" del proyecto (trabajo de agentes sin el usuario, de 00:00 a 07:00).
  * Si no existe se crea con la tarifa efectiva del proyecto (proyecto, si no cliente) con descuento
  * (AUTONOMOUS_DISCOUNT). Si no hay tarifa de referencia queda sin precio y la cascada usa la del
  * cliente.

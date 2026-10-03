@@ -10,9 +10,9 @@
  *   es trabajo, aunque el usuario no esté.
  * - El reloj corre mientras hay actividad. Tras `--pausa` minutos sin ningún evento (default 60)
  *   empieza una PAUSA, que termina cuando la actividad vuelve.
- * - Resultado: para la fecha, UNA entrada de la jornada (07:00–21:00) para el proyecto del repo, de
+ * - Resultado: para la fecha, UNA entrada de la jornada (07:00–24:00) para el proyecto del repo, de
  *   la primera a la última actividad, con las pausas en el medio (pausas nativas de MyKimai). La
- *   noche (21:00 → 07:00 del día siguiente) es trabajo AUTÓNOMO de los agentes y sale como otra
+ *   noche (00:00 → 07:00 del día siguiente) es trabajo AUTÓNOMO de los agentes y sale como otra
  *   entrada aparte (`autonomous: true`); `--sin-noche` la descarta.
  * - Menos de 30 minutos trabajados no se registra.
  *
@@ -46,8 +46,8 @@ const date = typeof args.date === "string" ? args.date : workdayOf(Date.now());
 if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error("--date debe ser YYYY-MM-DD");
 const pauseMin = Number(args.pausa ?? args.gap ?? DEFAULT_PAUSE_MIN);
 const dropNight = process.argv.includes("--sin-noche") || process.argv.includes("--sin-madrugada");
-const DAY = dayWindow(date, "day"); // 07:00–21:00
-const NIGHT = dayWindow(date, "night"); // 21:00 → 07:00 del día siguiente
+const DAY = dayWindow(date, "day"); // 07:00–24:00
+const NIGHT = dayWindow(date, "night"); // 00:00 → 07:00 del día siguiente
 const dayStart = new Date(DAY.start);
 const dayEnd = new Date(NIGHT.end);
 

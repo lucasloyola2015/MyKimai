@@ -7,15 +7,15 @@
 export const AR_OFFSET_MS = 3 * 60 * 60 * 1000;
 export const MIN_WORKED_MIN = 30;
 /** Una hora cargada más larga que esto (o un timer en curso) es sospechosa: no se usa para recortar. */
-export const MAX_SANE_ENTRY_MIN = 16 * 60;
+export const MAX_SANE_ENTRY_MIN = 18 * 60;
 /** Sin ningún evento durante este tiempo, se entiende que no hay más actividad: empieza una pausa. */
 export const DEFAULT_PAUSE_MIN = 60;
 /**
- * La jornada de Lucas es de 07:00 a 21:00 ("nunca trabajo más de las 21"). De 21:00 a 07:00 del día
+ * La jornada de Lucas es de 07:00 a 24:00. De 00:00 a 07:00 del día
  * siguiente trabajan solos los agentes: es TRABAJO AUTÓNOMO y se carga aparte, una entrada por noche.
  */
 export const DAY_FROM_H = 7;
-export const DAY_TO_H = 21;
+export const DAY_TO_H = 24;
 /** Prefijo de `external_ref` de las entradas que carga este agente. */
 export const AUTO_REF_PREFIX = "auto:";
 /** Marca del prompt del agente de las 7: sus propias sesiones no son trabajo. */
@@ -33,7 +33,7 @@ export const toArIso = (ms) => new Date(ms - AR_OFFSET_MS).toISOString().slice(0
 export const toArHm = (ms) => toArIso(ms).slice(11, 16);
 export const arYmd = (ms) => toArIso(ms).slice(0, 10);
 export const addDays = (ymd, n) => arYmd(arDayStart(ymd) + n * DAY);
-/** Fuera de la jornada (21:00–07:00): trabajo autónomo. */
+/** Fuera de la jornada (00:00–07:00): trabajo autónomo. */
 export const isNight = (ms) => {
     const h = new Date(ms - AR_OFFSET_MS).getUTCHours();
     return h >= DAY_TO_H || h < DAY_FROM_H;
@@ -42,8 +42,8 @@ export const isNight = (ms) => {
 export const workdayOf = (ms) => arYmd(ms - DAY_FROM_H * HOUR);
 
 /**
- * Ventanas de una fecha: la jornada (`day`, 07:00–21:00) y la noche que empieza ese día
- * (`night`, 21:00 → 07:00 del día siguiente).
+ * Ventanas de una fecha: la jornada (`day`, 07:00–24:00) y la noche que empieza ese día
+ * (`night`, 00:00 → 07:00 del día siguiente).
  */
 export function dayWindow(ymd, scope = "day") {
     const start = arDayStart(ymd);

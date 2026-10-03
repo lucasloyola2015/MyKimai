@@ -20,8 +20,8 @@ se frena esperando a alguien que no está).
 node C:/Users/loyol/.claude/skills/cerrar-jornada/scripts/sync.mjs plan
 ```
 
-Procesa las fechas completas pendientes: cada una con su jornada (07:00–21:00) y su noche de
-trabajo autónomo (21:00 → 07:00). Devuelve `actions` (`create` · `update` · `noop` · `skip` con
+Procesa las fechas completas pendientes: cada una con su jornada (07:00–24:00) y su noche de
+trabajo autónomo (00:00 → 07:00 del día siguiente). Devuelve `actions` (`create` · `update` · `noop` · `skip` con
 `reason`; `unified` lista los proyectos del mismo cliente que se sumaron a esa hora), `discarded`,
 `doubts`, `ignored` y `skipped_days`. Si falla, ese error es el informe: saltá al paso 5.
 

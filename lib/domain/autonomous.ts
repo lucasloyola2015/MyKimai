@@ -1,7 +1,7 @@
 /**
  * Trabajo autónomo de agentes (lógica pura → testeable).
  *
- * Lo que un agente hace solo (fuera de la jornada de Lucas: de 21:00 a 07:00) se carga en una tarea aparte
+ * Lo que un agente hace solo (fuera de la jornada de Lucas: de 00:00 a 07:00) se carga en una tarea aparte
  * de cada proyecto, "Trabajo autónomo", con su propia tarifa con descuento. La cascada de tarifas
  * (tarea > proyecto > cliente, ver lib/utils/rates.ts) hace el resto: si la tarea tiene precio usa
  * ese; si no lo tiene, cae al del proyecto o al del cliente.

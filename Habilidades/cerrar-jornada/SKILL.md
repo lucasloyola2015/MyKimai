@@ -24,7 +24,7 @@ node "${CLAUDE_SKILL_DIR}/scripts/jornada.mjs" --date 2026-10-01  # otra fecha (
 ```
 
 Devuelve la **jornada** del proyecto del repo como `entries`: una entrada para la jornada de esa
-fecha (07:00–21:00), de la primera a la última actividad, con sus `breaks` (pausas) en el medio,
+fecha (07:00–24:00), de la primera a la última actividad, con sus `breaks` (pausas) en el medio,
 lista para la API (`start_time`, `end_time`, `breaks`; `repo` y `date` para el `external_ref`), y
 otra para su noche si hubo trabajo autónomo. Cómo se arma:
 
@@ -36,9 +36,9 @@ otra para su noche si hubo trabajo autónomo. Cómo se arma:
 - **Pausa**: tras 1 hora sin ningún evento (todos los agentes terminaron y el usuario no volvió)
   empieza una pausa; termina cuando vuelve la actividad (`--pausa <min>` para cambiarlo). Las pausas
   son las nativas de MyKimai y no se cobran.
-- **Trabajo autónomo**: la jornada de Lucas es de 07:00 a 21:00; lo que pasa de 21:00 a 07:00 del
-  día siguiente lo hacen los agentes solos y sale como otra entrada, una por noche (puede cruzar la
-  medianoche), con `autonomous: true` (ver paso 6).
+- **Trabajo autónomo**: la jornada de Lucas es de 07:00 a 24:00; lo que pasa de 00:00 a 07:00 del
+  día siguiente lo hacen los agentes solos y sale como otra entrada, una por noche.
+  Va con `autonomous: true` (ver paso 6).
 - **Menos de 30 minutos trabajados no se registra** (queda en `discarded_short`). La API rechaza
   entradas así y no cuenta como solapamiento lo que pasa durante una pausa.
 - Sumá lo que sabés de la conversación para saber qué se hizo; `git log -p` o los diffs completan el
