@@ -42,8 +42,10 @@ const manual = (projectId, start, end, extra = {}) => {
         breaks: [], autonomous: false, is_billed: false, external_ref: null, ...extra,
     };
 };
+/** Ventana como la arma plan: con su fecha y su tipo. */
+const win = (scope = "day") => ({ ...dayWindow(D, scope), date: D, scope });
 const resolve = (candidates, existing = []) =>
-    resolveWindow({ window: dayWindow(D), candidates, existing, projects: PROJECTS, now: at("23:59") });
+    resolveWindow({ window: win(), candidates, existing, projects: PROJECTS, now: at("23:59") });
 const byRef = (r, projectId, autonomous = false) => r.entries.find((e) => e.ref === autoRef(projectId, D, autonomous));
 
 // ── Tramos y pausas ──────────────────────────────────────────────────────────
@@ -369,7 +371,7 @@ test("Una hora del agente que quedó huérfana (carpeta remapeada) no se duplica
     assert.equal(r.entries.length, 0);
     assert.equal(r.doubts[0].kind, "hora_huerfana");
     // Si está congelada (Lucas la editó), es un obstáculo legítimo: van en paralelo.
-    const congelada = resolveWindow({ window: dayWindow(D), candidates: [cand("ia-agent", [seg("09:00", "12:00")])], existing: [vieja], projects: PROJECTS, now: at("23:59"), frozenRefs: new Set([vieja.external_ref]) });
+    const congelada = resolveWindow({ window: win(), candidates: [cand("ia-agent", [seg("09:00", "12:00")])], existing: [vieja], projects: PROJECTS, now: at("23:59"), frozenRefs: new Set([vieja.external_ref]) });
     assert.equal(congelada.entries[0].allow_overlap, true);
 });
 
@@ -411,6 +413,90 @@ test("advanceLastFullDay: avanza de a una fecha contigua, sin saltear ni pasar e
 test("spread: reparte la evidencia a lo largo de toda la franja", () => {
     assert.deepEqual(spread([1, 2, 3], 5), [1, 2, 3]);
     assert.deepEqual(spread([0, 1, 2, 3, 4, 5, 6, 7, 8, 9], 4), [0, 3, 6, 9]);
+});
+
+// ── Verificación de las correcciones (segunda pasada) ────────────────────────
+const timed = (projectId, ...ranges) => {
+    const times = ranges.flatMap((r) => (Array.isArray(r) ? every5(r[0], r[1]) : [at(r)]));
+    return { ...cand(projectId, buildSegments(times)), times };
+};
+
+test("Unificar hasta que no quede nada: la hora que crece no puede tapar a otra del mismo cliente", () => {
+    const projects = new Map(PROJECTS);
+    projects.set("flejadora", project("flejadora", AGU));
+    // A: 09–10 y 11:10–12; B: 09:30–10 y 10:35; C: 10:40–11:10 (no se cruza con los tramos de A ni B).
+    const a = timed("medidor", ["09:00", "10:00"], ["11:10", "12:00"]);
+    const b = timed("easycad", ["09:30", "10:00"], "10:35");
+    const c = timed("flejadora", ["10:40", "11:10"]);
+    const r = resolveWindow({ window: win(), candidates: [a, b, c], existing: [], projects, now: at("23:00") });
+    const agustin = r.entries.filter((e) => e.project.client.id === "c-agu");
+    assert.equal(agustin.length, 1);
+    assert.deepEqual(spans(agustin[0].segments), ["09:00–12:00"]);
+    // Los tres proyectos quedan en esa única hora (la principal más las unificadas).
+    assert.deepEqual([agustin[0].project.id, ...agustin[0].unified.map((u) => u.project_id)].sort(), ["easycad", "flejadora", "medidor"]);
+});
+
+test("Al unificar, la principal es la hora propia que ya existe (se actualiza; no queda otra suelta)", () => {
+    const yaCargada = manual("medidor", "09:00", "10:00", { external_ref: autoRef("medidor", D, false) });
+    const r = resolve([timed("medidor", ["09:00", "10:00"]), timed("easycad", ["09:30", "13:00"])], [yaCargada]);
+    assert.equal(r.entries.length, 1);
+    assert.equal(r.entries[0].ref, autoRef("medidor", D, false));
+    assert.equal(r.doubts.length, 0);
+});
+
+test("Huérfanas: solo de esta ventana y sin candidata conocida (válida, inválida o absorbida)", () => {
+    // Una hora propia de la jornada no es huérfana para la noche.
+    const deDia = manual("endpoints", "20:00", "22:00", { external_ref: autoRef("endpoints", D, false) });
+    const noche = resolveWindow({ window: win("night"), candidates: [cand("ia-agent", [seg("21:00", "23:00")], { autonomous: true })], existing: [deDia], projects: PROJECTS, now: at("23:59") });
+    assert.equal(noche.entries.length, 1);
+    assert.equal(noche.doubts.filter((d) => d.kind === "hora_huerfana").length, 0);
+    // Un proyecto que pasó a inactivo no deja huérfana su hora: los otros clientes van en paralelo.
+    const projects = new Map(PROJECTS);
+    projects.set("banco", project("banco", PAP, { status: "completed" }));
+    const vieja = manual("banco", "09:00", "11:00", { external_ref: autoRef("banco", D, false) });
+    const r = resolveWindow({ window: win(), candidates: [cand("banco", [seg("09:00", "11:00")]), cand("ia-agent", [seg("10:00", "12:00")])], existing: [vieja], projects, now: at("23:00") });
+    assert.ok(r.entries.some((e) => e.project.id === "ia-agent"));
+    assert.equal(r.doubts.filter((d) => d.kind === "hora_huerfana").length, 0);
+});
+
+test("adminMask: coordinar sesiones de clientes es trabajo; solo el aviso de una duda es administración", () => {
+    const coordinar = mask([
+        userMsg("tomalo vos y archivá al terminar"), assistant(["mcp__ccd_session_mgmt__list_sessions", {}]), toolResult(),
+        assistant(["Bash", { command: "git log -3" }]), toolResult(), assistant(["mcp__ccd_session_mgmt__archive_session", { session_id: "x" }]), toolResult(),
+    ]);
+    assert.deepEqual(coordinar, [false, false, false, false, false, false, false]);
+    const respuesta = mask([peerMsg("¿terminaste con enlace.cpp?"), assistant(["mcp__ccd_session_mgmt__send_message", { message: "sí" }]), toolResult(), assistant()]);
+    assert.deepEqual(respuesta, [false, false, false, false]);
+});
+
+test("adminMask: después del aviso de una duda, un cron que retoma el trabajo cuenta", () => {
+    const m = mask([
+        peerMsg("[Agente de horas de MyKimai] duda…"), assistant(),
+        { type: "user", isMeta: true, promptSource: "sdk", message: { content: "Vigilancia nocturna de Florida01" } },
+        assistant(["Bash", { command: "ssh florida01 tail -n 50 log" }]), toolResult(), assistant(["Edit", { file_path: "firmware/anillo.c" }]),
+    ]);
+    assert.deepEqual(m, [true, true, true, false, false, false]);
+});
+
+test("adminMask: el trabajo intercalado entre dos bloques de administración cuenta", () => {
+    const m = mask([
+        userMsg("seguí con el bot"), assistant(["Read", { file_path: "C:/Users/loyol/.mykimai/sync/dudas.json" }]), toolResult(),
+        assistant(["Edit", { file_path: "bot.ts" }]), toolResult(), assistant(["Bash", { command: "npm test" }]), toolResult(),
+        assistant(["mcp__ccd_session_mgmt__send_message", { message: "[Agente de horas de MyKimai] duda" }]), toolResult(),
+        assistant(["Edit", { file_path: "C:/Users/loyol/.mykimai/sync/dudas.json" }]), toolResult(), assistant(),
+    ]);
+    assert.deepEqual(m, [true, true, true, false, false, false, false, true, true, true, true, true]);
+});
+
+test("isBillingToolUse: desarrollar el agente no es administración (heredocs, --check, commits, grep)", () => {
+    const bash = (command) => isBillingToolUse({ name: "Bash", input: { command } });
+    assert.equal(bash("node --check C:/Users/loyol/.claude/skills/cerrar-jornada/scripts/sync.mjs"), false);
+    assert.equal(bash("node - \"$PWD/Habilidades/cerrar-jornada/scripts/sync.mjs\" <<'EOF'\nconst x = 1;\nEOF"), false);
+    assert.equal(bash("git add Habilidades && git commit -m \"docs: ~/.mykimai/proyectos.json\""), false);
+    assert.equal(bash("grep -rn \"~/.mykimai/sync\" Habilidades/"), false);
+    assert.equal(bash("cd C:/x && node C:/Users/loyol/.claude/skills/cerrar-jornada/scripts/jornada.mjs --date 2026-10-01"), true);
+    assert.equal(isBillingToolUse({ name: "Read", input: { file_path: "C:/repo/Habilidades/cerrar-jornada/SKILL.md" } }), false);
+    assert.equal(humanPrompt(userMsg("The app was quit while you were working. Please continue from where you left off.")), null);
 });
 
 test("Actividad continua de 2 h da una sola entrada de 120 min", () => {

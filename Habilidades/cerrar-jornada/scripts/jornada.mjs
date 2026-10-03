@@ -121,7 +121,7 @@ for (const { file, agent } of files) {
 const email = git(["config", "user.email"], cwd);
 const commits = [];
 const log = email
-    ? git(["log", "--all", `--since=${new Date(dayStart.getTime() - 86_400_000).toISOString()}`, `--author=${email}`, "--format=%h%x09%aI%x09%s"], cwd)
+    ? git(["log", "--exclude=refs/stash", "--all", `--since=${new Date(dayStart.getTime() - 86_400_000).toISOString()}`, `--author=${email}`, "--format=%h%x09%aI%x09%s"], cwd)
     : null;
 const seenCommits = new Set();
 for (const line of (log ?? "").split("\n").filter(Boolean)) {
@@ -129,7 +129,8 @@ for (const line of (log ?? "").split("\n").filter(Boolean)) {
     const t = new Date(when);
     if (t < dayStart || t >= dayEnd || seenCommits.has(hash)) continue;
     seenCommits.add(hash);
-    commits.push({ hash, time: toArHm(t), subject: subject.join("\t") });
+    // La lista de commits es solo la de la fecha (los de la pausa vecina solo dan continuidad).
+    if (t >= DAY.start && t < NIGHT.end) commits.push({ hash, time: toArHm(t), subject: subject.join("\t") });
     points.push({ t, kind: "commit", label: `${hash} ${subject.join("\t")}` });
 }
 
@@ -161,10 +162,12 @@ function jornada(nearPts, pts, autonomous, window) {
 
 // Los tramos se arman con la actividad de la ventana y la de la pausa vecina, y se recortan a la
 // ventana (windowSegments); la evidencia es solo la de adentro.
-const near = (w) => points.filter((p) => p.t.getTime() >= w.start - PAUSE_MS && p.t.getTime() < w.end + PAUSE_MS);
+// La noche no mira después de las 07:00 (igual que el agente: el resultado no depende de cuándo se corre).
+const near = (w) => points.filter((p) => p.t.getTime() >= w.start - PAUSE_MS && p.t.getTime() < w.end + (w === NIGHT ? 0 : PAUSE_MS));
 const inside = (w) => points.filter((p) => p.t.getTime() >= w.start && p.t.getTime() < w.end);
 const entries = [jornada(near(DAY), inside(DAY), false, DAY), dropNight ? null : jornada(near(NIGHT), inside(NIGHT), true, NIGHT)]
     .filter(Boolean);
+const dated = points.filter((p) => p.t.getTime() >= DAY.start && p.t.getTime() < NIGHT.end);
 const discarded = entries.filter((e) => e.minutes < MIN_WORKED_MIN).map((e) => `${e.from_to} (${e.minutes} min trabajados${e.autonomous ? ", autónomo" : ""})`);
 
 console.log(JSON.stringify({
@@ -177,8 +180,8 @@ console.log(JSON.stringify({
     evidence: {
         session_files: files.filter((f) => !f.agent).length,
         subagent_files: files.filter((f) => f.agent).length,
-        session_events: points.filter((p) => p.kind === "session").length,
-        agent_events: points.filter((p) => p.kind === "agent").length,
+        session_events: dated.filter((p) => p.kind === "session").length,
+        agent_events: dated.filter((p) => p.kind === "agent").length,
         commits: commits.length,
     },
     // Menos de 30 min trabajados: no se registran.

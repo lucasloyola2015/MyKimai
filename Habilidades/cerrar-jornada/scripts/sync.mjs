@@ -30,7 +30,7 @@ import { createInterface } from "node:readline";
 import {
     DEFAULT_PAUSE_MIN, DOUBT_PREFIX, MIN_WORKED_MIN,
     addDays, adminMask, advanceLastFullDay, agentTaskText, arYmd, autoRef, dayWindow, decideAction,
-    fingerprint, frozenReason, humanPrompt, isSyncPrompt, matchFolder, maxOf, minOf, normPath, rawUserText,
+    fingerprint, frozenReason, humanPrompt, isSyncPrompt, matchFolder, matchesEntry, maxOf, minOf, normPath, ownRecord, rawUserText,
     resolveWindow, spread, toArHm, toArIso, toEntryTimes, turnEvent, windowSegments, windowsToProcess,
     workedMinutes,
 } from "./sync-core.mjs";
@@ -193,57 +193,166 @@ async function firstCwdOf(file) {
     return null;
 }
 
+const readMeta = (file) => {
+    try { return JSON.parse(readFileSync(file.replace(/\.jsonl$/, ".meta.json"), "utf8")); } catch { return null; }
+};
+
+/** Prefijo común más largo de varios textos, cortado en un espacio. */
+function commonPrefix(texts) {
+    if (texts.length < 2) return "";
+    let p = texts[0];
+    for (const t of texts.slice(1)) {
+        let i = 0;
+        while (i < p.length && i < t.length && p[i] === t[i]) i++;
+        p = p.slice(0, i);
+    }
+    const cut = p.lastIndexOf(" ");
+    return cut > 0 ? p.slice(0, cut) : "";
+}
+
 /**
- * Qué hizo un subagente: la descripción de su .meta.json; en los de workflows esa descripción es
- * una etiqueta interna ("verificar:datos"), así que primero va su encargo real.
+ * Qué hizo cada subagente (archivo → texto). Los de un mismo workflow comparten un preámbulo largo:
+ * se les saca el prefijo común para que quede lo propio de cada uno, junto a su etiqueta. Los demás:
+ * la descripción de su .meta.json o, si no hay, su encargo.
  */
-function agentDescription(file, task) {
-    let meta = null;
-    try { meta = JSON.parse(readFileSync(file.replace(/\.jsonl$/, ".meta.json"), "utf8")); } catch { /* sin meta */ }
-    if (meta?.agentType === "workflow-subagent" && task) return task;
-    return meta?.description ?? task;
+function describeAgents(tasks) {
+    const out = new Map();
+    const byWorkflow = new Map();
+    for (const [file, text] of tasks) {
+        const meta = readMeta(file);
+        if (meta?.agentType === "workflow-subagent") {
+            const dir = dirname(file);
+            byWorkflow.set(dir, [...(byWorkflow.get(dir) ?? []), { file, text, meta }]);
+        } else {
+            out.set(file, meta?.description ?? text?.slice(0, 200) ?? null);
+        }
+    }
+    for (const group of byWorkflow.values()) {
+        const prefix = commonPrefix(group.map((g) => g.text ?? "").filter(Boolean));
+        for (const { file, text, meta } of group) {
+            const own = (text ?? "").slice(prefix.length).trim().slice(0, 200);
+            out.set(file, [meta?.description, own].filter(Boolean).join(": ") || null);
+        }
+    }
+    return out;
+}
+
+/** Un comando de shell que HACE algo (no solo mira): commitear, compilar, testear, correr, mover o crear. */
+const MUTATING = /\b(git\s+(commit|push|add|merge|rebase|checkout|switch|cherry-pick|revert|reset|tag|stash|worktree\s+add)|npm|npx|pnpm|yarn|python3?|node|pip|dotnet|cargo|make|pio|platformio|sed\s+-i|tee|mv|cp|rm|mkdir|touch)\b/;
+
+/**
+ * Carpetas donde TRABAJA un uso de herramienta: los archivos que edita o escribe, y el `cd` /
+ * `git -C` / Set-Location a rutas absolutas de un comando que hace algo ahí. Leer, buscar o correr
+ * `git -C … log` en otro repo es investigar, no trabajar para ese cliente.
+ */
+function workDirs(entry) {
+    if (entry.type !== "assistant" || !Array.isArray(entry.message?.content)) return [];
+    const abs = (p) => String(p ?? "").replace(/^\/([a-zA-Z])\//, "$1:/");
+    const isAbs = (p) => /^[A-Za-z]:[\\/]/.test(p);
+    const out = [];
+    for (const u of entry.message.content) {
+        if (u.type !== "tool_use") continue;
+        const input = u.input ?? {};
+        if (["Edit", "Write", "MultiEdit", "NotebookEdit"].includes(u.name)) {
+            const p = abs(input.file_path ?? input.notebook_path);
+            if (isAbs(p)) out.push(dirname(p));
+        } else if ((u.name === "Bash" || u.name === "PowerShell") && MUTATING.test(String(input.command ?? ""))) {
+            for (const m of String(input.command).matchAll(/(?:\bcd|\bgit\s+-C|Set-Location|\bpushd)\s+(?:"([^"]+)"|'([^']+)'|([^\s;&|]+))/g)) {
+                const p = abs(m[1] ?? m[2] ?? m[3]);
+                if (isAbs(p)) out.push(p);
+            }
+        }
+    }
+    return out;
+}
+
+/** El proyecto mapeado donde más se trabajó en un grupo de eventos (una carpeta de muestra), o null. */
+function dominantWorkDir(map, dirs) {
+    const tally = new Map();
+    for (const dir of dirs) {
+        const pid = matchFolder(map, dir)?.entry?.project_id;
+        if (!pid) continue;
+        const t = tally.get(pid) ?? { n: 0, dir };
+        t.n++;
+        tally.set(pid, t);
+    }
+    const ranked = [...tally.values()].sort((a, b) => b.n - a.n);
+    // Con un empate no hay dominante claro: queda la carpeta de arranque.
+    return ranked.length && (ranked.length === 1 || ranked[0].n > ranked[1].n) ? ranked[0].dir : null;
+}
+
+/** Un mensaje que llegó con la sesión ocupada (se encola como attachment) es un mensaje de usuario más. */
+function asUserMessage(e) {
+    const a = e.attachment;
+    if (e.type !== "attachment" || a?.type !== "queued_command" || a.commandMode !== "prompt") return e;
+    return { type: "user", isMeta: a.isMeta, origin: a.origin, message: { content: a.prompt }, timestamp: e.timestamp ?? a.timestamp, sessionId: e.sessionId, cwd: e.cwd };
 }
 
 /**
  * Eventos de usuario/asistente dentro de [from, to). Cada evento lleva la carpeta donde ARRANCÓ su
- * sesión (un `cd` a otro repo no cambia de cliente; los subagentes, la de su sesión madre) y la de
- * su línea (por si la de arranque no es de ningún proyecto). Se descartan las sesiones del propio
- * agente (marca en su PRIMER mensaje) y la administración de horas (adminMask).
+ * sesión (los subagentes, la de su sesión madre), la de su línea, y la carpeta donde TRABAJÓ su turno
+ * (o su subagente) si fue en otro proyecto. Se descartan las sesiones del propio agente (marca en su
+ * PRIMER mensaje) y la administración de horas (adminMask), pero el pedido de un turno que arrancó
+ * con administración queda como evidencia en el primer evento que sí cuenta.
  */
-async function readTranscripts(files, from, to) {
+async function readTranscripts(files, from, to, map) {
     const raw = [];
     const marked = new Set();
     const startCwd = new Map();
-    const agentTasks = new Map();
+    const agentTexts = new Map();
     for (const { file, agent } of files) {
         const rl = createInterface({ input: createReadStream(file, "utf8"), crlfDelay: Infinity });
         const events = [];
         let task = null;
         let firstUserSeen = false;
+        let turn = 0;
         for await (const line of rl) {
             let e;
-            try { e = JSON.parse(line); } catch { continue; }
+            try { e = asUserMessage(JSON.parse(line)); } catch { continue; }
             if (e.type !== "user" && e.type !== "assistant") continue;
             if (!agent && e.sessionId && e.cwd && !startCwd.has(e.sessionId)) startCwd.set(e.sessionId, e.cwd);
             if (!agent && !firstUserSeen && e.type === "user") {
                 firstUserSeen = true;
                 if (isSyncPrompt(rawUserText(e))) marked.add(e.sessionId);
             }
-            if (agent && !task && e.type === "user") task = agentTaskText(rawUserText(e));
+            if (agent && !task && e.type === "user") task = agentTaskText(rawUserText(e), Infinity);
+            const kind = agent ? null : turnEvent(e);
+            if (kind && kind.kind !== "other" && events.length) turn++;
             events.push({
                 t: e.timestamp ? Date.parse(e.timestamp) : NaN,
                 session: e.sessionId,
                 lineCwd: e.cwd ?? null,
                 prompt: agent ? null : humanPrompt(e),
-                turn: agent ? null : turnEvent(e),
+                kind,
+                turn,
+                dirs: workDirs(e),
             });
         }
-        const mask = agent ? null : adminMask(events.map((x) => x.turn));
+        // Dónde trabajó cada turno de la sesión. Los subagentes siguen la carpeta de su sesión madre:
+        // suelen investigar en otros repos (revisiones, comparaciones) sin trabajar para ese cliente.
+        const turnDir = new Map();
+        if (!agent) {
+            for (const id of new Set(events.map((ev) => ev.turn))) {
+                turnDir.set(id, dominantWorkDir(map, events.filter((ev) => ev.turn === id).flatMap((ev) => ev.dirs)));
+            }
+        }
+        const mask = agent ? null : adminMask(events.map((x) => x.kind));
+        // El pedido de un turno que arrancó con administración pasa al primer evento que cuenta.
+        const carry = new Map();
+        events.forEach((ev, i) => {
+            if (!mask?.[i] || !ev.prompt) return;
+            const next = events.findIndex((x, j) => j > i && x.turn === ev.turn && !mask[j]);
+            if (next >= 0 && !events[next].prompt && !carry.has(next)) carry.set(next, ev);
+        });
         events.forEach((ev, i) => {
             if (mask?.[i] || !(ev.t >= from && ev.t < to)) return;
-            raw.push({ t: ev.t, session: ev.session, lineCwd: ev.lineCwd, kind: agent ? "agent" : "session", prompt: ev.prompt, file });
+            const carried = carry.get(i);
+            raw.push({
+                t: ev.t, session: ev.session, lineCwd: ev.lineCwd, workCwd: turnDir.get(ev.turn), kind: agent ? "agent" : "session",
+                prompt: ev.prompt ?? carried?.prompt ?? null, promptT: ev.prompt ? ev.t : carried?.t, file,
+            });
         });
-        if (agent) agentTasks.set(file, agentDescription(file, task));
+        if (agent) agentTexts.set(file, task);
     }
     // Subagentes cuya sesión madre no se leyó (no cambió en el rango): su carpeta de arranque.
     for (const p of raw) {
@@ -255,15 +364,22 @@ async function readTranscripts(files, from, to) {
         .filter((p) => !marked.has(p.session))
         .map((p) => ({ ...p, cwd: startCwd.get(p.session) ?? p.lineCwd }))
         .filter((p) => p.cwd);
-    return { points, agentTasks };
+    return { points, agentTasks: describeAgents(agentTexts) };
 }
 
 /**
- * Carpeta y mapeo de un evento: la de arranque de su sesión; si esa no es de ningún proyecto (sin
- * mapa o ignorada) y la de la línea sí, la de la línea (no se pierde trabajo en un repo de cliente).
+ * Carpeta y mapeo de un evento. Manda donde TRABAJÓ su turno si fue en otro proyecto (una sesión
+ * abierta en un repo de Agustín que trabaja en el de Jeremías es trabajo para Jeremías); si no, la
+ * de arranque de su sesión; y si esa no es de ningún proyecto (sin mapa o ignorada) y la de la línea
+ * sí, la de la línea (no se pierde trabajo en un repo de cliente).
  */
 function placeOf(map, p) {
     const start = classify(map, p.cwd);
+    if (p.workCwd) {
+        const work = classify(map, p.workCwd);
+        const workPid = work.hit?.entry?.project_id;
+        if (workPid && workPid !== start.hit?.entry?.project_id) return work;
+    }
     if (start.hit?.entry?.project_id || !p.lineCwd || p.lineCwd === p.cwd) return start;
     const line = classify(map, p.lineCwd);
     return line.hit?.entry?.project_id ? line : start;
@@ -279,6 +395,11 @@ const repoRoot = (cwd) => memo(`root:${cwd}`, () => {
     const common = git(["rev-parse", "--path-format=absolute", "--git-common-dir"], cwd);
     return common ? dirname(resolve(cwd, common)) : null;
 });
+/** La carpeta del repo de un worktree de Claude Code (lo anterior a /.claude/worktrees/), o null. */
+const worktreeParent = (p) => {
+    const head = String(p).split(/[\\/]\.claude[\\/]worktrees[\\/]/)[0];
+    return head !== String(p) ? head : null;
+};
 /** Carpeta del checkout (worktree o submódulo): ahí se leen sus commits. */
 const toplevel = (cwd) => memo(`top:${cwd}`, () => (existsSync(cwd) ? git(["rev-parse", "--show-toplevel"], cwd) : null));
 /** Submódulos de un repo (sus commits son trabajo del mismo proyecto). */
@@ -308,7 +429,8 @@ function commitRoots(sessionCwds, map) {
         roots.set(normPath(root), root);
         for (const sub of submodulesOf(root)) add(sub);
     };
-    for (const cwd of sessionCwds) add(toplevel(cwd));
+    // Si el worktree ya no existe, su repo principal.
+    for (const cwd of sessionCwds) add(toplevel(cwd) ?? (worktreeParent(cwd) && toplevel(worktreeParent(cwd))));
     for (const [path, entry] of Object.entries(map)) {
         if (!entry?.project_id || !existsSync(path)) continue;
         if (existsSync(join(path, ".git"))) add(resolve(path));
@@ -351,9 +473,11 @@ const localMapping = (root) => memo(`local:${root}`, () => {
 });
 
 function classify(map, cwd) {
-    const root = repoRoot(cwd);
-    const local = localMapping(root);
-    const hit = local ? { key: normPath(root), path: root, entry: local } : matchFolder(map, cwd, root);
+    // Sin git (worktree ya borrado, carpeta que no es repo): la carpeta antes de /.claude/worktrees/.
+    const root = repoRoot(cwd) ?? worktreeParent(cwd);
+    const localRoot = [root, cwd].find((r) => localMapping(r));
+    const local = localMapping(localRoot);
+    const hit = local ? { key: normPath(localRoot), path: localRoot, entry: local } : matchFolder(map, cwd, root);
     return { folder: root ?? cwd, hit };
 }
 
@@ -380,7 +504,7 @@ function evidenceOf(points, agentTasks, allPoints) {
     // Sin repetir el mismo pedido, y repartido a lo largo de toda la franja (no solo el arranque).
     const prompts = uniq(sorted.filter((p) => p.prompt).map((p) => p.prompt)).map((text) => {
         const p = sorted.find((x) => x.prompt === text);
-        return `${toArHm(p.t)} ${text}`;
+        return `${toArHm(p.promptT ?? p.t)} ${text}`;
     });
     const commits = sorted.filter((p) => p.kind === "commit").map((p) => p.label);
     const tasks = uniq([...new Set(points.filter((p) => p.kind === "agent").map((p) => p.file))].map((f) => agentTasks.get(f)).filter(Boolean));
@@ -431,8 +555,9 @@ async function plan(opts) {
     const from = minOf(spans.map((s) => s.start)) - pauseMs;
     const to = maxOf(spans.map((s) => s.end)) + pauseMs;
 
-    const { points: sessionPoints, agentTasks } = await readTranscripts(listTranscripts(from), from, to);
-    const points = [...sessionPoints, ...readCommits(commitRoots(uniq(sessionPoints.map((p) => p.cwd)), map), from, to)];
+    const { points: sessionPoints, agentTasks } = await readTranscripts(listTranscripts(from), from, to, map);
+    const folders = uniq(sessionPoints.flatMap((p) => [p.cwd, p.lineCwd, p.workCwd]).filter(Boolean));
+    const points = [...sessionPoints, ...readCommits(commitRoots(folders, map), from, to)];
     const placed = points.map((p) => ({ ...p, ...placeOf(map, p) }));
 
     const projectList = (await apiOrThrow("list_projects", { include_inactive: true })).projects;
@@ -451,12 +576,20 @@ async function plan(opts) {
     const byRef = (ref) => entries.find((x) => x.external_ref === ref);
 
     const seenDoubts = new Set();
+    // Fechas salteadas por llevar más de una semana sin correr: duda, para que no se pierdan en silencio.
+    if (picked.skipped) {
+        const { from: a, to: z } = picked.skipped;
+        result.doubts.push({ kind: "dias_salteados", ref: `salteados:${a}:${z}`, date: a,
+            message: `No cargué las fechas del ${a} al ${z}: el agente estuvo más de una semana sin correr.` });
+    }
     for (const w of spans) {
         const byProject = new Map();
         const unmapped = new Map();
         for (const p of placed) {
             // Los eventos de la pausa vecina solo dan continuidad: la pertenencia la decide el recorte.
-            if (!(p.t >= w.start - pauseMs && p.t < w.end + pauseMs)) continue;
+            // La noche no mira después de las 07:00 (a la hora de la corrida eso todavía no pasó: el
+            // resultado no puede depender de cuándo corre).
+            if (!(p.t >= w.start - pauseMs && p.t < w.end + (w.scope === "night" ? 0 : pauseMs))) continue;
             const inside = p.t >= w.start && p.t < w.end;
             if (p.hit?.entry?.ignorar) continue;
             if (!p.hit?.entry?.project_id) {
@@ -488,16 +621,20 @@ async function plan(opts) {
             const segments = windowSegments(times, w, pauseMin);
             if (!segments.length) continue;
             const rec = stateEntries[c.ref];
-            if (rec?.member_of) {
-                const mainFrozen = frozenReason(byRef(rec.member_of), stateEntries[rec.member_of]);
-                if (mainFrozen) {
-                    discard(c, segments, `ya va unificada en ${rec.member_of}, que quedó así: ${mainFrozen}`);
+            const current = byRef(c.ref);
+            if (rec?.member_of && !current) {
+                // Ya fue unificada en otra hora: si Lucas borró esa hora, no vuelve sola por acá. Si
+                // la hora sigue (aunque la haya editado), esta pasa y se recorta contra ella.
+                if (!byRef(rec.member_of)) {
+                    discard(c, segments, `iba unificada en ${rec.member_of}, que borraste`);
                     continue;
                 }
             } else {
-                const current = byRef(c.ref);
-                // Sin registro local pero con la misma referencia: se adopta si coincide (decideAction).
-                const frozen = current && !rec ? null : frozenReason(current, rec);
+                const own = ownRecord(rec);
+                // Sin registro local pero con la misma referencia: se adopta solo si coincide exacta.
+                const frozen = current && !own
+                    ? (matchesEntry(current, segments, c.project_id, c.autonomous) ? null : "existe con la misma referencia pero no la registró este agente")
+                    : frozenReason(current, own);
                 if (frozen) {
                     if (current) frozenRefs.add(c.ref);
                     discard(c, segments, frozen);
@@ -515,7 +652,7 @@ async function plan(opts) {
 
         for (const e of resolved.entries) {
             const current = byRef(e.ref);
-            const decision = decideAction(e, current, stateEntries[e.ref]);
+            const decision = decideAction(e, current, ownRecord(stateEntries[e.ref]));
             result.actions.push({
                 ...decision,
                 ref: e.ref,
@@ -560,6 +697,15 @@ async function plan(opts) {
 }
 
 // ── apply ────────────────────────────────────────────────────────────────────
+/** Los tramos trabajados de una acción del plan (inicio, fin y pausas). */
+function toSegments(a) {
+    const ms = (iso) => Date.parse(iso);
+    const cuts = [ms(a.start_time), ...a.breaks.flatMap((b) => [ms(b.start_time), ms(b.end_time)]), ms(a.end_time)];
+    const segs = [];
+    for (let i = 0; i < cuts.length; i += 2) segs.push([cuts[i], cuts[i + 1]]);
+    return segs;
+}
+
 async function readStdin() {
     let text = "";
     for await (const chunk of process.stdin) text += chunk;
@@ -611,7 +757,7 @@ async function apply(opts) {
     const blocked = new Set();
     for (const a of actions) {
         const current = fresh.find((e) => e.external_ref === a.ref);
-        const rec = state.entries[a.ref];
+        const rec = ownRecord(state.entries[a.ref]);
         let kind = a.action;
         let reason = a.reason;
         if (kind === "create" && (current || rec)) {
@@ -619,9 +765,11 @@ async function apply(opts) {
             reason = current ? "ya existe (se cargó después del plan)" : "la borraste; no la vuelvo a crear";
         } else if (kind === "update" || kind === "noop") {
             const frozen = frozenReason(current, rec);
-            if (!current || (frozen && !(kind === "noop" && !rec))) {
+            // Adoptar una hora sin registro local solo si sigue idéntica a la del plan.
+            const adoptable = kind === "noop" && !rec && current && matchesEntry(current, toSegments(a), a.project.id, a.autonomous);
+            if (!current || (frozen && !adoptable)) {
+                reason = !current ? "ya no existe" : kind === "noop" && !rec ? "cambió desde el plan" : frozen;
                 kind = "skip";
-                reason = frozen ?? "ya no existe";
             }
         }
         if (kind === "skip" || (kind === "noop" && rec)) {
@@ -682,8 +830,13 @@ async function apply(opts) {
         state.last_run = { at: new Date().toISOString(), plan: planFile, errors: results.filter((r) => r.action === "error").length, retries: results.filter((r) => r.action === "retry").length };
         saveState();
         writeJson(APPLY_FILE, out);
-        // Las dudas quedan guardadas ya, aunque el paso de dudas no llegue a correr.
-        out.dudas_pending = mergeDudas(p, results).pending;
+        // Las dudas quedan guardadas ya, aunque el paso de dudas no llegue a correr. Si dudas.json
+        // está roto, lo cargado se informa igual (el paso de dudas lo va a señalar).
+        try {
+            out.dudas_pending = mergeDudas(p, results).pending;
+        } catch (err) {
+            out.dudas_error = err.message;
+        }
     }
     return out;
 }
@@ -752,6 +905,7 @@ const QUESTION = {
     hora_desmedida: "si quedó un timer prendido, corregí esa hora en Mis Horas.",
     choca_con_timer: "corregí ese timer en Mis Horas y decime si cargo esta actividad.",
     hora_huerfana: "¿la corrijo, la borro o la dejo así?",
+    dias_salteados: "¿las cargo? (una por una, con plan --date)",
     error_al_cargar: "¿cómo lo resuelvo?",
 };
 

@@ -193,9 +193,10 @@ export function toEntryTimes(segs) {
  */
 export const sameClient = (p, q) => Boolean(p?.client?.id) && p.client.id === q?.client?.id;
 
-/** Evidencia de varias candidatas unificadas, con el proyecto de cada línea. */
+/** Evidencia de varias candidatas unificadas, con el proyecto de cada línea (una sola vez). */
 function mergeEvidence(tagged) {
     const out = {
+        tagged: true,
         events: { session: 0, agent: 0, commits: 0 },
         prompts: [], prompts_total: 0, context_prompts: [], agent_tasks: [], agent_tasks_total: 0,
         commits: [], commits_total: 0, sessions: [],
@@ -203,20 +204,17 @@ function mergeEvidence(tagged) {
     const tag = (name) => (s) => (/^\d{2}:\d{2} /.test(s) ? `${s.slice(0, 6)}[${name}] ${s.slice(6)}` : `[${name}] ${s}`);
     for (const [name, ev] of tagged) {
         if (!ev) continue;
+        const mark = ev.tagged ? (s) => s : tag(name);
         for (const k of Object.keys(out.events)) out.events[k] += ev.events?.[k] ?? 0;
-        for (const k of ["prompts", "context_prompts", "agent_tasks", "commits"]) out[k].push(...(ev[k] ?? []).map(tag(name)));
+        for (const k of ["prompts", "context_prompts", "agent_tasks", "commits"]) out[k].push(...(ev[k] ?? []).map(mark));
         for (const k of ["prompts_total", "agent_tasks_total", "commits_total"]) out[k] += ev[k] ?? ev[k.replace("_total", "")]?.length ?? 0;
         out.sessions.push(...(ev.sessions ?? []));
     }
     return out;
 }
 
-/**
- * Une las candidatas del MISMO cliente que se superponen (y las que se encadenan con ellas) en una
- * sola, en el proyecto con más tiempo trabajado. La hora unificada se arma con los EVENTOS de todas
- * (no con sus tramos): un hueco de menos de una pausa entre un proyecto y el otro es trabajo continuo.
- */
-export function unifySameClient(candidates, projects, window, pauseMin = DEFAULT_PAUSE_MIN) {
+/** Una pasada de unificación: agrupa las candidatas del mismo cliente cuyos tramos se cruzan. */
+function unifyOnce(candidates, projects, window, pauseMin, preferRefs) {
     const parent = candidates.map((_, i) => i);
     const find = (i) => (parent[i] === i ? i : (parent[i] = find(parent[i])));
     for (let i = 0; i < candidates.length; i++) {
@@ -232,7 +230,11 @@ export function unifySameClient(candidates, projects, window, pauseMin = DEFAULT
     const name = (c) => projects.get(c.project_id)?.name ?? c.project_id;
     return [...groups.values()].map((group) => {
         if (group.length === 1) return group[0];
-        const [main, ...others] = [...group].sort((x, y) => workedMinutes(y.segments) - workedMinutes(x.segments) || x.firstEvent - y.firstEvent);
+        // La principal: la que ya tiene su hora cargada y ajustable (así se actualiza esa hora y no
+        // queda otra suelta); si no, la de más tiempo trabajado.
+        const [main, ...others] = [...group].sort((x, y) =>
+            Number(preferRefs.has(y.ref)) - Number(preferRefs.has(x.ref)) ||
+            workedMinutes(y.segments) - workedMinutes(x.segments) || x.firstEvent - y.firstEvent);
         const withTimes = group.every((c) => Array.isArray(c.times)) && window;
         return {
             ...main,
@@ -242,9 +244,28 @@ export function unifySameClient(candidates, projects, window, pauseMin = DEFAULT
                 : mergeSegments(group.flatMap((c) => c.segments)),
             firstEvent: minOf(group.map((c) => c.firstEvent)),
             evidence: mergeEvidence([main, ...others].map((c) => [name(c), c.evidence])),
-            unified: others.map((c) => ({ ref: c.ref, project_id: c.project_id, project: name(c) })),
+            unified: [
+                ...(main.unified ?? []),
+                ...others.flatMap((c) => [{ ref: c.ref, project_id: c.project_id, project: name(c) }, ...(c.unified ?? [])]),
+            ],
         };
     });
+}
+
+/**
+ * Une las candidatas del MISMO cliente que se superponen (y las que se encadenan con ellas) en una
+ * sola. La hora unificada se arma con los EVENTOS de todas (no con sus tramos): un hueco de menos de
+ * una pausa entre un proyecto y el otro es trabajo continuo. Como al unificar la hora puede crecer y
+ * cruzarse con otra candidata del mismo cliente, se repite hasta que no haya nada más que unir.
+ * `preferRefs`: refs con hora propia ya cargada y ajustable (se prefieren como principal).
+ */
+export function unifySameClient(candidates, projects, window, pauseMin = DEFAULT_PAUSE_MIN, preferRefs = new Set()) {
+    let current = candidates;
+    for (;;) {
+        const next = unifyOnce(current, projects, window, pauseMin, preferRefs);
+        if (next.length === current.length) return next;
+        current = next;
+    }
 }
 
 const describe = (e) => `"${e.title ?? "(sin título)"}" (${e.project.name}, ${toArHm(Date.parse(e.start_time))}–${e.end_time ? toArHm(Date.parse(e.end_time)) : "en curso"})`;
@@ -265,7 +286,7 @@ const describe = (e) => `"${e.title ?? "(sin título)"}" (${e.project.name}, ${t
  * - Menos de 30 minutos trabajados no se registra.
  *
  * @param {object} p
- * @param {{start:number,end:number,date?:string}} p.window
+ * @param {{start:number,end:number,date?:string,scope?:"day"|"night"}} p.window
  * @param {Array} p.candidates  { ref, date, project_id, autonomous, segments, times?, firstEvent, evidence }
  * @param {Array} p.existing    entradas de la API (EntryView) que tocan la ventana
  * @param {Map}   p.projects    id → proyecto de la API (con client y is_billable)
@@ -291,9 +312,17 @@ export function resolveWindow({ window, candidates, existing, projects, now, pau
             valid.push(c);
         }
     }
-    const unified = unifySameClient(valid, projects, window, pauseMin).sort((a, b) => a.firstEvent - b.firstEvent || a.ref.localeCompare(b.ref));
+    // Horas propias ya cargadas y ajustables: si su proyecto entra en una unificación, es la principal.
+    const preferRefs = new Set(existing.map((e) => e.external_ref ?? "").filter((r) => r.startsWith(AUTO_REF_PREFIX) && !frozenRefs.has(r)));
+    const unified = unifySameClient(valid, projects, window, pauseMin, preferRefs).sort((a, b) => a.firstEvent - b.firstEvent || a.ref.localeCompare(b.ref));
 
     const refs = new Set(unified.map((c) => c.ref));
+    // Refs que alguna candidata de esta ventana conoce (válidas, inválidas o absorbidas al unificar).
+    const knownRefs = new Set([...candidates.map((c) => c.ref), ...unified.flatMap((c) => (c.unified ?? []).map((u) => u.ref))]);
+    const ofThisWindow = (ref) => {
+        const m = /^auto:[^:]+:(\d{4}-\d{2}-\d{2})(:autonomo)?$/.exec(ref ?? "");
+        return Boolean(m) && m[1] === window.date && Boolean(m[2]) === (window.scope === "night");
+    };
     const others = existing.filter((e) => !refs.has(e.external_ref ?? ""));
     const sane = (e) => e.end_time && Date.parse(e.end_time) - Date.parse(e.start_time) <= MAX_SANE_ENTRY_MIN * MIN;
     const segsOf = (e) => clipSegments(entrySegments(e, now), window.start, window.end);
@@ -308,8 +337,12 @@ export function resolveWindow({ window, candidates, existing, projects, now, pau
         });
     }
     const obstacles = others.filter(sane).map((e) => ({ entry: e, project: projectOf(e), segs: segsOf(e) })).filter((o) => o.segs.length);
-    // Horas propias sin actividad propia en esta ventana ni congeladas: quedaron huérfanas.
-    const orphans = obstacles.filter((o) => (o.entry.external_ref ?? "").startsWith(AUTO_REF_PREFIX) && !frozenRefs.has(o.entry.external_ref));
+    // Horas propias de ESTA ventana que ninguna candidata conoce ni están congeladas: quedaron
+    // huérfanas (p. ej. se remapeó la carpeta). Las de otra ventana o fecha son obstáculos normales.
+    const orphans = obstacles.filter((o) => {
+        const ref = o.entry.external_ref ?? "";
+        return ofThisWindow(ref) && !knownRefs.has(ref) && !frozenRefs.has(ref);
+    });
 
     for (const c of unified) {
         const project = projects.get(c.project_id);
@@ -320,7 +353,8 @@ export function resolveWindow({ window, candidates, existing, projects, now, pau
         const unifiedNote = c.unified?.length ? ` (hora unificada con ${c.unified.map((u) => u.project).join(", ")})` : "";
         const notes = c.unified?.length ? [`unificada con ${c.unified.map((u) => u.project).join(", ")} (mismo cliente, en paralelo)`] : [];
 
-        const timer = suspicious.find((s) => s.project.id === c.project_id && s.entry.autonomous === c.autonomous && segmentsIntersect(segs, s.segs));
+        // La API no deja superponer el mismo proyecto, sea autónomo o no.
+        const timer = suspicious.find((s) => s.project.id === c.project_id && segmentsIntersect(segs, s.segs));
         if (timer) {
             doubts.push({ ...base, kind: "choca_con_timer", project, ...toEntryTimes(segs),
                 message: `"${project.name}"${unifiedNote} tiene ${workedMinutes(segs)} min de actividad, pero se cruza con ${describe(timer.entry)} del mismo proyecto, que parece un timer olvidado: no lo cargué.` });
@@ -401,6 +435,13 @@ function sameTimes(e, segs) {
         JSON.stringify(breaks) === JSON.stringify(t.breaks.map((b) => [ms(b.start_time), ms(b.end_time)]));
 }
 
+/** La hora cargada es exactamente esta (proyecto, clase, inicio, fin y pausas): se puede adoptar. */
+export const matchesEntry = (current, segments, projectId, autonomous) =>
+    current.project.id === projectId && Boolean(current.autonomous) === Boolean(autonomous) && sameTimes(current, segments);
+
+/** El registro local de una ref, salvo que sea solo la marca de "unificada en otra" (no es propio). */
+export const ownRecord = (rec) => (rec?.member_of ? undefined : rec);
+
 /**
  * Por qué una hora que ya tiene la referencia del agente queda congelada (o null si el agente
  * todavía puede ajustarla): facturada, editada a mano desde la última carga, o de origen desconocido.
@@ -446,7 +487,7 @@ export function humanPrompt(entry) {
     if (entry.type !== "user" || entry.isSidechain || entry.isMeta) return null;
     // Las sesiones en un worktree abren con un <system-reminder> pegado al pedido real.
     const text = (userText(entry) ?? "").replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, "").trim();
-    if (!text || text.startsWith("<") || /^(Another Claude session|\[Cross-session|\[Request interrupted|\[Image|\(Re-invocation|This session is being continued|Base directory for this skill)/.test(text)) return null;
+    if (!text || text.startsWith("<") || /^(Another Claude session|\[Cross-session|\[Request interrupted|\[Image|\(Re-invocation|This session is being continued|Base directory for this skill|The app was quit while you were working)/.test(text)) return null;
     return text.replace(/\s+/g, " ").trim().slice(0, 160);
 }
 
@@ -454,27 +495,59 @@ export function humanPrompt(entry) {
 export const DOUBT_PREFIX = "[Agente de horas de MyKimai]";
 
 /**
+ * Subcomandos de una línea de shell que se EJECUTAN (sin el cuerpo de un heredoc ni lo que sigue a
+ * `<<`, que es contenido, no un comando).
+ */
+function shellCommands(command) {
+    const lines = String(command ?? "").split("\n");
+    const head = [];
+    for (const line of lines) {
+        const i = line.indexOf("<<");
+        head.push(i >= 0 ? line.slice(0, i) : line);
+        if (i >= 0) break;
+    }
+    return head.join("\n").split(/&&|\|\||;|\||\n/).map((s) => s.trim()).filter(Boolean);
+}
+
+/** `node <ruta>/cerrar-jornada/scripts/(sync|jornada).mjs …` como comando (no como argumento de otro). */
+const runsAgent = (cmd) => {
+    const tokens = cmd.split(/\s+/).map((t) => t.replace(/^["']|["']$/g, ""));
+    if (!/^node(\.exe)?$/i.test(tokens[0] ?? "")) return false;
+    const at = tokens.findIndex((t, i) => i > 0 && !t.startsWith("-"));
+    // Flags de node antes del script que no lo ejecutan (chequear sintaxis, evaluar, leer stdin).
+    const flags = tokens.slice(1, at < 0 ? undefined : at);
+    return at > 0 && flags.every((t) => !/^(-e|--eval|-p|--print|--check|-c|-)$/.test(t)) &&
+        /cerrar-jornada[\\/]scripts[\\/](sync|jornada)\.mjs$/.test(tokens[at]);
+};
+
+/**
  * Uso de herramienta que es administración de horas: EJECUTAR el agente o el cierre de jornada,
- * las herramientas de MyKimai, repartir dudas (sesiones y barra lateral de Claude Desktop), el
- * skill cerrar-jornada y su procedimiento, o tocar los archivos de ~/.mykimai (mapa, plan, dudas).
- * Desarrollar el agente (editar, buscar o commitear su código) no lo es.
+ * las herramientas de MyKimai, mandar el aviso de una duda, el skill cerrar-jornada y su
+ * procedimiento instalado, o leer/escribir los archivos de ~/.mykimai (mapa, plan, dudas).
+ * Desarrollar el agente (editar, buscar, chequear o commitear su código) no lo es.
  */
 export function isBillingToolUse(use) {
     const input = use.input ?? {};
-    if (/^mcp__(mykimai|ccd_session_mgmt|ccd_sidebar)__/.test(use.name)) return true;
+    if (/^mcp__mykimai__/.test(use.name)) return true;
+    // De las herramientas de sesiones, solo el aviso de una duda: con las demás Lucas también
+    // coordina trabajo de clientes (son neutras: caen adentro del bloque del reparto si lo hay).
+    if (use.name === "mcp__ccd_session_mgmt__send_message") return String(input.message ?? "").includes(DOUBT_PREFIX);
     if (use.name === "Skill") return /cerrar-jornada/.test(String(input.skill ?? ""));
-    if (use.name === "ToolSearch") return /mykimai|ccd_session_mgmt|ccd_sidebar/.test(String(input.query ?? ""));
+    if (use.name === "ToolSearch") return /mykimai/.test(String(input.query ?? ""));
     if (use.name === "Bash" || use.name === "PowerShell") {
-        const cmd = String(input.command ?? "");
-        return /\bnode\b[^|;&\n]*cerrar-jornada[\\/]scripts[\\/](sync|jornada)\.mjs\b/.test(cmd) || /[\\/]\.mykimai[\\/]/i.test(cmd);
+        return shellCommands(input.command).some((cmd) =>
+            runsAgent(cmd) || (!/^(git|grep|rg|sed|awk|find|ls|echo|node|python3?)\b/.test(cmd) && /[\\/]\.mykimai[\\/]/i.test(cmd)));
     }
     const path = String(input.file_path ?? input.path ?? input.notebook_path ?? "");
     if (/[\\/]\.mykimai[\\/]/i.test(path)) return true;
-    return (use.name === "Read" || use.name === "Grep") && /cerrar-jornada[\\/](AGENTE|SKILL)\.md$/i.test(path);
+    return (use.name === "Read" || use.name === "Grep") && /[\\/]\.claude[\\/]skills[\\/]cerrar-jornada[\\/](AGENTE|SKILL)\.md$/i.test(path);
 }
 
-/** Herramientas que no dicen nada de qué se está haciendo (ni trabajo ni administración). */
-const NEUTRAL_TOOLS = new Set(["ToolSearch", "TodoWrite"]);
+/**
+ * Herramientas que no dicen qué se está haciendo: ni empiezan trabajo ni cortan un bloque de
+ * administración (las de sesiones de Claude Desktop, salvo el aviso de una duda, también).
+ */
+const isNeutralTool = (use) => ["ToolSearch", "TodoWrite"].includes(use.name) || /^mcp__(ccd_session_mgmt|ccd_sidebar)__/.test(use.name);
 
 /**
  * Clase de un evento de la sesión principal para `adminMask`: `prompt` (un mensaje del usuario, o
@@ -495,39 +568,41 @@ export function turnEvent(entry) {
         ? entry.message.content.filter((x) => x.type === "tool_use")
         : [];
     const billing = uses.some(isBillingToolUse);
-    const tool = uses.some((u) => !isBillingToolUse(u) && !NEUTRAL_TOOLS.has(u.name));
+    const tool = uses.some((u) => !isBillingToolUse(u) && !isNeutralTool(u));
     return { kind: "other", billing, tool: tool && !billing };
 }
 
 /**
  * Qué eventos de una sesión NO son trabajo para el cliente (true = se descarta):
- * - el turno que abre el aviso de una duda del agente (el aviso y lo que responde Claude);
- * - en cualquier turno, el bloque de administración de horas: de la primera a la última
- *   herramienta de ese tipo, con lo que sigue hasta la próxima herramienta de trabajo (resolver
- *   una duda, repartirlas, cerrar la jornada). Si el turno arranca directamente con eso, también
- *   el prompt. El trabajo del mismo turno antes o después del bloque cuenta.
+ * - el turno que abre el aviso de una duda del agente (el aviso y lo que responde Claude), hasta
+ *   que se retoma el trabajo (una herramienta de trabajo, p. ej. un cron que sigue);
+ * - cada bloque de administración de horas: desde una herramienta de ese tipo hasta la próxima
+ *   herramienta de trabajo (resolver una duda, repartirlas, cerrar la jornada). Si el turno arranca
+ *   directamente con eso, también el prompt. El trabajo del turno antes, entre o después cuenta.
  */
 export function adminMask(events) {
     const mask = events.map(() => false);
     const flush = (start, end) => {
         if (start >= end) return;
+        let i = start;
+        let workSeen = false;
         if (events[start].kind === "cross") {
-            for (let i = start; i < end; i++) mask[i] = true;
-            return;
+            while (i < end && !events[i].tool) mask[i++] = true;
+            workSeen = i < end;
         }
-        let first = -1;
-        let last = -1;
-        for (let i = start; i < end; i++) {
-            if (!events[i].billing) continue;
-            if (first < 0) first = i;
-            last = i;
+        let inBlock = false;
+        for (; i < end; i++) {
+            const e = events[i];
+            if (e.billing) {
+                // Un turno que arranca con administración: el prompt también es administración.
+                if (!workSeen && !inBlock) for (let j = start; j < i; j++) mask[j] = true;
+                inBlock = true;
+            } else if (e.tool) {
+                inBlock = false;
+                workSeen = true;
+            }
+            if (inBlock) mask[i] = true;
         }
-        if (first < 0) return;
-        let from = start;
-        for (let i = start; i < first; i++) if (events[i].tool) { from = first; break; }
-        let to = end;
-        for (let i = last + 1; i < end; i++) if (events[i].tool) { to = i; break; }
-        for (let i = from; i < to; i++) mask[i] = true;
     };
     let start = 0;
     for (let i = 1; i < events.length; i++) {
@@ -558,12 +633,12 @@ export const isSyncPrompt = (text) => text.split("\n").some((line) => line.trimS
  * request]" reenvía un pedido del usuario (no es el encargo); el "[… — computed task]" trae el
  * encargo real después de su primera línea.
  */
-export function agentTaskText(text) {
+export function agentTaskText(text, maxLen = 200) {
     const t = String(text ?? "").trim();
-    if (!t.startsWith("[Workflow harness")) return t.replace(/\s+/g, " ").slice(0, 200) || null;
+    if (!t.startsWith("[Workflow harness")) return t.replace(/\s+/g, " ").slice(0, maxLen) || null;
     if (!/^\[Workflow harness[^\]]*computed task\]/.test(t)) return null;
     const nl = t.indexOf("\n");
-    return nl < 0 ? null : t.slice(nl + 1).replace(/\s+/g, " ").trim().slice(0, 200) || null;
+    return nl < 0 ? null : t.slice(nl + 1).replace(/\s+/g, " ").trim().slice(0, maxLen) || null;
 }
 
 /** Texto crudo de un mensaje de usuario (para detectar la marca del agente). */
