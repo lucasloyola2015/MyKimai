@@ -23,7 +23,9 @@ node C:/Users/loyol/.claude/skills/cerrar-jornada/scripts/sync.mjs plan
 Procesa las fechas completas pendientes: cada una con su jornada (07:00–24:00) y su noche de
 trabajo autónomo (00:00 → 07:00 del día siguiente). Devuelve `actions` (`create` · `update` · `noop` · `skip` con
 `reason`; `unified` lista los proyectos del mismo cliente que se sumaron a esa hora), `discarded`,
-`doubts`, `ignored` y `skipped_days`. Si falla, ese error es el informe: saltá al paso 5.
+`doubts`, `ignored` y `skipped_days`. Si falla, ese error es el informe: saltá al paso 5. Si la
+salida llega cortada ("Output too large… saved to <archivo>"), leé ese archivo con la herramienta
+Read (está permitido); nunca `cat` ni el plan.json, que piden permiso y frenan la corrida.
 
 **Listo cuando:** el comando terminó sin error (o su error es el informe).
 

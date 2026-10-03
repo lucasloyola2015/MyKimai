@@ -316,101 +316,122 @@ export function resolveWindow({ window, candidates, existing, projects, now, pau
     const preferRefs = new Set(existing.map((e) => e.external_ref ?? "").filter((r) => r.startsWith(AUTO_REF_PREFIX) && !frozenRefs.has(r)));
     const unified = unifySameClient(valid, projects, window, pauseMin, preferRefs).sort((a, b) => a.firstEvent - b.firstEvent || a.ref.localeCompare(b.ref));
 
-    const refs = new Set(unified.map((c) => c.ref));
-    // Refs que alguna candidata de esta ventana conoce (válidas, inválidas o absorbidas al unificar).
-    const knownRefs = new Set([...candidates.map((c) => c.ref), ...unified.flatMap((c) => (c.unified ?? []).map((u) => u.ref))]);
-    const ofThisWindow = (ref) => {
-        const m = /^auto:[^:]+:(\d{4}-\d{2}-\d{2})(:autonomo)?$/.exec(ref ?? "");
-        return Boolean(m) && m[1] === window.date && Boolean(m[2]) === (window.scope === "night");
-    };
-    const others = existing.filter((e) => !refs.has(e.external_ref ?? ""));
-    const sane = (e) => e.end_time && Date.parse(e.end_time) - Date.parse(e.start_time) <= MAX_SANE_ENTRY_MIN * MIN;
-    const segsOf = (e) => clipSegments(entrySegments(e, now), window.start, window.end);
-    const suspicious = others.filter((e) => !sane(e)).map((e) => ({ entry: e, project: projectOf(e), segs: segsOf(e) }));
-    for (const { entry: e } of suspicious) {
-        doubts.push({
-            kind: e.end_time ? "hora_desmedida" : "hora_en_curso", ref: `existente:${e.id}`, date: window.date ?? null,
-            entry_id: e.id, project: projectOf(e),
-            message: e.end_time
-                ? `La hora ${describe(e)} dura más de ${MAX_SANE_ENTRY_MIN / 60} h: no la usé para recortar nada. ¿Quedó un timer prendido?`
-                : `Hay un timer en curso desde ${toArIso(Date.parse(e.start_time)).slice(0, 16).replace("T", " ")} (${e.project.name}): no lo usé para recortar nada. ¿Quedó prendido?`,
+    // Resolver con un conjunto de refs propias "viejas" (stale): sus horas se tratan como huérfanas.
+    const solve = (stale) => {
+        const entries = [];
+        const discarded = [];
+        const doubts = [];
+        const refs = new Set(unified.map((c) => c.ref).filter((r) => !stale.has(r)));
+        // Refs que alguna candidata de esta ventana conoce (válidas, inválidas o absorbidas al unificar).
+        const knownRefs = new Set([...candidates.map((c) => c.ref), ...unified.flatMap((c) => (c.unified ?? []).map((u) => u.ref))]);
+        const ofThisWindow = (ref) => {
+            const m = /^auto:[^:]+:(\d{4}-\d{2}-\d{2})(:autonomo)?$/.exec(ref ?? "");
+            return Boolean(m) && m[1] === window.date && Boolean(m[2]) === (window.scope === "night");
+        };
+        const others = existing.filter((e) => !refs.has(e.external_ref ?? ""));
+        const sane = (e) => e.end_time && Date.parse(e.end_time) - Date.parse(e.start_time) <= MAX_SANE_ENTRY_MIN * MIN;
+        const segsOf = (e) => clipSegments(entrySegments(e, now), window.start, window.end);
+        const suspicious = others.filter((e) => !sane(e)).map((e) => ({ entry: e, project: projectOf(e), segs: segsOf(e) }));
+        for (const { entry: e } of suspicious) {
+            doubts.push({
+                kind: e.end_time ? "hora_desmedida" : "hora_en_curso", ref: `existente:${e.id}`, date: window.date ?? null,
+                entry_id: e.id, project: projectOf(e),
+                message: e.end_time
+                    ? `La hora ${describe(e)} dura más de ${MAX_SANE_ENTRY_MIN / 60} h: no la usé para recortar nada. ¿Quedó un timer prendido?`
+                    : `Hay un timer en curso desde ${toArIso(Date.parse(e.start_time)).slice(0, 16).replace("T", " ")} (${e.project.name}): no lo usé para recortar nada. ¿Quedó prendido?`,
+            });
+        }
+        const obstacles = others.filter(sane).map((e) => ({ entry: e, project: projectOf(e), segs: segsOf(e) })).filter((o) => o.segs.length);
+        // Horas propias de ESTA ventana que ninguna candidata conoce ni están congeladas: quedaron
+        // huérfanas (p. ej. se remapeó la carpeta). Las de otra ventana o fecha son obstáculos normales.
+        const orphans = obstacles.filter((o) => {
+            const ref = o.entry.external_ref ?? "";
+            return ofThisWindow(ref) && (!knownRefs.has(ref) || stale.has(ref)) && !frozenRefs.has(ref);
         });
-    }
-    const obstacles = others.filter(sane).map((e) => ({ entry: e, project: projectOf(e), segs: segsOf(e) })).filter((o) => o.segs.length);
-    // Horas propias de ESTA ventana que ninguna candidata conoce ni están congeladas: quedaron
-    // huérfanas (p. ej. se remapeó la carpeta). Las de otra ventana o fecha son obstáculos normales.
-    const orphans = obstacles.filter((o) => {
-        const ref = o.entry.external_ref ?? "";
-        return ofThisWindow(ref) && !knownRefs.has(ref) && !frozenRefs.has(ref);
-    });
 
-    for (const c of unified) {
-        const project = projects.get(c.project_id);
-        const base = { ref: c.ref, date: c.date, autonomous: c.autonomous, evidence: c.evidence, unified: c.unified ?? [] };
-        const rawMinutes = workedMinutes(c.segments);
-        let segs = c.segments;
-        let allowOverlap = false;
-        const unifiedNote = c.unified?.length ? ` (hora unificada con ${c.unified.map((u) => u.project).join(", ")})` : "";
-        const notes = c.unified?.length ? [`unificada con ${c.unified.map((u) => u.project).join(", ")} (mismo cliente, en paralelo)`] : [];
+        for (const c of unified) {
+            const project = projects.get(c.project_id);
+            const base = { ref: c.ref, date: c.date, autonomous: c.autonomous, evidence: c.evidence, unified: c.unified ?? [] };
+            const rawMinutes = workedMinutes(c.segments);
+            let segs = c.segments;
+            let allowOverlap = false;
+            const unifiedNote = c.unified?.length ? ` (hora unificada con ${c.unified.map((u) => u.project).join(", ")})` : "";
+            const notes = c.unified?.length ? [`unificada con ${c.unified.map((u) => u.project).join(", ")} (mismo cliente, en paralelo)`] : [];
 
-        // La API no deja superponer el mismo proyecto, sea autónomo o no.
-        const timer = suspicious.find((s) => s.project.id === c.project_id && segmentsIntersect(segs, s.segs));
-        if (timer) {
-            doubts.push({ ...base, kind: "choca_con_timer", project, ...toEntryTimes(segs),
-                message: `"${project.name}"${unifiedNote} tiene ${workedMinutes(segs)} min de actividad, pero se cruza con ${describe(timer.entry)} del mismo proyecto, que parece un timer olvidado: no lo cargué.` });
-            continue;
+            // La API no deja superponer el mismo proyecto, sea autónomo o no.
+            const timer = suspicious.find((s) => s.project.id === c.project_id && segmentsIntersect(segs, s.segs));
+            if (timer) {
+                doubts.push({ ...base, kind: "choca_con_timer", project, ...toEntryTimes(segs),
+                    message: `"${project.name}"${unifiedNote} tiene ${workedMinutes(segs)} min de actividad, pero se cruza con ${describe(timer.entry)} del mismo proyecto, que parece un timer olvidado: no lo cargué.` });
+                continue;
+            }
+            if (suspicious.some((s) => segmentsIntersect(segs, s.segs))) allowOverlap = true;
+
+            const orphan = orphans.find((o) => o.project.id !== c.project_id && segmentsIntersect(segs, o.segs));
+            if (orphan) {
+                doubts.push({ ...base, kind: "hora_huerfana", project, ...toEntryTimes(segs),
+                    message: `"${project.name}"${unifiedNote} tiene ${workedMinutes(segs)} min de actividad, pero se cruza con ${describe(orphan.entry)}, que cargó este agente y ya no tiene actividad propia (¿se remapeó la carpeta?). No lo cargué para no cobrar dos veces: corregí o borrá esa hora.` });
+                continue;
+            }
+
+            const sameProject = obstacles.filter((o) => o.project.id === c.project_id && o.entry.autonomous === c.autonomous);
+            for (const o of obstacles) {
+                if (sameProject.includes(o) || !segmentsIntersect(segs, o.segs)) continue;
+                if (sameClient(project, o.project)) {
+                    segs = subtractSegments(segs, o.segs);
+                    notes.push(`recortada donde ya estaba ${describe(o.entry)} (mismo cliente)`);
+                } else {
+                    allowOverlap = true;
+                }
+            }
+
+            // El mismo proyecto ya cargado por otro: se asume cargado a mano. Se mira lo que sobra
+            // DESPUÉS de los recortes por el mismo cliente (lo que igual se le recortaría no cuenta).
+            if (sameProject.length) {
+                const rest = subtractSegments(segs, sameProject.flatMap((o) => o.segs));
+                const already = sameProject.map((o) => describe(o.entry));
+                if (workedMinutes(rest) >= MIN_WORKED_MIN) {
+                    doubts.push({ ...base, kind: "cargado_a_mano_parcial", project, ...toEntryTimes(rest), existing: already,
+                        message: `"${project.name}"${unifiedNote} ya tiene horas cargadas a mano ese día (${already.join("; ")}), pero hay ${workedMinutes(rest)} min de actividad fuera de ellas.` });
+                } else {
+                    discarded.push({ ...base, project, raw_minutes: rawMinutes, reason: `ya cargado a mano: ${already.join("; ")}` });
+                }
+                continue;
+            }
+
+            if (!segs.length || workedMinutes(segs) < MIN_WORKED_MIN) {
+                discarded.push({ ...base, project, raw_minutes: rawMinutes, reason: `menos de ${MIN_WORKED_MIN} min trabajados (${workedMinutes(segs)} min)` });
+                continue;
+            }
+            entries.push({ ...base, project, project_id: c.project_id, segments: segs, raw_minutes: rawMinutes, allow_overlap: allowOverlap, notes });
         }
-        if (suspicious.some((s) => segmentsIntersect(segs, s.segs))) allowOverlap = true;
 
-        const orphan = orphans.find((o) => o.project.id !== c.project_id && segmentsIntersect(segs, o.segs));
-        if (orphan) {
-            doubts.push({ ...base, kind: "hora_huerfana", project, ...toEntryTimes(segs),
-                message: `"${project.name}"${unifiedNote} tiene ${workedMinutes(segs)} min de actividad, pero se cruza con ${describe(orphan.entry)}, que cargó este agente y ya no tiene actividad propia (¿se remapeó la carpeta?). No lo cargué para no cobrar dos veces: corregí o borrá esa hora.` });
-            continue;
-        }
-
-        const sameProject = obstacles.filter((o) => o.project.id === c.project_id && o.entry.autonomous === c.autonomous);
-        for (const o of obstacles) {
-            if (sameProject.includes(o) || !segmentsIntersect(segs, o.segs)) continue;
-            if (sameClient(project, o.project)) {
-                segs = subtractSegments(segs, o.segs);
-                notes.push(`recortada donde ya estaba ${describe(o.entry)} (mismo cliente)`);
-            } else {
-                allowOverlap = true;
+        // Clientes distintos en paralelo: valen las dos, y la API pide allow_overlap en ambas.
+        for (let i = 0; i < entries.length; i++) {
+            for (let j = i + 1; j < entries.length; j++) {
+                if (!sameClient(entries[i].project, entries[j].project) && segmentsIntersect(entries[i].segments, entries[j].segments)) {
+                    entries[i].allow_overlap = true;
+                    entries[j].allow_overlap = true;
+                }
             }
         }
+        return { entries, discarded, doubts };
+    };
 
-        // El mismo proyecto ya cargado por otro: se asume cargado a mano. Se mira lo que sobra
-        // DESPUÉS de los recortes por el mismo cliente (lo que igual se le recortaría no cuenta).
-        if (sameProject.length) {
-            const rest = subtractSegments(segs, sameProject.flatMap((o) => o.segs));
-            const already = sameProject.map((o) => describe(o.entry));
-            if (workedMinutes(rest) >= MIN_WORKED_MIN) {
-                doubts.push({ ...base, kind: "cargado_a_mano_parcial", project, ...toEntryTimes(rest), existing: already,
-                    message: `"${project.name}"${unifiedNote} ya tiene horas cargadas a mano ese día (${already.join("; ")}), pero hay ${workedMinutes(rest)} min de actividad fuera de ellas.` });
-            } else {
-                discarded.push({ ...base, project, raw_minutes: rawMinutes, reason: `ya cargado a mano: ${already.join("; ")}` });
-            }
-            continue;
-        }
-
-        if (!segs.length || workedMinutes(segs) < MIN_WORKED_MIN) {
-            discarded.push({ ...base, project, raw_minutes: rawMinutes, reason: `menos de ${MIN_WORKED_MIN} min trabajados (${workedMinutes(segs)} min)` });
-            continue;
-        }
-        entries.push({ ...base, project, project_id: c.project_id, segments: segs, raw_minutes: rawMinutes, allow_overlap: allowOverlap, notes });
+    // Una hora propia ajustable cuya candidata no llega a ser una entrada (quedó en menos de 30 min
+    // o en duda, p. ej. porque se remapeó la carpeta) no puede quedar cobrando ese tiempo en paralelo
+    // con otra: se resuelve otra vez tratándola como huérfana, y queda una duda sobre ella.
+    const first = solve(new Set());
+    const stale = new Set(unified
+        .filter((c) => !first.entries.some((e) => e.ref === c.ref) && !frozenRefs.has(c.ref) && existing.some((x) => x.external_ref === c.ref))
+        .map((c) => c.ref));
+    const result = stale.size ? solve(stale) : first;
+    for (const ref of stale) {
+        const e = existing.find((x) => x.external_ref === ref);
+        result.doubts.push({ kind: "hora_propia_sin_actividad", ref: `existente:${e.id}`, date: window.date ?? null, entry_id: e.id, project: projectOf(e),
+            message: `La hora ${describe(e)} que cargó este agente ya no tiene ${MIN_WORKED_MIN} min de actividad propia (¿se remapeó la carpeta?): ¿la achico o la borro?` });
     }
-
-    // Clientes distintos en paralelo: valen las dos, y la API pide allow_overlap en ambas.
-    for (let i = 0; i < entries.length; i++) {
-        for (let j = i + 1; j < entries.length; j++) {
-            if (!sameClient(entries[i].project, entries[j].project) && segmentsIntersect(entries[i].segments, entries[j].segments)) {
-                entries[i].allow_overlap = true;
-                entries[j].allow_overlap = true;
-            }
-        }
-    }
-    return { entries, discarded, doubts };
+    return { entries: result.entries, discarded: [...discarded, ...result.discarded], doubts: [...doubts, ...result.doubts] };
 }
 
 // ── Qué hacer con lo que el agente ya cargó ──────────────────────────────────
@@ -441,6 +462,21 @@ export const matchesEntry = (current, segments, projectId, autonomous) =>
 
 /** El registro local de una ref, salvo que sea solo la marca de "unificada en otra" (no es propio). */
 export const ownRecord = (rec) => (rec?.member_of ? undefined : rec);
+
+/**
+ * Qué hacer con un proyecto que el agente ya cargó unificado en otra hora (`rec.member_of`):
+ * - la hora principal se borró → se descarta (no vuelve sola);
+ * - la principal sigue ajustable → es candidata (se vuelve a unificar);
+ * - la principal se editó o se facturó → se respeta: solo lo NUEVO (fuera de esa hora y de lo que
+ *   cubría al unificarse, `rec.span`) puede ser una duda si llega a 30 min.
+ */
+export function memberFate({ main, mainRec, rec, segments, now }) {
+    if (!main) return { fate: "discard", reason: "borraste la hora en la que iba unificada" };
+    const frozen = frozenReason(main, ownRecord(mainRec));
+    if (!frozen) return { fate: "candidate" };
+    const rest = subtractSegments(segments, [...entrySegments(main, now), ...(rec?.span ? [rec.span] : [])]);
+    return workedMinutes(rest) >= MIN_WORKED_MIN ? { fate: "doubt", rest, frozen } : { fate: "discard", reason: `iba unificada en una hora que quedó así: ${frozen}; la respeto` };
+}
 
 /**
  * Por qué una hora que ya tiene la referencia del agente queda congelada (o null si el agente

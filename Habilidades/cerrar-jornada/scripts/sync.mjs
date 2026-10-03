@@ -30,7 +30,7 @@ import { createInterface } from "node:readline";
 import {
     DEFAULT_PAUSE_MIN, DOUBT_PREFIX, MIN_WORKED_MIN,
     addDays, adminMask, advanceLastFullDay, agentTaskText, arYmd, autoRef, dayWindow, decideAction,
-    fingerprint, frozenReason, humanPrompt, isSyncPrompt, matchFolder, matchesEntry, maxOf, minOf, normPath, ownRecord, rawUserText,
+    fingerprint, frozenReason, humanPrompt, isSyncPrompt, matchFolder, matchesEntry, maxOf, memberFate, minOf, normPath, ownRecord, rawUserText,
     resolveWindow, spread, toArHm, toArIso, toEntryTimes, turnEvent, windowSegments, windowsToProcess,
     workedMinutes,
 } from "./sync-core.mjs";
@@ -623,10 +623,22 @@ async function plan(opts) {
             const rec = stateEntries[c.ref];
             const current = byRef(c.ref);
             if (rec?.member_of && !current) {
-                // Ya fue unificada en otra hora: si Lucas borró esa hora, no vuelve sola por acá. Si
-                // la hora sigue (aunque la haya editado), esta pasa y se recorta contra ella.
-                if (!byRef(rec.member_of)) {
-                    discard(c, segments, `iba unificada en ${rec.member_of}, que borraste`);
+                // Ya fue unificada en otra hora. Si Lucas la borró, no vuelve sola por acá. Si la editó
+                // o se facturó, se respeta tal como quedó: solo lo NUEVO de este proyecto (fuera de esa
+                // hora y de lo que cubría al unificarse) puede ser una duda. Si sigue ajustable, esta
+                // pasa y se vuelve a unificar con ella.
+                const main = byRef(rec.member_of);
+                const fate = memberFate({ main, mainRec: stateEntries[rec.member_of], rec, segments, now: nowMs });
+                if (fate.fate === "discard") {
+                    discard(c, segments, fate.reason);
+                    continue;
+                }
+                if (fate.fate === "doubt") {
+                    const proj = projects.get(c.project_id);
+                    result.doubts.push({ kind: "unificada_editada", ref: c.ref, date: c.date, window: w.scope,
+                        project: proj ? { id: proj.id, name: proj.name, client: proj.client.name } : null, ...toEntryTimes(fate.rest),
+                        evidence: evidenceOf(inside, agentTasks, sessionPoints),
+                        message: `Hay ${workedMinutes(fate.rest)} min de actividad nueva de "${proj?.name ?? c.label}" fuera de la hora unificada "${main.title}", que quedó así: ${fate.frozen}.` });
                     continue;
                 }
             } else {
@@ -808,7 +820,10 @@ async function apply(opts) {
             const writtenAt = new Date().toISOString();
             state.entries[a.ref] = { entry_id: entry.id, fingerprint: fingerprint(entry), written_at: writtenAt };
             // Los proyectos unificados en esta hora siguen su suerte (si la borrás, no vuelven solos).
-            for (const u of a.unified ?? []) state.entries[u.ref] = { member_of: a.ref, written_at: writtenAt };
+            // span: lo que cubría la hora al unificarse (si después se edita, eso no vuelve a cobrarse).
+            for (const u of a.unified ?? []) {
+                if (!state.entries[u.ref]?.entry_id) state.entries[u.ref] = { member_of: a.ref, span: [Date.parse(entry.start_time), Date.parse(entry.end_time)], written_at: writtenAt };
+            }
             saveState();
             results.push({ ref: a.ref, date: a.date, action: kind, entry_id: entry.id, project: a.project.name, title: entry.title, from_to: `${toArHm(Date.parse(entry.start_time))}–${toArHm(Date.parse(entry.end_time))}`, minutes: entry.duration_minutes, amount: entry.amount });
         } catch (err) {
@@ -906,6 +921,8 @@ const QUESTION = {
     choca_con_timer: "corregí ese timer en Mis Horas y decime si cargo esta actividad.",
     hora_huerfana: "¿la corrijo, la borro o la dejo así?",
     dias_salteados: "¿las cargo? (una por una, con plan --date)",
+    unificada_editada: "¿la cargo aparte o la dejo así?",
+    hora_propia_sin_actividad: "¿la achico, la borro o la dejo así?",
     error_al_cargar: "¿cómo lo resuelvo?",
 };
 
@@ -920,6 +937,34 @@ function doubtText(d) {
     ].filter(Boolean).join("\n");
 }
 
+/**
+ * Lo que plan muestra: lo que la corrida necesita para escribir los textos y el informe, recortado
+ * para que entre en la salida de una herramienta (el plan completo queda en plan.json).
+ */
+function summaryOf(p, file) {
+    const clip = (list, n) => (list ?? []).slice(0, n).map((s) => (s.length > 120 ? `${s.slice(0, 119)}…` : s));
+    const evidence = (e) => e && {
+        prompts: clip(e.prompts, 10), context_prompts: clip(e.context_prompts, 3), agent_tasks: clip(e.agent_tasks, 6),
+        commits: clip(e.commits, 10), prompts_total: e.prompts_total, agent_tasks_total: e.agent_tasks_total, commits_total: e.commits_total,
+    };
+    return {
+        plan_file: file, generated_at: p.generated_at, auto: p.auto, simulated: p.simulated,
+        windows: p.windows.map((w) => `${w.date} ${w.scope}${w.complete ? "" : " (incompleta)"}`),
+        skipped_days: p.skipped_days,
+        actions: p.actions.map((a) => ({
+            ref: a.ref, action: a.action, ...(a.reason ? { reason: a.reason } : {}), date: a.date, window: a.window,
+            project: `${a.project.client} / ${a.project.name}`, billable: a.project.billable, autonomous: a.autonomous,
+            worked_spans: a.worked_spans, minutes: a.minutes,
+            ...(a.unified?.length ? { unified: a.unified.map((u) => u.project) } : {}),
+            ...(a.notes?.length ? { notes: a.notes } : {}),
+            ...(a.action === "create" ? { evidence: evidence(a.evidence) } : {}),
+        })),
+        discarded: p.discarded.map((d) => `${d.date} ${d.window} · ${d.project}: ${d.reason}`),
+        doubts: p.doubts.map((d) => `${d.kind} · ${d.message}`),
+        ignored: p.ignored.length,
+    };
+}
+
 // ── main ─────────────────────────────────────────────────────────────────────
 const opts = parseArgs(process.argv.slice(2));
 const command = opts._[0];
@@ -930,7 +975,7 @@ try {
         rmSync(file, { force: true });
         const out = await plan(opts);
         writeJson(file, out);
-        console.log(JSON.stringify({ plan_file: file, ...out }, null, 2));
+        console.log(JSON.stringify(summaryOf(out, file), null, 1));
     } else if (command === "apply") {
         console.log(JSON.stringify(await apply(opts), null, 2));
     } else if (command === "dudas") {

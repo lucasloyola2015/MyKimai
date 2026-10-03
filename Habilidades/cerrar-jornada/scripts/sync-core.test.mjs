@@ -2,7 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-    adminMask, advanceLastFullDay, isBillingToolUse, agentTaskText, autoRef, buildSegments, dayWindow, decideAction, entrySegments,
+    adminMask, advanceLastFullDay, isBillingToolUse, memberFate, agentTaskText, autoRef, buildSegments, dayWindow, decideAction, entrySegments,
     fingerprint, frozenReason, humanPrompt, isNight, isSyncPrompt, matchFolder, resolveWindow, spread, subtractSegments,
     toArHm, toEntryTimes, turnEvent, windowSegments, windowsToProcess, workdayOf, workedMinutes,
 } from "./sync-core.mjs";
@@ -497,6 +497,33 @@ test("isBillingToolUse: desarrollar el agente no es administración (heredocs, -
     assert.equal(bash("cd C:/x && node C:/Users/loyol/.claude/skills/cerrar-jornada/scripts/jornada.mjs --date 2026-10-01"), true);
     assert.equal(isBillingToolUse({ name: "Read", input: { file_path: "C:/repo/Habilidades/cerrar-jornada/SKILL.md" } }), false);
     assert.equal(humanPrompt(userMsg("The app was quit while you were working. Please continue from where you left off.")), null);
+});
+
+// ── Verificación final ───────────────────────────────────────────────────────
+test("memberFate: el proyecto unificado sigue la suerte de su hora principal", () => {
+    const main = manual("medidor", "09:00", "13:30", { external_ref: autoRef("medidor", D, false) });
+    const mainRec = { fingerprint: fingerprint(main) };
+    const rec = { member_of: main.external_ref, span: seg("09:00", "13:30") };
+    const segs = [seg("11:00", "13:30")];
+    // Ajustable: vuelve a ser candidata (se unifica de nuevo).
+    assert.equal(memberFate({ main, mainRec, rec, segments: segs, now: at("23:00") }).fate, "candidate");
+    // Borrada: no vuelve sola.
+    assert.equal(memberFate({ main: undefined, mainRec, rec, segments: segs, now: at("23:00") }).fate, "discard");
+    // Lucas la recortó a 09–12: lo que quitó (12–13:30) NO se vuelve a cobrar.
+    const recortada = { ...main, end_time: new Date(at("12:00")).toISOString() };
+    assert.equal(memberFate({ main: recortada, mainRec, rec, segments: segs, now: at("23:00") }).fate, "discard");
+    // Pero trabajo nuevo de ese proyecto, fuera de lo que cubría, es una duda (no una carga).
+    const nuevo = memberFate({ main: recortada, mainRec, rec, segments: [...segs, seg("16:00", "18:00")], now: at("23:00") });
+    assert.equal(nuevo.fate, "doubt");
+    assert.deepEqual(spans(nuevo.rest), ["16:00–18:00"]);
+});
+
+test("Una hora propia que se queda sin actividad (carpeta remapeada) no cobra en paralelo: duda", () => {
+    // Medidor (Agustín) ya cargada 09–11; ahora su carpeta va a EndPoints (Interlabs) y a Medidor le quedan 15 min.
+    const vieja = manual("medidor", "09:00", "11:00", { external_ref: autoRef("medidor", D, false) });
+    const r = resolve([cand("medidor", [seg("09:00", "09:15")]), cand("endpoints", [seg("09:00", "11:00")])], [vieja]);
+    assert.equal(r.entries.length, 0);
+    assert.deepEqual(r.doubts.map((d) => d.kind).sort(), ["hora_huerfana", "hora_propia_sin_actividad"]);
 });
 
 test("Actividad continua de 2 h da una sola entrada de 120 min", () => {
