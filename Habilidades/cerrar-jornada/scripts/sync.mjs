@@ -840,7 +840,16 @@ async function apply(opts) {
             .filter((d) => ["day", "night"].every((scope) => p.windows.some((w) => w.date === d && w.scope === scope && w.complete)));
         state.last_full_day = advanceLastFullDay({ lastFullDay: state.last_full_day, floor: FLOOR_DATE, completeDates, blockedDates: [...blocked], skippedTo: p.skipped_days?.to ?? null }) ?? undefined;
     }
-    const out = { dry_run: dryRun, plan: planFile, plan_generated_at: p.generated_at, last_full_day: state.last_full_day ?? null, retry_dates: [...blocked].sort(), results };
+    // Totales ya calculados, para que el informe no los sume a mano.
+    const loaded = results.filter((r) => ["create", "update", "noop"].includes(r.action) && r.minutes != null);
+    const autonomousRefs = new Set(p.actions.filter((a) => a.autonomous).map((a) => a.ref));
+    const sum = (list, k) => Math.round(list.reduce((t, r) => t + (Number(r[k]) || 0), 0) * 100) / 100;
+    const totals = {
+        jornada_min: sum(loaded.filter((r) => !autonomousRefs.has(r.ref)), "minutes"),
+        noche_autonoma_min: sum(loaded.filter((r) => autonomousRefs.has(r.ref)), "minutes"),
+        monto: sum(loaded, "amount"),
+    };
+    const out = { dry_run: dryRun, plan: planFile, plan_generated_at: p.generated_at, last_full_day: state.last_full_day ?? null, retry_dates: [...blocked].sort(), totals, results };
     if (!dryRun) {
         state.last_run = { at: new Date().toISOString(), plan: planFile, errors: results.filter((r) => r.action === "error").length, retries: results.filter((r) => r.action === "retry").length };
         saveState();

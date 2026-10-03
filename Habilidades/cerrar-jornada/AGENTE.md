@@ -78,7 +78,8 @@ carpeta y franja). `pending` dice cuántas falta avisar.
 
 El último mensaje de la corrida es el informe, corto y en español:
 
-- Por fecha: tabla `proyecto | horario | horas | título` de lo creado o ajustado, y el total.
+- Por fecha: tabla `proyecto | horario | horas | título` de lo creado o ajustado, y los totales
+  tal cual los da `totals` de apply (no los sumes a mano).
 - Lo descartado, lo salteado y los `retry`, una línea cada uno con su motivo.
 - Las dudas, una línea cada una.
 - `skipped_days`, si hay: fechas que no se cargaron por llevar más de una semana sin correr.
