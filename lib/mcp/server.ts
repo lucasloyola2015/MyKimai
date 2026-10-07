@@ -4,7 +4,7 @@
  * Se arma uno por request (stateless) con el contexto de la API key ya
  * autenticada. Solo se exponen las herramientas que la key puede usar:
  * - 'read'       → consultas (clientes, proyectos, horas, resúmenes, paquetes, hitos).
- * - 'write'      → crear / editar horas propias.
+ * - 'write'      → crear / editar horas propias; el owner, además, crear / editar clientes y proyectos.
  * - financials   → facturas y pendiente de facturar (scope + rol owner/admin).
  *
  * Toda la lógica y los filtros de seguridad viven en lib/domain/*.
@@ -23,6 +23,8 @@ import {
     updateEntry,
     type DomainResult,
 } from "@/lib/domain/time-entries";
+import { canManageWorkspace } from "@/lib/auth/owner-context";
+import { createClient, createProject, getClient, getProject, updateClient, updateProject } from "@/lib/domain/catalog";
 import {
     getAccessSummary,
     getHoursSummary,
@@ -38,6 +40,7 @@ const SERVER_INSTRUCTIONS = `MyKimai: registro de horas y facturación de Lucas 
 Reglas:
 - Zona horaria del negocio: America/Argentina/Buenos_Aires (UTC-3). Al cargar o editar horas, las fechas van en ISO 8601 CON offset (ej. 2026-10-02T09:00:00-03:00). Para consultar se puede pasar un día YYYY-MM-DD (se toma completo en hora AR).
 - Las horas se cargan por PROYECTO con un título libre (no hay tareas). Usá list_projects para obtener el project_id; no lo adivines.
+- Si el cliente o el proyecto todavía no existen, el owner puede crearlos (create_client, create_project) y editar su configuración (update_client, update_project). Antes de crear, buscá con list_clients / list_projects para no duplicar, y confirmá con el usuario el nombre, el cliente y, si corresponde, la tarifa. Tocar tarifas, moneda o facturabilidad requiere acceso financiero y recalcula las horas sin facturar.
 - Nunca inventes horarios: deben salir de evidencia (horarios de la sesión, commits, lo que diga el usuario).
 - ANTES de crear o mover horas, llamá a check_time_slot. Si ya hay horas registradas en ese horario, mostráselas al usuario y preguntale qué hacer (completar la existente con update_time_entry, ajustar el horario, cargar en paralelo o no cargar). Nunca decidas solo.
   - Mismo proyecto: no se puede duplicar (la API lo rechaza siempre).
@@ -327,6 +330,111 @@ export function buildMcpServer(ctx: ApiContext): McpServer {
             safe("update_time_entry", async (a: Parameters<typeof updateEntry>[1]) =>
                 fromDomain(await updateEntry(ctx, a))
             )
+        );
+    }
+
+    // ── Clientes y proyectos ('write' + owner del workspace) ────────────────
+    if (canWrite && canManageWorkspace(ctx)) {
+        const clientFields = {
+            email: z.string().max(255).nullable().optional().describe("Email de contacto ('' o null = sin email)"),
+            phone: z.string().max(50).nullable().optional(),
+            address: z.string().max(2000).nullable().optional(),
+            notes: z.string().max(5000).nullable().optional(),
+            currency: z.string().length(3).optional().describe("Moneda (ISO, ej. USD, ARS). Requiere acceso financiero"),
+            default_rate: z.number().nonnegative().nullable().optional().describe("Tarifa por hora por defecto del cliente. Requiere acceso financiero"),
+            is_billable: z.boolean().optional().describe("Si se le factura. Si pasa a false, sus proyectos también. Requiere acceso financiero"),
+            tax_id: z.string().max(50).nullable().optional().describe("CUIT/CUIL"),
+            business_name: z.string().max(255).nullable().optional().describe("Razón social"),
+            legal_address: z.string().max(2000).nullable().optional().describe("Domicilio fiscal"),
+            tax_condition: z.string().max(100).nullable().optional().describe("Condición frente al IVA"),
+        };
+        const projectFields = {
+            description: z.string().max(5000).nullable().optional(),
+            currency: z.string().length(3).optional().describe("Moneda (default: la del cliente). Requiere acceso financiero"),
+            rate: z.number().nonnegative().nullable().optional().describe("Tarifa por hora del proyecto (null = usa la del cliente). Requiere acceso financiero"),
+            billing_type: z.enum(["hourly", "fixed"]).optional().describe("Por hora (default) o precio fijo. Requiere acceso financiero"),
+            status: z.enum(["active", "paused", "completed", "cancelled"]).optional(),
+            start_date: z.string().nullable().optional().describe("YYYY-MM-DD"),
+            end_date: z.string().nullable().optional().describe("YYYY-MM-DD"),
+            is_billable: z.boolean().optional().describe("Si se factura (no se puede si el cliente no factura). Requiere acceso financiero"),
+        };
+        const WRITE = { readOnlyHint: false, destructiveHint: false, openWorldHint: false } as const;
+
+        server.registerTool(
+            "create_client",
+            {
+                title: "Crear cliente",
+                description:
+                    "Crea un cliente del workspace. Antes, list_clients para no duplicarlo y confirmá con el usuario el nombre y, si corresponde, la tarifa y los datos fiscales.",
+                inputSchema: { name: z.string().min(1).max(255).describe("Nombre del cliente"), ...clientFields },
+                annotations: WRITE,
+            },
+            safe("create_client", async (a: Parameters<typeof createClient>[1]) => fromDomain(await createClient(ctx, a)))
+        );
+
+        server.registerTool(
+            "update_client",
+            {
+                title: "Editar cliente",
+                description:
+                    "Edita la configuración de un cliente (solo los campos que mandes). Cambiar tarifa o facturabilidad recalcula las horas sin facturar; las facturadas no cambian. Confirmá con el usuario antes de tocar tarifas.",
+                inputSchema: { client_id: uuid("cliente"), name: z.string().min(1).max(255).optional(), ...clientFields },
+                annotations: { ...WRITE, idempotentHint: true },
+            },
+            safe("update_client", async (a: Parameters<typeof updateClient>[1]) => fromDomain(await updateClient(ctx, a)))
+        );
+
+        server.registerTool(
+            "create_project",
+            {
+                title: "Crear proyecto",
+                description:
+                    "Crea un proyecto de un cliente. Antes, list_projects para no duplicarlo y confirmá con el usuario el cliente, el nombre y, si corresponde, la tarifa (sin tarifa usa la del cliente).",
+                inputSchema: { client_id: uuid("cliente"), name: z.string().min(1).max(255).describe("Nombre del proyecto"), ...projectFields },
+                annotations: WRITE,
+            },
+            safe("create_project", async (a: Parameters<typeof createProject>[1]) => fromDomain(await createProject(ctx, a)))
+        );
+
+        server.registerTool(
+            "update_project",
+            {
+                title: "Editar proyecto",
+                description:
+                    "Edita la configuración de un proyecto (solo los campos que mandes), incluido pasarlo a otro cliente (client_id). Cambiar tarifa, facturabilidad o cliente recalcula las horas sin facturar; las facturas emitidas no cambian. Confirmá con el usuario antes de tocar tarifas o mover de cliente.",
+                inputSchema: {
+                    project_id: uuid("proyecto"),
+                    client_id: uuid("cliente nuevo").optional(),
+                    name: z.string().min(1).max(255).optional(),
+                    ...projectFields,
+                },
+                annotations: { ...WRITE, idempotentHint: true },
+            },
+            safe("update_project", async (a: Parameters<typeof updateProject>[1]) => fromDomain(await updateProject(ctx, a)))
+        );
+    }
+
+    if (canRead) {
+        server.registerTool(
+            "get_client",
+            {
+                title: "Ver cliente",
+                description: "Configuración de un cliente: contacto, datos fiscales y (con acceso financiero) moneda y tarifa.",
+                inputSchema: { client_id: uuid("cliente") },
+                annotations: READ_ONLY,
+            },
+            safe("get_client", async (a: { client_id: string }) => fromDomain(await getClient(ctx, a.client_id)))
+        );
+
+        server.registerTool(
+            "get_project",
+            {
+                title: "Ver proyecto",
+                description: "Configuración de un proyecto: cliente, estado, fechas y (con acceso financiero) moneda, tarifa y tipo de facturación.",
+                inputSchema: { project_id: uuid("proyecto") },
+                annotations: READ_ONLY,
+            },
+            safe("get_project", async (a: { project_id: string }) => fromDomain(await getProject(ctx, a.project_id)))
         );
     }
 

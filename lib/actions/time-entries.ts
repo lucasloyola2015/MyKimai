@@ -8,7 +8,7 @@ import { revalidatePath } from "next/cache";
 import type { time_entries } from "@prisma/client";
 import { calculateNetDurationMinutes, computeEntryTotals } from "@/lib/utils";
 import { getUsdExchangeRate } from "./exchange";
-import { resolveRate } from "@/lib/utils/rates";
+import { recalculateUnbilled } from "@/lib/domain/catalog";
 import {
     calculateRate,
     findPackageForEntry,
@@ -1077,64 +1077,17 @@ export async function recalculateUnbilledEntries(filter: {
     projectId?: string;
     clientId?: string;
 }) {
-    // §5 — recalcular afecta TODAS las entradas del workspace, no solo
-    // las del actor. Cuando el owner cambia una tarifa, las entradas
-    // cargadas por team members también se deben actualizar.
+    // §5 — recalcular afecta TODAS las entradas del workspace, no solo las del actor (lo hace
+    // recalculateUnbilled, compartido con la API de agentes; también ajusta la tarifa de la tarea
+    // "Trabajo autónomo" cuando cambia la del proyecto o la del cliente).
     const ctx = await getOwnerContext();
-
-    const entries = await prisma.time_entries.findMany({
-        where: {
-            tasks: {
-                ...(filter.taskId && { id: filter.taskId }),
-                ...(filter.projectId && { project_id: filter.projectId }),
-                projects: {
-                    ...(filter.clientId && { client_id: filter.clientId }),
-                    clients: {
-                        user_id: ctx.ownerId,
-                    },
-                },
-            },
-            is_billed: false,
-            end_time: { not: null },
-        },
-        include: {
-            tasks: {
-                include: {
-                    projects: {
-                        include: { clients: true },
-                    },
-                },
-            },
-        },
-    });
-
-    for (const entry of entries) {
-        const task = entry.tasks;
-        const project = task.projects;
-        const client = project.clients;
-
-        const isBillable = !!(task as any).is_billable && !!(project as any).is_billable && !!(client as any).is_billable;
-        const { rate } = resolveRate({ task, project, client });
-        const effectiveRate = isBillable ? (rate ?? 0) : 0;
-        const durationNeto = entry.duration_neto || 0;
-        const amount = effectiveRate === 0 ? 0 : Number(((durationNeto / 60) * effectiveRate).toFixed(2));
-
-        await prisma.time_entries.update({
-            where: { id: entry.id },
-            data: {
-                rate_applied: effectiveRate,
-                amount,
-                billable: effectiveRate > 0,
-                updated_at: new Date(),
-            },
-        });
-    }
+    const count = await recalculateUnbilled(ctx.ownerId, filter);
 
     revalidatePath("/dashboard/my-hours");
     revalidatePath("/dashboard/billing");
     revalidatePath("/dashboard/time-tracker");
 
-    return entries.length;
+    return count;
 }
 
 /**

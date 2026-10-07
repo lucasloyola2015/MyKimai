@@ -61,6 +61,11 @@ La key actúa como su usuario: el contexto se resuelve por request (`lib/auth/ap
   `ownerId`. Las usan la API y las Server Actions. **Nunca en un archivo `"use server"`** (expondría
   el contexto como parámetro falsificable). Herramientas MCP en `lib/mcp/server.ts`.
 - Scopes: `read` · `write` (horas propias) · `financials` (solo rige con rol owner/admin).
+- **Clientes y proyectos por API** (`lib/domain/catalog.ts`): el owner con `write` los crea y edita
+  (`create_client`, `update_client`, `create_project`, `update_project`); tarifas, moneda y
+  facturabilidad piden además `financials`. Mismas reglas que la app (herencia de facturabilidad,
+  recálculo de horas sin facturar con `recalculateUnbilled`, que también usa la acción). Borrar y el
+  acceso al portal quedan solo en la app.
 - Reglas de carga: el agente nunca manda montos; no toca horas facturadas; idempotencia por
   `external_ref`; solapar con el **mismo** proyecto se rechaza siempre, con **otro** proyecto pide
   confirmación (`allow_overlap`). Las horas de API quedan `source = 'api'` (🤖 en Mis Horas).
