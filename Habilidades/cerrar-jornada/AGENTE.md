@@ -37,8 +37,11 @@ autónomo con su cierre). La evidencia de cada acción `create` está en la acci
 `evidence.prompts` (lo que pidió Lucas, con hora), `evidence.context_prompts` (el encargo previo
 que los agentes siguieron ejecutando), `evidence.agent_tasks` (qué hizo cada subagente),
 `evidence.commits` (con el repo entre corchetes), y `*_total` (cuántos hubo: la muestra está
-repartida en toda la franja). En una hora unificada cada línea trae `[proyecto]`: la descripción
-cuenta lo de todos. Lo que no está en la evidencia no se escribe.
+repartida en toda la franja). En una hora unificada cada línea trae `[proyecto]` y la muestra
+reparte las líneas entre los proyectos: la descripción cuenta lo de **cada** proyecto de `unified`
+además del principal (antes de cargar, comprobá que ninguno quedó afuera; si la muestra de uno no
+alcanza, leé su evidencia completa en el plan.json con la herramienta Read). Lo que no está en la
+evidencia no se escribe.
 
 **Listo cuando:** cada `create` del plan tiene título y descripción.
 

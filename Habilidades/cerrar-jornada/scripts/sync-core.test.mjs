@@ -3,7 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
     adminMask, advanceLastFullDay, isBillingToolUse, memberFate, agentTaskText, autoRef, buildSegments, dayWindow, decideAction, entrySegments,
-    fingerprint, frozenReason, humanPrompt, isNight, isSyncPrompt, matchFolder, resolveWindow, spread, subtractSegments,
+    fingerprint, frozenReason, humanPrompt, isNight, isSyncPrompt, matchFolder, resolveWindow, spread, spreadByProject, subtractSegments,
     toArHm, toEntryTimes, turnEvent, windowSegments, windowsToProcess, workdayOf, workedMinutes,
 } from "./sync-core.mjs";
 
@@ -414,6 +414,22 @@ test("advanceLastFullDay: avanza de a una fecha contigua, sin saltear ni pasar e
 test("spread: reparte la evidencia a lo largo de toda la franja", () => {
     assert.deepEqual(spread([1, 2, 3], 5), [1, 2, 3]);
     assert.deepEqual(spread([0, 1, 2, 3, 4, 5, 6, 7, 8, 9], 4), [0, 3, 6, 9]);
+});
+
+test("spreadByProject: en una hora unificada la muestra trae líneas de cada proyecto", () => {
+    // 09/10: 18 pedidos de IA Agent y después 6 de Odoo; el recorte a 10 dejaba Odoo afuera.
+    const ia = Array.from({ length: 18 }, (_, i) => `14:${String(i + 10)} [IA Agent] pedido ${i}`);
+    const odoo = Array.from({ length: 6 }, (_, i) => `19:${String(i + 30)} [Odoo GPS Tracker] pedido ${i}`);
+    const out = spreadByProject([...ia, ...odoo], 10);
+    assert.equal(out.length, 10);
+    assert.equal(out.filter((s) => s.includes("[Odoo GPS Tracker]")).length, 5);
+    assert.equal(out.filter((s) => s.includes("[IA Agent]")).length, 5);
+    // Lo que un proyecto chico no usa pasa al otro.
+    const chico = spreadByProject([...ia, "20:00 [Odoo GPS Tracker] único"], 10);
+    assert.equal(chico.filter((s) => s.includes("[IA Agent]")).length, 9);
+    // Agent tasks (sin hora) y listas sin proyecto se comportan como spread.
+    assert.equal(spreadByProject(["[A] x", "[A] y", "[B] z"], 2).join("|"), "[A] x|[B] z");
+    assert.deepEqual(spreadByProject(["a", "b", "c", "d"], 2), spread(["a", "b", "c", "d"], 2));
 });
 
 // ── Verificación de las correcciones (segunda pasada) ────────────────────────

@@ -654,7 +654,29 @@ export function adminMask(events) {
 /** Hasta `n` elementos repartidos a lo largo de toda la lista: el primero, el último y parejo en el medio. */
 export function spread(list, n) {
     if (list.length <= n) return list;
+    if (n <= 1) return list.slice(0, Math.max(n, 0));
     return Array.from({ length: n }, (_, i) => list[Math.round((i * (list.length - 1)) / (n - 1))]);
+}
+
+/**
+ * Como `spread`, pero en una hora unificada reparte el cupo entre los proyectos (`[proyecto]` de cada
+ * línea): ninguno queda afuera de la muestra aunque sus líneas vengan después de las del otro.
+ */
+export function spreadByProject(list, n) {
+    if (list.length <= n) return list;
+    const groups = new Map();
+    for (const s of list) {
+        const name = /^(?:\d{2}:\d{2} )?\[([^\]]+)\]/.exec(s)?.[1] ?? "";
+        groups.set(name, [...(groups.get(name) ?? []), s]);
+    }
+    if (groups.size <= 1) return spread(list, n);
+    // Cupo parejo; lo que un proyecto chico no usa pasa a los demás.
+    const quota = new Map([...groups.keys()].map((k) => [k, 0]));
+    for (let left = n; left > 0;) {
+        const open = [...groups].filter(([k, g]) => quota.get(k) < g.length);
+        for (const [k] of open) if (left > 0) { quota.set(k, quota.get(k) + 1); left--; }
+    }
+    return [...groups].flatMap(([k, g]) => spread(g, quota.get(k)));
 }
 
 /** Mínimo y máximo sin `Math.min(...lista)` (que revienta la pila con cientos de miles de eventos). */

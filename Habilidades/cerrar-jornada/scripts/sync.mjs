@@ -31,7 +31,7 @@ import {
     DEFAULT_PAUSE_MIN, DOUBT_PREFIX, MIN_WORKED_MIN,
     addDays, adminMask, advanceLastFullDay, agentTaskText, arYmd, autoRef, dayWindow, decideAction,
     fingerprint, frozenReason, humanPrompt, isSyncPrompt, matchFolder, matchesEntry, maxOf, memberFate, minOf, normPath, ownRecord, rawUserText,
-    resolveWindow, spread, toArHm, toArIso, toEntryTimes, turnEvent, windowSegments, windowsToProcess,
+    resolveWindow, spread, spreadByProject, toArHm, toArIso, toEntryTimes, turnEvent, windowSegments, windowsToProcess,
     workedMinutes,
 } from "./sync-core.mjs";
 
@@ -951,7 +951,7 @@ function doubtText(d) {
  * para que entre en la salida de una herramienta (el plan completo queda en plan.json).
  */
 function summaryOf(p, file) {
-    const clip = (list, n) => (list ?? []).slice(0, n).map((s) => (s.length > 120 ? `${s.slice(0, 119)}…` : s));
+    const clip = (list, n) => spreadByProject(list ?? [], n).map((s) => (s.length > 120 ? `${s.slice(0, 119)}…` : s));
     const evidence = (e) => e && {
         prompts: clip(e.prompts, 10), context_prompts: clip(e.context_prompts, 3), agent_tasks: clip(e.agent_tasks, 6),
         commits: clip(e.commits, 10), prompts_total: e.prompts_total, agent_tasks_total: e.agent_tasks_total, commits_total: e.commits_total,
