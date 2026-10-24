@@ -62,6 +62,9 @@ interface ClientSummary {
   currency: string;
   unbilledHours: number; // minutos
   unbilledAmount: number;
+  /** Gastos de proyecto pendientes de refacturar. */
+  unbilledExpenseCount: number;
+  unbilledExpenseTotals: { currency: string; amount: number }[];
   billedUnpaidAmount: number;
   billedPaidAmount: number;
 }
@@ -271,7 +274,7 @@ export default function InvoicesPage() {
                 </tr>
               </thead>
               <tbody className="divide-y">
-                {clientSummaries.filter(s => s.unbilledAmount > 0).map((summary) => (
+                {clientSummaries.filter(s => s.unbilledAmount > 0 || s.unbilledExpenseCount > 0).map((summary) => (
                   <tr key={summary.clientId} className="hover:bg-muted/20 transition-colors">
                     <td className="p-3 font-medium">
                       <div className="flex flex-col">
@@ -284,6 +287,12 @@ export default function InvoicesPage() {
                     </td>
                     <td className="p-3 text-right font-bold text-amber-600">
                       {Number(summary.unbilledAmount).toLocaleString()} {summary.currency}
+                      {summary.unbilledExpenseCount > 0 && (
+                        <span className="block text-[10px] font-normal text-muted-foreground">
+                          + {summary.unbilledExpenseCount} gasto{summary.unbilledExpenseCount > 1 ? "s" : ""}:{" "}
+                          {summary.unbilledExpenseTotals.map((t) => `${t.amount.toLocaleString()} ${t.currency}`).join(" + ")}
+                        </span>
+                      )}
                     </td>
                     <td className="p-3 text-right">
                       <Link href={`/dashboard/billing/select/${summary.clientId}`}>

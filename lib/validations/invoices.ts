@@ -14,9 +14,9 @@ const uuid = z.string().uuid({ message: "ID inválido (esperado UUID)" });
 
 export const createInvoiceFromTimeEntriesSchema = z.object({
     client_id: uuid,
-    time_entry_ids: z.array(uuid).min(1, {
-        message: "Se requiere al menos un registro de tiempo",
-    }),
+    time_entry_ids: z.array(uuid),
+    /** Gastos de proyecto a refacturar (una línea de detalle por gasto). */
+    expense_ids: z.array(uuid).optional(),
     tax_rate: z.number().nonnegative().max(100).optional(),
     due_date: z.coerce.date().nullable().optional(),
     notes: z.string().max(5000).nullable().optional(),
@@ -28,6 +28,9 @@ export const createInvoiceFromTimeEntriesSchema = z.object({
      * un invoice_item negativo. */
     discount_percent: z.number().min(0).max(100).optional(),
     discount_reason: z.string().max(500).nullable().optional(),
+}).refine((d) => d.time_entry_ids.length > 0 || (d.expense_ids?.length ?? 0) > 0, {
+    message: "Se requiere al menos un registro de tiempo o un gasto",
+    path: ["time_entry_ids"],
 });
 
 export const updateInvoiceStatusSchema = z.object({

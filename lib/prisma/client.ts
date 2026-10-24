@@ -81,6 +81,9 @@ function createPrisma() {
                 payments: {
                     amount: { compute: (p) => Number(p.amount) },
                 },
+                project_expenses: {
+                    amount: { compute: (e) => Number(e.amount) },
+                },
             },
         });
 

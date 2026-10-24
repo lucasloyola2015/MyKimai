@@ -14,6 +14,7 @@ import { getUsdExchangeRate } from "./exchange";
 import { PUNTO_VENTA_DEFAULT } from "@/lib/fiscal-config";
 import { resolveRate } from "@/lib/utils/rates";
 import { buildDiscountDescription } from "@/lib/utils/discount";
+import { buildExpenseDescription, convertExpenseAmount } from "@/lib/utils/expenses";
 import {
     createInvoiceFromTimeEntriesSchema,
     updateInvoiceStatusSchema,
@@ -249,6 +250,8 @@ async function generateInvoiceNumber(
 export async function createInvoiceFromTimeEntries(data: {
     client_id: string;
     time_entry_ids: string[];
+    /** Gastos de proyecto a refacturar: una línea por gasto, sin descuento. */
+    expense_ids?: string[];
     tax_rate?: number;
     due_date?: Date | null;
     notes?: string | null;
@@ -320,10 +323,34 @@ export async function createInvoiceFromTimeEntries(data: {
         },
     });
 
-    if (timeEntries.length === 0) {
+    // Gastos de proyecto: facturables, pendientes y del mismo cliente.
+    const expenseIds = data.expense_ids ?? [];
+    const expenses = expenseIds.length > 0
+        ? await prisma.project_expenses.findMany({
+            where: {
+                id: { in: expenseIds },
+                billable: true,
+                invoice_id: null,
+                projects: {
+                    client_id: data.client_id,
+                    clients: { user_id: ctx.ownerId },
+                },
+            },
+            include: { projects: { select: { name: true } } },
+            orderBy: [{ expense_date: "asc" }, { created_at: "asc" }],
+        })
+        : [];
+    if (expenses.length !== expenseIds.length) {
         return {
             success: false,
-            error: "No hay períodos de trabajo válidos para facturar.",
+            error: "Algún gasto ya fue facturado o no pertenece a este cliente. Recargá la página.",
+        };
+    }
+
+    if (timeEntries.length === 0 && expenses.length === 0) {
+        return {
+            success: false,
+            error: "No hay períodos de trabajo ni gastos válidos para facturar.",
         };
     }
 
@@ -334,7 +361,10 @@ export async function createInvoiceFromTimeEntries(data: {
     // stakeholders activos. Caso contrario, alguno de los stakeholders
     // vería un total que mezcla horas que NO le pertenecen.
     const distinctProjectIds = Array.from(
-        new Set(timeEntries.map((e: any) => e.tasks.project_id as string))
+        new Set([
+            ...timeEntries.map((e: any) => e.tasks.project_id as string),
+            ...expenses.map((e) => e.project_id),
+        ])
     );
     if (distinctProjectIds.length > 1) {
         // Hay stakeholders con visibilidad granular?
@@ -415,6 +445,31 @@ export async function createInvoiceFromTimeEntries(data: {
         ? Number((grossSubtotal * (discountPercent / 100)).toFixed(2))
         : 0;
     subtotal = Number((grossSubtotal - discountAmount).toFixed(2));
+
+    // Gastos: se suman después del descuento (se refacturan al costo). Si la
+    // moneda del gasto no es la de la factura, se convierte al TC actual.
+    if (expenses.some((e) => e.currency !== billingCurrency) && !currentExchangeRate) {
+        currentExchangeRate = await getUsdExchangeRate();
+    }
+    let expenseLines: { id: string; description: string; amount: number }[];
+    try {
+        expenseLines = expenses.map((e) => ({
+            id: e.id,
+            description: buildExpenseDescription({
+                description: e.description,
+                expense_date: e.expense_date,
+                projectName: e.projects.name,
+            }),
+            amount: convertExpenseAmount(Number(e.amount), e.currency, billingCurrency, currentExchangeRate),
+        }));
+    } catch (error) {
+        return {
+            success: false,
+            error: error instanceof Error ? error.message : "No se pudo convertir un gasto.",
+        };
+    }
+    const expensesTotal = expenseLines.reduce((sum, l) => sum + l.amount, 0);
+    subtotal = Number((subtotal + expensesTotal).toFixed(2));
 
     const taxRate = data.tax_rate || 0;
     const taxAmount = subtotal * (taxRate / 100);
@@ -557,6 +612,32 @@ export async function createInvoiceFromTimeEntries(data: {
                 });
             }
 
+            // Gastos: 1 línea de detalle por gasto. El updateMany con
+            // invoice_id NULL evita facturar dos veces el mismo gasto si dos
+            // facturas se emiten a la vez.
+            if (expenseLines.length > 0) {
+                const claimed = await tx.project_expenses.updateMany({
+                    where: { id: { in: expenseLines.map((l) => l.id) }, invoice_id: null },
+                    data: { invoice_id: invoice.id },
+                });
+                if (claimed.count !== expenseLines.length) {
+                    throw new Error("Algún gasto ya fue facturado. Recargá la página.");
+                }
+                for (const line of expenseLines) {
+                    await tx.invoice_items.create({
+                        data: {
+                            invoice_id: invoice.id,
+                            time_entry_id: null,
+                            description: line.description,
+                            quantity: 1,
+                            rate: line.amount,
+                            amount: line.amount,
+                            type: "expense",
+                        },
+                    });
+                }
+            }
+
             return invoice;
             }, { timeout: 15000 });
 
@@ -652,6 +733,12 @@ export async function deleteInvoice(id: string): Promise<ActionResponse<void>> {
                     is_billed: false,
                     invoice_id: null,
                 },
+            });
+
+            // B. Liberar los gastos de proyecto (vuelven a pendientes).
+            await tx.project_expenses.updateMany({
+                where: { invoice_id: id },
+                data: { invoice_id: null },
             });
 
             // C. Eliminar la factura (items se borran por cascade en DB)
@@ -805,6 +892,17 @@ export async function getClientBillingSummary() {
 
     const unbilledEntries = allEntries;
 
+    // Gastos de proyecto pendientes de refacturar (para que un cliente sin
+    // horas pendientes pero con gastos también aparezca para facturar).
+    const pendingExpenses = await prisma.project_expenses.findMany({
+        where: {
+            billable: true,
+            invoice_id: null,
+            projects: { clients: { user_id: ctx.ownerId } },
+        },
+        select: { amount: true, currency: true, projects: { select: { client_id: true } } },
+    });
+
     // Calcular resumen por cliente
     const summaries = clients.map((client) => {
         // Entradas sin facturar de este cliente
@@ -848,12 +946,20 @@ export async function getClientBillingSummary() {
             0
         );
 
+        const clientExpenses = pendingExpenses.filter((e) => e.projects.client_id === client.id);
+        const expenseTotalsByCurrency = new Map<string, number>();
+        for (const e of clientExpenses) {
+            expenseTotalsByCurrency.set(e.currency, (expenseTotalsByCurrency.get(e.currency) ?? 0) + Number(e.amount));
+        }
+
         return {
             clientId: client.id,
             clientName: client.name,
             currency: client.currency,
             unbilledHours: unbilledMinutes,
             unbilledAmount,
+            unbilledExpenseCount: clientExpenses.length,
+            unbilledExpenseTotals: Array.from(expenseTotalsByCurrency, ([currency, amount]) => ({ currency, amount })),
             billedUnpaidAmount,
             billedPaidAmount,
         };

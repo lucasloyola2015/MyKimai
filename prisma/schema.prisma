@@ -575,6 +575,7 @@ model invoices {
   clients        clients              @relation(fields: [client_id], references: [id], onDelete: Restrict, onUpdate: NoAction)
   payments       payments[]
   time_entries   time_entries[]
+  project_expenses project_expenses[]
 
   @@index([client_id], map: "idx_invoices_client_id")
   @@index([due_date], map: "idx_invoices_due_date")
@@ -621,6 +622,7 @@ model projects {
   tasks         tasks[]
   project_access project_access[]
   milestones    milestones[]
+  expenses      project_expenses[]
 
   @@index([client_id], map: "idx_projects_client_id")
   @@index([name], map: "idx_projects_name")
@@ -845,6 +847,7 @@ enum billing_type_invoice {
 enum invoice_item_type {
   time
   fixed
+  expense
 
   @@schema("public")
 }
@@ -1020,5 +1023,51 @@ enum milestone_status {
   blocked
   cancelled
 
+  @@schema("public")
+}
+
+// =====================================================================
+// Gastos extra de proyecto (supabase/migrations/2026-10-24_project_expenses.sql)
+// =====================================================================
+
+/// Compra o gasto que Lucas paga para un proyecto y se refactura al cliente:
+/// entra en la próxima factura como línea de detalle (type = 'expense').
+/// `invoice_id` NULL = pendiente de facturar.
+model project_expenses {
+  id           String    @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  project_id   String    @db.Uuid
+  description  String    @db.VarChar(500)
+  supplier     String?   @db.VarChar(255)
+  expense_date DateTime  @default(dbgenerated("CURRENT_DATE")) @db.Date
+  amount       Decimal   @db.Decimal(12, 2)
+  currency     String    @default("ARS") @db.VarChar(3)
+  billable     Boolean   @default(true)
+  notes        String?
+  invoice_id   String?   @db.Uuid
+  created_by   String?   @db.Uuid
+  created_at   DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at   DateTime  @default(now()) @db.Timestamptz(6)
+  projects     projects  @relation(fields: [project_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  invoices     invoices? @relation(fields: [invoice_id], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  attachments  project_expense_attachments[]
+
+  @@index([project_id], map: "idx_project_expenses_project_id")
+  @@index([invoice_id], map: "idx_project_expenses_invoice_id")
+  @@schema("public")
+}
+
+/// Comprobantes del gasto (fotos, factura del proveedor) en el bucket privado
+/// `expense-attachments`. Quedan solo en el sistema: no salen en la factura.
+model project_expense_attachments {
+  id           String           @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  expense_id   String           @db.Uuid
+  storage_path String           @unique
+  file_name    String           @db.VarChar(255)
+  mime_type    String?          @db.VarChar(100)
+  size_bytes   Int?
+  created_at   DateTime         @default(now()) @db.Timestamptz(6)
+  expense      project_expenses @relation(fields: [expense_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([expense_id], map: "idx_project_expense_attachments_expense_id")
   @@schema("public")
 }

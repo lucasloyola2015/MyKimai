@@ -204,7 +204,7 @@ export default function InvoiceDetailPage() {
                               {entryDate && <span className="text-muted-foreground mr-1">({entryDate}) -</span>}
                               {item.description}
                             </td>
-                            <td className="p-2 border-r text-right font-mono">{Number(item.quantity).toFixed(2)}h</td>
+                            <td className="p-2 border-r text-right font-mono">{Number(item.quantity).toFixed(2)}{item.type === "time" ? "h" : " un"}</td>
                             <td className="p-2 text-right font-mono font-bold leading-none">
                               <div className="flex flex-col">
                                 <span>{Math.round(Number(item.amount)).toLocaleString()}</span>

@@ -7,7 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardFooter } from "@/componen
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { ArrowLeft, Clock, DollarSign, FileText, Loader2, Save, CheckCircle2 } from "lucide-react";
+import { ArrowLeft, Clock, DollarSign, FileText, Loader2, Save, CheckCircle2, Receipt, Paperclip } from "lucide-react";
 import { format } from "date-fns";
 import { getUnbilledTimeEntries, createInvoiceFromTimeEntries } from "@/lib/actions/invoices";
 import { getClients } from "@/lib/actions/clients";
@@ -15,6 +15,8 @@ import { getUserFiscalSettings } from "@/lib/actions/user-settings";
 import type { time_entries, clients } from "@prisma/client";
 import { resolveRate } from "@/lib/utils/rates";
 import { buildDiscountDescription } from "@/lib/utils/discount";
+import { buildExpenseDescription, convertExpenseAmount, formatExpenseDate } from "@/lib/utils/expenses";
+import { getUnbilledExpenses, type ExpenseView } from "@/lib/actions/expenses";
 import { getUsdExchangeRateInfo, type UsdExchangeInfo } from "@/lib/actions/exchange";
 import { es } from "date-fns/locale";
 import { toast } from "@/hooks/use-toast";
@@ -58,6 +60,9 @@ export default function PartialBillingPage() {
     const [client, setClient] = useState<clients | null>(null);
     const [isMounted, setIsMounted] = useState(false);
     const [selectedIds, setSelectedIds] = useState<string[]>([]);
+    // Gastos de proyecto pendientes: vienen todos marcados (se cargaron para refacturar).
+    const [expenses, setExpenses] = useState<ExpenseView[]>([]);
+    const [selectedExpenseIds, setSelectedExpenseIds] = useState<string[]>([]);
     const [dueDate, setDueDate] = useState(format(new Date(Date.now() + 15 * 86400000), "yyyy-MM-dd"));
     const [billingType, setBillingType] = useState<string>("LEGAL");
     const [cbteTipo, setCbteTipo] = useState<number>(11); // 11 = Factura C
@@ -81,11 +86,14 @@ export default function PartialBillingPage() {
 
     const loadData = async () => {
         try {
-            const [entries, allClients] = await Promise.all([
+            const [entries, allClients, pendingExpenses] = await Promise.all([
                 getUnbilledTimeEntries(clientId as string),
-                getClients()
+                getClients(),
+                getUnbilledExpenses(clientId as string),
             ]);
             setTimeEntries(entries);
+            setExpenses(pendingExpenses);
+            setSelectedExpenseIds(pendingExpenses.map((e) => e.id));
             const currentClient = allClients.find(c => c.id === clientId);
             if (currentClient) {
                 setClient(currentClient);
@@ -124,6 +132,21 @@ export default function PartialBillingPage() {
     const selectedEntries = useMemo(() => {
         return timeEntries.filter(e => selectedIds.includes(e.id));
     }, [timeEntries, selectedIds]);
+
+    // Líneas de gasto en la moneda de la factura (misma conversión que el servidor).
+    const expenseLines = useMemo(() => {
+        return expenses
+            .filter((e) => selectedExpenseIds.includes(e.id))
+            .map((e) => ({
+                id: e.id,
+                description: buildExpenseDescription({
+                    description: e.description,
+                    expense_date: e.expense_date,
+                    projectName: e.project_name,
+                }),
+                amount: convertExpenseAmount(e.amount, e.currency, billingCurrency, currentRate || 1050),
+            }));
+    }, [expenses, selectedExpenseIds, billingCurrency, currentRate]);
 
     // §feature — datos para el informe detallado (resumen por proyecto) de las
     // entradas seleccionadas, para emitirlo junto con el comprobante.
@@ -196,6 +219,8 @@ export default function PartialBillingPage() {
             ? Math.min(Math.max(Number(discountPercent) || 0, 0), 100)
             : 0;
         const discountAmount = pct > 0 ? Number((totalToInvoice * (pct / 100)).toFixed(2)) : 0;
+        // Gastos: se suman después del descuento (se refacturan al costo).
+        const expensesTotal = expenseLines.reduce((sum, l) => sum + l.amount, 0);
 
         return {
             hours: (totalMinutes / 60).toFixed(2),
@@ -203,9 +228,10 @@ export default function PartialBillingPage() {
             gross: totalToInvoice,
             discountPercent: pct,
             discountAmount,
-            total: Number((totalToInvoice - discountAmount).toFixed(2)),
+            expensesTotal,
+            total: Number((totalToInvoice - discountAmount + expensesTotal).toFixed(2)),
         };
-    }, [selectedEntries, billingCurrency, exchangeStrategy, currentRate, applyDiscount, discountPercent]);
+    }, [selectedEntries, expenseLines, billingCurrency, exchangeStrategy, currentRate, applyDiscount, discountPercent]);
 
     const handleToggleAll = () => {
         if (selectedIds.length === timeEntries.length) {
@@ -221,9 +247,15 @@ export default function PartialBillingPage() {
         );
     };
 
+    const handleToggleExpense = (id: string) => {
+        setSelectedExpenseIds(prev =>
+            prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]
+        );
+    };
+
     const handleCreateInvoice = () => {
-        if (selectedIds.length === 0) {
-            toast({ title: "Error", description: "Selecciona al menos una entrada", variant: "destructive" });
+        if (selectedIds.length === 0 && selectedExpenseIds.length === 0) {
+            toast({ title: "Error", description: "Seleccioná al menos una entrada o un gasto", variant: "destructive" });
             return;
         }
         // §descuento — si está tildado, primero se configura % y motivo.
@@ -254,6 +286,7 @@ export default function PartialBillingPage() {
             const result = await createInvoiceFromTimeEntries({
                 client_id: clientId as string,
                 time_entry_ids: selectedIds,
+                expense_ids: selectedExpenseIds,
                 tax_rate: 0,
                 due_date: new Date(dueDate),
                 billing_type: billingType as any,
@@ -311,7 +344,7 @@ export default function PartialBillingPage() {
 
     // Preparar datos para el preview
     const previewData = useMemo(() => {
-        if (!client || selectedEntries.length === 0) return null;
+        if (!client || (selectedEntries.length === 0 && expenseLines.length === 0)) return null;
 
         // Agrupar entries por proyecto
         const projectGroups = new Map<string, {
@@ -393,6 +426,16 @@ export default function PartialBillingPage() {
             });
         }
 
+        for (const line of expenseLines) {
+            items.push({
+                description: line.description,
+                quantity: 1,
+                rate: line.amount,
+                amount: line.amount,
+                type: "expense" as any,
+            });
+        }
+
         return {
             issuer: {
                 business_name: issuerData?.business_name || "Lucas Loyola",
@@ -434,7 +477,7 @@ export default function PartialBillingPage() {
             exchangeInfo: billingCurrency === "ARS" ? exchangeInfo : undefined,
             exchangeStrategy,
         };
-    }, [client, selectedEntries, summary, billingType, cbteTipo, billingCurrency, exchangeStrategy, exchangeInfo, currentRate, dueDate, issuerData, discountReason]);
+    }, [client, selectedEntries, expenseLines, summary, billingType, cbteTipo, billingCurrency, exchangeStrategy, exchangeInfo, currentRate, dueDate, issuerData, discountReason]);
 
     // Rellenar plantilla HTML para el preview cuando se abre el diálogo
     useEffect(() => {
@@ -567,6 +610,66 @@ export default function PartialBillingPage() {
                             </div>
                         </CardContent>
                     </Card>
+
+                    {expenses.length > 0 && (
+                        <Card>
+                            <CardHeader className="pb-2">
+                                <CardTitle className="text-sm font-bold uppercase flex items-center gap-2">
+                                    <Receipt className="h-4 w-4" />
+                                    Gastos a refacturar
+                                </CardTitle>
+                            </CardHeader>
+                            <CardContent className="p-0">
+                                <div className="divide-y border-t">
+                                    {expenses.map((expense) => {
+                                        const converted = convertExpenseAmount(expense.amount, expense.currency, billingCurrency, currentRate || 1050);
+                                        const selected = selectedExpenseIds.includes(expense.id);
+                                        return (
+                                            <div
+                                                key={expense.id}
+                                                className={cn(
+                                                    "p-4 flex items-center gap-4 hover:bg-muted/30 transition-colors cursor-pointer",
+                                                    selected && "bg-primary/5"
+                                                )}
+                                                onClick={() => handleToggleExpense(expense.id)}
+                                            >
+                                                <Checkbox
+                                                    checked={selected}
+                                                    onCheckedChange={() => handleToggleExpense(expense.id)}
+                                                    onClick={(e) => e.stopPropagation()}
+                                                />
+                                                <div className="flex-1 min-w-0">
+                                                    <div className="flex justify-between items-start gap-2">
+                                                        <p className="font-semibold text-sm truncate">{expense.description}</p>
+                                                        <div className="flex flex-col items-end">
+                                                            <span className="font-mono text-sm font-bold whitespace-nowrap">
+                                                                {converted.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {billingCurrency}
+                                                            </span>
+                                                            {expense.currency !== billingCurrency && (
+                                                                <span className="text-[9px] text-muted-foreground font-mono">
+                                                                    {expense.currency} {expense.amount.toFixed(2)} @ {(currentRate || 1050).toFixed(0)} (Hoy)
+                                                                </span>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                    <div className="flex items-center gap-3 text-xs text-muted-foreground mt-1">
+                                                        <span>{formatExpenseDate(expense.expense_date)}</span>
+                                                        <span>•</span>
+                                                        <span className="bg-muted px-1.5 py-0.5 rounded text-[10px] uppercase font-bold">{expense.project_name}</span>
+                                                        {expense.attachments.length > 0 && (
+                                                            <span className="flex items-center gap-1">
+                                                                <Paperclip className="h-3 w-3" /> {expense.attachments.length}
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            </CardContent>
+                        </Card>
+                    )}
                 </div>
 
                 {/* RESUMEN DE FACTURACIÓN */}
@@ -726,6 +829,17 @@ export default function PartialBillingPage() {
                                 </div>
                             )}
 
+                            {summary.expensesTotal > 0 && (
+                                <div className="flex justify-between items-center text-sm py-1 border-b border-border/50">
+                                    <span className="text-muted-foreground">
+                                        Gastos ({expenseLines.length})
+                                    </span>
+                                    <span className="font-mono tabular-nums font-bold">
+                                        +{summary.expensesTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {billingCurrency}
+                                    </span>
+                                </div>
+                            )}
+
                             {/* 5. Total a facturar */}
                             <div className="bg-black text-white p-4 rounded-xl space-y-1">
                                 <p className="text-[10px] uppercase tracking-widest font-bold opacity-60">Total a facturar</p>
@@ -766,7 +880,7 @@ export default function PartialBillingPage() {
 
                             <Button
                                 className="w-full font-bold h-11"
-                                disabled={selectedIds.length === 0 || submitting}
+                                disabled={(selectedIds.length === 0 && selectedExpenseIds.length === 0) || submitting}
                                 onClick={handleCreateInvoice}
                             >
                                 <Save className="mr-2 h-4 w-4" />

@@ -23,7 +23,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Plus, Pencil, Trash2, ShieldCheck, Users, Flag, Search, X, FolderSearch } from "lucide-react";
+import { Plus, Pencil, Trash2, ShieldCheck, Users, Flag, Receipt, Search, X, FolderSearch } from "lucide-react";
 import type { projects, clients as Client } from "@prisma/client";
 import Link from "next/link";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -289,6 +289,15 @@ export default function ProjectsPage() {
                   title="Hitos"
                 >
                   <Flag className="h-4 w-4" />
+                </Button>
+              </Link>
+              <Link href={`/dashboard/projects/${project.id}/expenses`}>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  title="Gastos"
+                >
+                  <Receipt className="h-4 w-4" />
                 </Button>
               </Link>
               <Link href={`/dashboard/projects/${project.id}/stakeholders`}>
