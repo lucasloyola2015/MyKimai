@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildExpenseDescription, convertExpenseAmount, formatExpenseDate } from "./expenses";
+import { buildExpenseDescription, convertExpenseAmount, expenseStoragePath, formatExpenseDate, safeStorageFileName } from "./expenses";
 
 describe("convertExpenseAmount", () => {
     it("misma moneda: no convierte", () => {
@@ -34,5 +34,21 @@ describe("buildExpenseDescription", () => {
                 projectName: "Medidor de Potencia",
             })
         ).toBe("Gasto — Medidor de Potencia: Conversor serial (HF2211A) (24/10/2026)");
+    });
+});
+
+describe("safeStorageFileName", () => {
+    it("saca acentos, espacios y barras", () => {
+        expect(safeStorageFileName("Factura Mercado Libre ñandú/../x.pdf")).toBe("Factura_Mercado_Libre_nandu_.._x.pdf");
+    });
+
+    it("nunca queda vacío", () => {
+        expect(safeStorageFileName("")).toBe("archivo");
+    });
+});
+
+describe("expenseStoragePath", () => {
+    it("arma owner/gasto/id-nombre", () => {
+        expect(expenseStoragePath("o1", "e1", "u1", "foto 1.jpg")).toBe("o1/e1/u1-foto_1.jpg");
     });
 });

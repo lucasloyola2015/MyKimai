@@ -32,10 +32,14 @@ export const createExpenseSchema = z.object({
     ...expenseFields,
 });
 
+/** Edición parcial: solo cambian los campos que vengan. */
 export const updateExpenseSchema = z.object({
     id: uuid,
     ...expenseFields,
-});
+}).partial().required({ id: true });
+
+export type CreateExpenseInput = z.input<typeof createExpenseSchema>;
+export type UpdateExpenseInput = z.input<typeof updateExpenseSchema>;
 
 export const expenseIdSchema = z.object({ id: uuid });
 

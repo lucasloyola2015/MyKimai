@@ -38,3 +38,19 @@ export function buildExpenseDescription(expense: {
     const project = expense.projectName ? ` — ${expense.projectName}` : "";
     return `Gasto${project}: ${expense.description.trim()} (${formatExpenseDate(expense.expense_date)})`;
 }
+
+/** Nombre de archivo apto para una key de Storage (sin acentos ni espacios). */
+export function safeStorageFileName(fileName: string): string {
+    return (
+        fileName
+            .normalize("NFD")
+            .replace(/[\u0300-\u036f]/g, "")
+            .replace(/[^a-zA-Z0-9._-]+/g, "_")
+            .slice(-120) || "archivo"
+    );
+}
+
+/** Key del comprobante en el bucket: una carpeta por owner y por gasto. */
+export function expenseStoragePath(ownerId: string, expenseId: string, uniqueId: string, fileName: string): string {
+    return `${ownerId}/${expenseId}/${uniqueId}-${safeStorageFileName(fileName)}`;
+}

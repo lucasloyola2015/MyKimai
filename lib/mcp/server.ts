@@ -5,7 +5,8 @@
  * autenticada. Solo se exponen las herramientas que la key puede usar:
  * - 'read'       → consultas (clientes, proyectos, horas, resúmenes, paquetes, hitos).
  * - 'write'      → crear / editar horas propias; el owner, además, crear / editar clientes y proyectos.
- * - financials   → facturas y pendiente de facturar (scope + rol owner/admin).
+ * - financials   → facturas, pendiente de facturar y gastos de proyecto (scope + rol owner/admin);
+ *                  cargar gastos pide además 'write' y ser el owner.
  *
  * Toda la lógica y los filtros de seguridad viven en lib/domain/*.
  */
@@ -24,6 +25,15 @@ import {
     type DomainResult,
 } from "@/lib/domain/time-entries";
 import { canManageWorkspace } from "@/lib/auth/owner-context";
+import {
+    createExpense,
+    deleteExpense,
+    listExpenses,
+    updateExpense,
+    uploadExpenseAttachment,
+} from "@/lib/domain/expenses";
+import { EXPENSE_ATTACHMENT_MIME_TYPES } from "@/lib/validations/expenses";
+import { arDayKey } from "@/lib/timezone";
 import { createClient, createProject, getClient, getProject, updateClient, updateProject } from "@/lib/domain/catalog";
 import {
     getAccessSummary,
@@ -48,6 +58,7 @@ Reglas:
 - Usá external_ref estable (ej. "<repo>:<YYYY-MM-DD>:<n>") para que re-intentar no duplique.
 - Las horas cargadas por API quedan marcadas con 🤖. No se pueden tocar horas ya facturadas. Los montos los calcula el sistema: nunca los mandes.
 - Menos de 30 minutos trabajados no se registra. Una sesión corta solo entra si el mismo cliente retoma después de una pausa: se carga UNA entrada que abarca las dos sesiones, con la pausa en el medio (breaks). La pausa empieza tras 1 hora sin actividad. Lo que pasa durante una pausa no cuenta como solapamiento.
+- Gastos de proyecto (compras, materiales, componentes que Lucas paga para un proyecto y le refactura al cliente): create_expense. Entran solos en la próxima factura del cliente como una línea de detalle (descripción + monto, sin descuento). El monto, la moneda y la fecha salen del comprobante o de lo que diga el usuario: nunca los inventes. Antes de cargar, buscá con list_expenses que no esté ya cargado y confirmá con el usuario proyecto, descripción, monto y moneda. La descripción la ve el cliente en la factura; proveedor, notas y comprobantes (add_expense_attachment: foto o PDF de la factura del proveedor) quedan solo en el sistema. Un gasto facturado no se puede editar ni borrar.
 - Trabajo autónomo (la jornada de Lucas es de 07:00 a 24:00; de 00:00 a 07:00 trabajan solos los agentes): cargalo aparte con autonomous=true, una entrada por noche. Va a la tarea "Trabajo autónomo" del proyecto, con tarifa con descuento, y el título se prefija solo con "Trabajo autónomo: ".`;
 
 const MAX_OUTPUT_CHARS = 200_000;
@@ -411,6 +422,139 @@ export function buildMcpServer(ctx: ApiContext): McpServer {
                 annotations: { ...WRITE, idempotentHint: true },
             },
             safe("update_project", async (a: Parameters<typeof updateProject>[1]) => fromDomain(await updateProject(ctx, a)))
+        );
+    }
+
+    // ── Gastos de proyecto ('financials'; cargar: + 'write' y owner) ───────
+    if (canRead && ctx.financials) {
+        server.registerTool(
+            "list_expenses",
+            {
+                title: "Gastos de proyecto",
+                description:
+                    "Gastos de proyecto (compras que se refacturan al cliente) con monto, moneda, proveedor, si ya están facturados y sus comprobantes. status='pending' = lo que entra en la próxima factura.",
+                inputSchema: {
+                    project_id: uuid("proyecto").optional(),
+                    client_id: uuid("cliente").optional(),
+                    status: z.enum(["pending", "billed", "all"]).optional().describe("Default 'all'"),
+                    from: ymd.describe("Fecha del gasto desde (YYYY-MM-DD)"),
+                    to: ymd.describe("Fecha del gasto hasta (YYYY-MM-DD)"),
+                },
+                annotations: READ_ONLY,
+            },
+            safe(
+                "list_expenses",
+                async (a: { project_id?: string; client_id?: string; status?: "pending" | "billed" | "all"; from?: string; to?: string }) =>
+                    fromDomain(
+                        await listExpenses(ctx, {
+                            project_id: a.project_id,
+                            client_id: a.client_id,
+                            status: a.status,
+                            from: toUtcDate(a.from),
+                            to: toUtcDate(a.to),
+                        })
+                    )
+            )
+        );
+    }
+
+    if (canWrite && canManageWorkspace(ctx) && ctx.financials) {
+        const expenseFields = {
+            supplier: z.string().max(255).nullable().optional().describe("Proveedor (interno, no sale en la factura), ej. 'Mercado Libre — riotecno'"),
+            amount: z.number().positive().describe("Monto pagado, tal cual el comprobante"),
+            currency: z.enum(["ARS", "USD"]).describe("Moneda del monto pagado"),
+            billable: z.boolean().optional().describe("Si se refactura al cliente (default true)"),
+            notes: z.string().max(5000).nullable().optional().describe("Notas internas (no salen en la factura)"),
+        };
+        const WRITE = { readOnlyHint: false, destructiveHint: false, openWorldHint: false } as const;
+        const MAX_ATTACHMENT_BYTES = 3 * 1024 * 1024;
+
+        server.registerTool(
+            "create_expense",
+            {
+                title: "Cargar gasto",
+                description:
+                    "Carga un gasto de un proyecto (una compra para el cliente). Entra en la próxima factura del cliente como una línea con la descripción y el monto. Antes: list_expenses para no duplicarlo y confirmación del usuario. Un duplicado exacto (proyecto, fecha, monto, moneda y descripción) se rechaza.",
+                inputSchema: {
+                    project_id: uuid("proyecto"),
+                    description: z.string().min(1).max(500).describe("Qué se compró (sale en la factura), ej. 'Conversor serial RS232/RS485 a WiFi (HF2211A)'"),
+                    expense_date: ymd.describe("Fecha de la compra YYYY-MM-DD (default: hoy, hora AR)"),
+                    ...expenseFields,
+                },
+                annotations: WRITE,
+            },
+            safe(
+                "create_expense",
+                async (a: Omit<Parameters<typeof createExpense>[1], "expense_date"> & { expense_date?: string }) =>
+                    fromDomain(await createExpense(ctx, { ...a, expense_date: toUtcDate(a.expense_date ?? arDayKey(new Date()))! }))
+            )
+        );
+
+        server.registerTool(
+            "update_expense",
+            {
+                title: "Editar gasto",
+                description: "Edita un gasto NO facturado (solo los campos que mandes).",
+                inputSchema: {
+                    expense_id: uuid("el gasto"),
+                    description: z.string().min(1).max(500).optional(),
+                    expense_date: ymd.describe("YYYY-MM-DD"),
+                    ...expenseFields,
+                    amount: expenseFields.amount.optional(),
+                    currency: expenseFields.currency.optional(),
+                },
+                annotations: { ...WRITE, idempotentHint: true },
+            },
+            safe(
+                "update_expense",
+                async ({ expense_id, expense_date, ...patch }: Omit<Parameters<typeof updateExpense>[1], "id" | "expense_date"> & { expense_id: string; expense_date?: string }) =>
+                    fromDomain(await updateExpense(ctx, { id: expense_id, ...patch, expense_date: toUtcDate(expense_date) }))
+            )
+        );
+
+        server.registerTool(
+            "delete_expense",
+            {
+                title: "Borrar gasto",
+                description: "Borra un gasto NO facturado y sus comprobantes. Solo con confirmación explícita del usuario.",
+                inputSchema: { expense_id: uuid("el gasto") },
+                annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+            },
+            safe("delete_expense", async (a: { expense_id: string }) => fromDomain(await deleteExpense(ctx, a.expense_id)))
+        );
+
+        server.registerTool(
+            "add_expense_attachment",
+            {
+                title: "Adjuntar comprobante",
+                description:
+                    "Adjunta a un gasto una foto o PDF (ej. la factura del proveedor), en base64, de hasta 3 MB. Queda solo en el sistema: no sale en la factura al cliente. Se puede adjuntar también a un gasto ya facturado.",
+                inputSchema: {
+                    expense_id: uuid("el gasto"),
+                    file_name: z.string().min(1).max(255).describe("Nombre del archivo, ej. 'factura-ml.pdf'"),
+                    mime_type: z.enum(EXPENSE_ATTACHMENT_MIME_TYPES),
+                    content_base64: z.string().min(1).describe("Contenido del archivo en base64 (sin prefijo data:)"),
+                },
+                annotations: WRITE,
+            },
+            safe(
+                "add_expense_attachment",
+                async (a: { expense_id: string; file_name: string; mime_type: string; content_base64: string }) => {
+                    const content = Buffer.from(a.content_base64.replace(/^data:[^,]*,/, ""), "base64");
+                    if (content.length === 0) return error("El archivo está vacío o no es base64 válido.", { code: "invalid" });
+                    if (content.length > MAX_ATTACHMENT_BYTES) {
+                        return error("El archivo supera los 3 MB: adjuntalo desde la app.", { code: "invalid" });
+                    }
+                    return fromDomain(
+                        await uploadExpenseAttachment(ctx, {
+                            expense_id: a.expense_id,
+                            file_name: a.file_name,
+                            mime_type: a.mime_type,
+                            content,
+                        })
+                    );
+                }
+            )
         );
     }
 

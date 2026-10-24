@@ -66,6 +66,12 @@ La key actúa como su usuario: el contexto se resuelve por request (`lib/auth/ap
   facturabilidad piden además `financials`. Mismas reglas que la app (herencia de facturabilidad,
   recálculo de horas sin facturar con `recalculateUnbilled`, que también usa la acción). Borrar y el
   acceso al portal quedan solo en la app.
+- **Gastos de proyecto** (`lib/domain/expenses.ts`, tabla `project_expenses`): compras que se
+  refacturan al cliente; entran en la próxima factura como una línea `type = 'expense'` (sin
+  descuento). Por API: `list_expenses` (`financials`) y `create_expense` / `update_expense` /
+  `delete_expense` / `add_expense_attachment` (owner + `write` + `financials`). Acá el monto SÍ lo
+  manda el agente (sale del comprobante). Los comprobantes van al bucket privado
+  `expense-attachments` y no salen en la factura. Un gasto facturado no se edita ni se borra.
 - Reglas de carga: el agente nunca manda montos; no toca horas facturadas; idempotencia por
   `external_ref`; solapar con el **mismo** proyecto se rechaza siempre, con **otro** proyecto pide
   confirmación (`allow_overlap`). Las horas de API quedan `source = 'api'` (🤖 en Mis Horas).
