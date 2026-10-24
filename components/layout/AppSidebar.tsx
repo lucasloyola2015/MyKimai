@@ -12,6 +12,7 @@ import {
     Package,
     BarChart3,
     Calendar,
+    Receipt,
     X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -39,6 +40,7 @@ const navItems: NavItem[] = [
         icon: FileText,
         badge: "pendingInvoices",
     },
+    { href: "/dashboard/expenses", label: "Gastos", icon: Receipt },
     { href: "/dashboard/reports", label: "Reportes", icon: BarChart3 },
 ];
 

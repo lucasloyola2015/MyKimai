@@ -54,3 +54,21 @@ export function safeStorageFileName(fileName: string): string {
 export function expenseStoragePath(ownerId: string, expenseId: string, uniqueId: string, fileName: string): string {
     return `${ownerId}/${expenseId}/${uniqueId}-${safeStorageFileName(fileName)}`;
 }
+
+/**
+ * Estado del gasto frente al cliente: no se refactura · pendiente de facturar · facturado sin
+ * cobrar · cobrado (la factura que lo incluye está pagada).
+ */
+export type ExpenseBillingStatus = "not_billable" | "pending" | "invoiced" | "paid";
+
+/** Filtro por estado: los de ExpenseBillingStatus, 'billed' (invoiced + paid) o 'all'. */
+export type ExpenseStatusFilter = ExpenseBillingStatus | "billed" | "all";
+
+export function expenseBillingStatus(e: {
+    billable: boolean;
+    invoice_id: string | null;
+    invoice_status: string | null;
+}): ExpenseBillingStatus {
+    if (e.invoice_id) return e.invoice_status === "paid" ? "paid" : "invoiced";
+    return e.billable ? "pending" : "not_billable";
+}

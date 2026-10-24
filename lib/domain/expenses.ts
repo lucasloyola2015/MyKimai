@@ -9,6 +9,7 @@
 
 import "server-only";
 import { randomUUID } from "crypto";
+import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma/client";
 import { canManageWorkspace } from "@/lib/auth/owner-context";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -20,7 +21,14 @@ import {
     type CreateExpenseInput,
     type UpdateExpenseInput,
 } from "@/lib/validations/expenses";
-import { expenseStoragePath } from "@/lib/utils/expenses";
+import {
+    expenseBillingStatus,
+    expenseStoragePath,
+    type ExpenseBillingStatus,
+    type ExpenseStatusFilter,
+} from "@/lib/utils/expenses";
+
+export type { ExpenseBillingStatus, ExpenseStatusFilter };
 import { fail, type DomainResult, type EntryAccessContext } from "./time-entries";
 
 /** Bucket privado de comprobantes (supabase/migrations/2026-10-24_project_expenses.sql). */
@@ -53,12 +61,14 @@ export interface ExpenseView {
     notes: string | null;
     invoice_id: string | null;
     invoice_number: string | null;
+    invoice_status: string | null;
+    billing_status: ExpenseBillingStatus;
     attachments: ExpenseAttachmentView[];
 }
 
 const expenseInclude = {
     projects: { select: { name: true, client_id: true, clients: { select: { name: true } } } },
-    invoices: { select: { invoice_number: true } },
+    invoices: { select: { invoice_number: true, status: true } },
     attachments: { orderBy: { created_at: "asc" as const } },
 };
 
@@ -84,6 +94,11 @@ async function toExpenseViews(rows: ExpenseRow[], withUrls: boolean): Promise<Ex
     }
 
     return rows.map((r) => ({
+        billing_status: expenseBillingStatus({
+            billable: r.billable,
+            invoice_id: r.invoice_id,
+            invoice_status: r.invoices?.status ?? null,
+        }),
         id: r.id,
         project_id: r.project_id,
         project_name: r.projects.name,
@@ -98,6 +113,7 @@ async function toExpenseViews(rows: ExpenseRow[], withUrls: boolean): Promise<Ex
         notes: r.notes,
         invoice_id: r.invoice_id,
         invoice_number: r.invoices?.invoice_number ?? null,
+        invoice_status: r.invoices?.status ?? null,
         attachments: r.attachments.map((a) => ({
             id: a.id,
             file_name: a.file_name,
@@ -136,14 +152,26 @@ async function viewOf(id: string, withUrls: boolean): Promise<ExpenseView> {
 export interface ListExpensesFilter {
     project_id?: string;
     client_id?: string;
-    /** 'pending' = facturables sin facturar · 'billed' = ya facturados · 'all' (default). */
-    status?: "pending" | "billed" | "all";
+    /**
+     * 'pending' = facturables sin facturar (lo que entra en la próxima factura) · 'invoiced' =
+     * facturados sin cobrar · 'paid' = cobrados · 'billed' = facturados · 'not_billable' · 'all'.
+     */
+    status?: ExpenseStatusFilter;
     /** Rango de fecha del gasto (columna DATE, medianoche UTC). */
     from?: Date;
     to?: Date;
     /** Firmar URLs de descarga de los comprobantes (la app sí, la API no las necesita). */
     with_urls?: boolean;
 }
+
+const STATUS_WHERE: Record<ExpenseStatusFilter, Prisma.project_expensesWhereInput> = {
+    all: {},
+    pending: { billable: true, invoice_id: null },
+    not_billable: { billable: false, invoice_id: null },
+    billed: { invoice_id: { not: null } },
+    invoiced: { invoice_id: { not: null }, invoices: { status: { not: "paid" } } },
+    paid: { invoices: { status: "paid" } },
+};
 
 /** Gastos del workspace. `status: 'pending'` es lo que entra en la próxima factura. */
 export async function listExpenses(
@@ -161,8 +189,7 @@ export async function listExpenses(
                 ...(filter.client_id ? { client_id: filter.client_id } : {}),
             },
             ...(filter.project_id ? { project_id: filter.project_id } : {}),
-            ...(status === "pending" ? { billable: true, invoice_id: null } : {}),
-            ...(status === "billed" ? { invoice_id: { not: null } } : {}),
+            ...STATUS_WHERE[status],
             ...(filter.from || filter.to
                 ? { expense_date: { ...(filter.from ? { gte: filter.from } : {}), ...(filter.to ? { lte: filter.to } : {}) } }
                 : {}),

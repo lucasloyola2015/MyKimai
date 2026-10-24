@@ -57,3 +57,15 @@ export const expenseAttachmentUploadSchema = z.object({
 export const confirmExpenseAttachmentSchema = expenseAttachmentUploadSchema.extend({
     storage_path: z.string().min(1).max(1024),
 });
+
+const ymd = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, { message: "Usar YYYY-MM-DD" });
+
+/** Filtros del listado general de gastos (/dashboard/expenses). */
+export const expenseFiltersSchema = z.object({
+    client_id: uuid.optional(),
+    from: ymd.optional(),
+    to: ymd.optional(),
+    status: z.enum(["pending", "invoiced", "paid", "billed", "not_billable", "all"]).optional(),
+});
+
+export type ExpenseFilters = z.infer<typeof expenseFiltersSchema>;

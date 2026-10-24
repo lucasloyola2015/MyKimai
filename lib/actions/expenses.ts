@@ -6,7 +6,9 @@ import { revalidatePath } from "next/cache";
 import { safeActionError, zodErrorMessage } from "@/lib/validations/utils";
 import {
     expenseIdSchema,
+    expenseFiltersSchema,
     confirmExpenseAttachmentSchema,
+    type ExpenseFilters,
     type CreateExpenseInput,
     type UpdateExpenseInput,
 } from "@/lib/validations/expenses";
@@ -35,6 +37,25 @@ const revalidateProject = (projectId: string) => revalidatePath(`/dashboard/proj
 export async function getProjectExpenses(projectId: string): Promise<domain.ExpenseView[]> {
     const res = await domain.listExpenses(await sessionContext(), { project_id: projectId, with_urls: true });
     return res.ok ? res.data : [];
+}
+
+/** Listado general de gastos (/dashboard/expenses), con URLs de los comprobantes. */
+export async function getExpenses(
+    filters: ExpenseFilters
+): Promise<ActionResponse<domain.ExpenseView[]>> {
+    const parsed = expenseFiltersSchema.safeParse(filters);
+    if (!parsed.success) {
+        return { success: false, error: zodErrorMessage(parsed.error) };
+    }
+    const { client_id, from, to, status } = parsed.data;
+    const res = await domain.listExpenses(await sessionContext(), {
+        client_id,
+        status,
+        from: from ? new Date(`${from}T00:00:00.000Z`) : undefined,
+        to: to ? new Date(`${to}T00:00:00.000Z`) : undefined,
+        with_urls: true,
+    });
+    return toAction(res, (rows) => rows);
 }
 
 /** Gastos facturables pendientes de un cliente, para armar la próxima factura. */

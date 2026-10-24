@@ -1,5 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { buildExpenseDescription, convertExpenseAmount, expenseStoragePath, formatExpenseDate, safeStorageFileName } from "./expenses";
+import {
+    buildExpenseDescription,
+    convertExpenseAmount,
+    expenseBillingStatus,
+    expenseStoragePath,
+    formatExpenseDate,
+    safeStorageFileName,
+} from "./expenses";
 
 describe("convertExpenseAmount", () => {
     it("misma moneda: no convierte", () => {
@@ -50,5 +57,18 @@ describe("safeStorageFileName", () => {
 describe("expenseStoragePath", () => {
     it("arma owner/gasto/id-nombre", () => {
         expect(expenseStoragePath("o1", "e1", "u1", "foto 1.jpg")).toBe("o1/e1/u1-foto_1.jpg");
+    });
+});
+
+describe("expenseBillingStatus", () => {
+    it("sin factura: pendiente si se refactura, si no 'no facturable'", () => {
+        expect(expenseBillingStatus({ billable: true, invoice_id: null, invoice_status: null })).toBe("pending");
+        expect(expenseBillingStatus({ billable: false, invoice_id: null, invoice_status: null })).toBe("not_billable");
+    });
+
+    it("con factura: cobrado solo si la factura está pagada", () => {
+        expect(expenseBillingStatus({ billable: true, invoice_id: "i", invoice_status: "paid" })).toBe("paid");
+        expect(expenseBillingStatus({ billable: true, invoice_id: "i", invoice_status: "sent" })).toBe("invoiced");
+        expect(expenseBillingStatus({ billable: true, invoice_id: "i", invoice_status: "partial" })).toBe("invoiced");
     });
 });

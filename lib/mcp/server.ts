@@ -31,6 +31,7 @@ import {
     listExpenses,
     updateExpense,
     uploadExpenseAttachment,
+    type ExpenseStatusFilter,
 } from "@/lib/domain/expenses";
 import { EXPENSE_ATTACHMENT_MIME_TYPES } from "@/lib/validations/expenses";
 import { arDayKey } from "@/lib/timezone";
@@ -432,11 +433,14 @@ export function buildMcpServer(ctx: ApiContext): McpServer {
             {
                 title: "Gastos de proyecto",
                 description:
-                    "Gastos de proyecto (compras que se refacturan al cliente) con monto, moneda, proveedor, si ya están facturados y sus comprobantes. status='pending' = lo que entra en la próxima factura.",
+                    "Gastos de proyecto (compras que se refacturan al cliente) con monto, moneda, proveedor, estado (billing_status: pending = sin facturar, invoiced = facturado sin cobrar, paid = cobrado, not_billable) y sus comprobantes. status='pending' = lo que entra en la próxima factura.",
                 inputSchema: {
                     project_id: uuid("proyecto").optional(),
                     client_id: uuid("cliente").optional(),
-                    status: z.enum(["pending", "billed", "all"]).optional().describe("Default 'all'"),
+                    status: z
+                        .enum(["pending", "invoiced", "paid", "billed", "not_billable", "all"])
+                        .optional()
+                        .describe("Default 'all'. 'billed' = invoiced + paid"),
                     from: ymd.describe("Fecha del gasto desde (YYYY-MM-DD)"),
                     to: ymd.describe("Fecha del gasto hasta (YYYY-MM-DD)"),
                 },
@@ -444,7 +448,7 @@ export function buildMcpServer(ctx: ApiContext): McpServer {
             },
             safe(
                 "list_expenses",
-                async (a: { project_id?: string; client_id?: string; status?: "pending" | "billed" | "all"; from?: string; to?: string }) =>
+                async (a: { project_id?: string; client_id?: string; status?: ExpenseStatusFilter; from?: string; to?: string }) =>
                     fromDomain(
                         await listExpenses(ctx, {
                             project_id: a.project_id,
