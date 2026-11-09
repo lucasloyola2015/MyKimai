@@ -461,13 +461,16 @@ async function pricingFor(taskId: string) {
 
 /**
  * Crea una entrada TERMINADA (inicio y fin) en un proyecto, marcada como
- * `source = 'api'`. Si `external_ref` ya existe para el actor, actualiza esa
- * entrada (idempotente: re-correr el skill no duplica).
+ * `source = 'api'` (o `'ui'` cuando la carga a mano el usuario desde la app,
+ * con las mismas reglas). Si `external_ref` ya existe para el actor, actualiza
+ * esa entrada (idempotente: re-correr el skill no duplica).
  */
 export async function createEntry(
     ctx: EntryAccessContext,
-    input: ApiCreateEntryInput
+    input: ApiCreateEntryInput,
+    opts: { source?: "api" | "ui" } = {}
 ): Promise<DomainResult<{ entry: EntryView; created: boolean }>> {
+    const source = opts.source ?? "api";
     const parsed = apiCreateEntrySchema.safeParse(input);
     if (!parsed.success) return fail("invalid", zodErrorMessage(parsed.error));
     const data = parsed.data;
@@ -530,8 +533,8 @@ export async function createEntry(
                 start_time: data.start_time,
                 end_time: data.end_time,
                 ...pricing,
-                source: "api",
-                api_key_id: ctx.apiKeyId ?? null,
+                source,
+                api_key_id: source === "api" ? ctx.apiKeyId ?? null : null,
                 external_ref: data.external_ref ?? null,
                 // Pausas nativas (time_entry_breaks): el trigger recalcula la duración neta y el monto.
                 ...(newBreaks.length

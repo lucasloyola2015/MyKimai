@@ -132,3 +132,19 @@ export const editTimeEntrySegmentSchema = z.discriminatedUnion("op", [
 ]);
 
 export type EditTimeEntrySegment = z.infer<typeof editTimeEntrySegmentSchema>;
+
+/**
+ * Nueva tarea cargada a mano desde Mis Horas (botón +). Las reglas de negocio
+ * (solapamientos, mínimo, futuro, workspace) las aplica `createEntry` del dominio.
+ */
+export const createManualTimeEntrySchema = z.object({
+    project_id: uuid,
+    title: z.string().trim().min(1, "El título es obligatorio").max(255),
+    description: z.string().trim().max(2000).nullable().optional(),
+    start_time: z.string().datetime({ offset: true }),
+    end_time: z.string().datetime({ offset: true }),
+    /** El usuario confirmó que fue trabajo en paralelo con OTRO proyecto. */
+    allow_overlap: z.boolean().optional(),
+});
+
+export type CreateManualTimeEntry = z.infer<typeof createManualTimeEntrySchema>;

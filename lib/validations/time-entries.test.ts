@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { editTimeEntrySegmentSchema, moveTimeEntryEdgeSchema, timeEntriesFilterSchema } from "@/lib/validations/time-entries";
+import {
+  createManualTimeEntrySchema,
+  editTimeEntrySegmentSchema,
+  moveTimeEntryEdgeSchema,
+  timeEntriesFilterSchema,
+} from "@/lib/validations/time-entries";
 
 const ID = "3f2b8c1e-5d4a-4b7e-9c2d-1a2b3c4d5e6f";
 
@@ -55,5 +60,23 @@ describe("editTimeEntrySegmentSchema", () => {
     }
     const bad = { start: { kind: "break-end" }, end: { kind: "entry-end" } };
     expect(editTimeEntrySegmentSchema.safeParse({ op: "remove", entryId: ID, segment: bad }).success).toBe(false);
+  });
+});
+
+describe("createManualTimeEntrySchema", () => {
+  const ok = {
+    project_id: ID,
+    title: "Revisión de planos",
+    start_time: "2026-11-09T09:00:00-03:00",
+    end_time: "2026-11-09T11:30:00.000Z",
+  };
+  it("acepta una tarea con horario con zona", () => {
+    expect(createManualTimeEntrySchema.safeParse(ok).success).toBe(true);
+    expect(createManualTimeEntrySchema.safeParse({ ...ok, allow_overlap: true, description: null }).success).toBe(true);
+  });
+  it("rechaza sin título, horario sin zona o proyecto inválido", () => {
+    expect(createManualTimeEntrySchema.safeParse({ ...ok, title: "  " }).success).toBe(false);
+    expect(createManualTimeEntrySchema.safeParse({ ...ok, start_time: "2026-11-09T09:00:00" }).success).toBe(false);
+    expect(createManualTimeEntrySchema.safeParse({ ...ok, project_id: "x" }).success).toBe(false);
   });
 });

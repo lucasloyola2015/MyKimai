@@ -2,7 +2,7 @@
 
 import { prisma } from "@/lib/prisma/client";
 import { getAuthUser } from "@/lib/auth/server";
-import { getOwnerContext, canManageWorkspace } from "@/lib/auth/owner-context";
+import { getOwnerContext, canManageWorkspace, canSeeFinancials } from "@/lib/auth/owner-context";
 import { getPortalProjectFilter, taskProjectIdFilter } from "@/lib/auth/portal-context";
 import { revalidatePath } from "next/cache";
 import type { time_entries } from "@prisma/client";
@@ -13,7 +13,9 @@ import {
     calculateRate,
     findPackageForEntry,
     resolveContainerTaskId,
+    createEntry as createDomainEntry,
 } from "@/lib/domain/time-entries";
+import type { OverlapView } from "@/lib/domain/overlaps";
 import {
     startTimeEntrySchema,
     stopTimeEntrySchema,
@@ -22,6 +24,8 @@ import {
     timeEntriesFilterSchema,
     moveTimeEntryEdgeSchema,
     editTimeEntrySegmentSchema,
+    createManualTimeEntrySchema,
+    type CreateManualTimeEntry,
     type TimeEntriesFilter,
     type EditTimeEntrySegment,
 } from "@/lib/validations/time-entries";
@@ -1070,6 +1074,68 @@ export async function editTimeEntrySegment(raw: EditTimeEntrySegment): Promise<A
     } catch (error) {
         console.error("Error in editTimeEntrySegment:", error);
         return { success: false, error: "No se pudo modificar el bloque." };
+    }
+}
+
+/** Resultado de cargar una tarea a mano: si choca con otras horas, cuáles. */
+export type CreateManualTimeEntryResult =
+    | { success: true; data: { id: string } }
+    | {
+          success: false;
+          error: string;
+          /** same_project: no se puede; needs_confirmation: se puede si el usuario confirma trabajo en paralelo. */
+          conflict?: { reason: "same_project" | "needs_confirmation"; overlaps: OverlapView[] };
+      };
+
+/**
+ * Nueva tarea cargada a mano desde Mis Horas (botón +). Usa el mismo
+ * `createEntry` del dominio que la API (workspace, tarea contenedora, tarifa,
+ * paquete, solapamientos, mínimo de 30 min, nada en el futuro), con
+ * `source = 'ui'`. El contexto sale de la sesión, nunca del cliente.
+ */
+export async function createManualTimeEntry(raw: CreateManualTimeEntry): Promise<CreateManualTimeEntryResult> {
+    const parsed = createManualTimeEntrySchema.safeParse(raw);
+    if (!parsed.success) {
+        return { success: false, error: zodErrorMessage(parsed.error) };
+    }
+    const input = parsed.data;
+
+    try {
+        const ctx = await getOwnerContext();
+        const result = await createDomainEntry(
+            { ...ctx, financials: canSeeFinancials(ctx) },
+            {
+                project_id: input.project_id,
+                title: input.title,
+                description: input.description ?? null,
+                start_time: input.start_time,
+                end_time: input.end_time,
+                allow_overlap: input.allow_overlap ?? false,
+            },
+            { source: "ui" }
+        );
+        if (!result.ok) {
+            const details = result.details as { reason?: string; overlaps?: OverlapView[] } | undefined;
+            if (result.code === "conflict" && details?.overlaps) {
+                const reason = details.reason === "same_project" ? "same_project" : "needs_confirmation";
+                return {
+                    success: false,
+                    error:
+                        reason === "same_project"
+                            ? "Ya hay horas de este proyecto en ese horario: editá la existente o cambiá el horario."
+                            : "Ya hay horas de otros proyectos en ese horario.",
+                    conflict: { reason, overlaps: details.overlaps },
+                };
+            }
+            return { success: false, error: result.error };
+        }
+
+        revalidatePath("/dashboard/my-hours");
+        revalidatePath("/dashboard/time-tracker");
+        return { success: true, data: { id: result.data.entry.id } };
+    } catch (error) {
+        console.error("Error in createManualTimeEntry:", error);
+        return { success: false, error: "No se pudo crear la tarea." };
     }
 }
 

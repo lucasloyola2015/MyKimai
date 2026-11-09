@@ -50,6 +50,7 @@ import { arDayBounds, dayTotals } from "@/lib/utils/day-view";
 import { listDateBounds, quickRanges, rangeError, type DayRange } from "@/lib/utils/date-range";
 import { arDayKey, startOfDayAr, endOfDayAr } from "@/lib/timezone";
 import { DayView } from "./day-view";
+import { NewEntryDialog } from "./new-entry-dialog";
 import { EntryDescription } from "@/components/dashboard/EntryDescription";
 import { dayKey, timelineStartHourByDay, DEFAULT_TIMELINE_START_HOUR } from "@/lib/utils/timeline";
 
@@ -68,6 +69,7 @@ export default function Page() {
   const [selectedProject, setSelectedProject] = useState<string>("");
   // Vista: LIST (listado) o Day (un día, líneas de tiempo sincronizadas).
   const [view, setView] = useState<"list" | "day">("list");
+  const [newEntryOpen, setNewEntryOpen] = useState(false);
   const [dayKeyAr, setDayKeyAr] = useState<string>(() => arDayKey(new Date()));
   const [dayEntries, setDayEntries] = useState<any[]>([]);
   const [dayLoading, setDayLoading] = useState(false);
@@ -479,6 +481,16 @@ export default function Page() {
             Gestiona todas tus entradas de tiempo trabajadas
           </p>
         </div>
+        <div className="flex items-center gap-2">
+        <Button
+          size="icon"
+          className="h-9 w-9"
+          onClick={() => setNewEntryOpen(true)}
+          aria-label="Nueva tarea"
+          title="Nueva tarea"
+        >
+          <Plus className="h-5 w-5" />
+        </Button>
         <div className="inline-flex rounded-md border p-0.5" role="tablist" aria-label="Vista">
           {([
             ["list", "LIST"],
@@ -497,7 +509,26 @@ export default function Page() {
             </Button>
           ))}
         </div>
+        </div>
       </div>
+
+      <NewEntryDialog
+        open={newEntryOpen}
+        onOpenChange={setNewEntryOpen}
+        clients={clients}
+        projects={projects}
+        defaultDayKey={view === "day" ? dayKeyAr : arDayKey(nowTick)}
+        defaultClientId={selectedClients.length === 1 ? selectedClients[0] : undefined}
+        onCreated={async (day) => {
+          // En Day, saltar al día de la tarea nueva (el cambio de día recarga solo).
+          if (view === "day" && day !== dayKeyAr) {
+            setDayKeyAr(day);
+            await loadEntries();
+          } else {
+            await reloadEntries();
+          }
+        }}
+      />
 
       <Card>
         <CardHeader>
