@@ -21,9 +21,19 @@ import {
     updateTimeEntrySchema,
     timeEntriesFilterSchema,
     moveTimeEntryEdgeSchema,
+    editTimeEntrySegmentSchema,
     type TimeEntriesFilter,
+    type EditTimeEntrySegment,
 } from "@/lib/validations/time-entries";
-import { edgeMoveError, type EdgeRef } from "@/lib/utils/day-view";
+import {
+    edgeMoveError,
+    entryTimesError,
+    findSegment,
+    moveSegment,
+    removeSegment,
+    type EdgeRef,
+    type SegmentRef,
+} from "@/lib/utils/day-view";
 import { ZodError } from "zod";
 
 export type ActionResponse<T> =
@@ -971,6 +981,95 @@ export async function moveTimeEntryEdge(raw: {
     } catch (error) {
         console.error("Error in moveTimeEntryEdge:", error);
         return { success: false, error: "No se pudo mover el horario." };
+    }
+}
+
+/**
+ * Opera sobre un bloque entero (tramo trabajado) desde la vista Day:
+ * - move: lo corre sin cambiar su duración (el neto queda igual); las pausas
+ *   vecinas, o el inicio/fin de la tarea, absorben el corrimiento.
+ * - remove: lo elimina. Entre dos pausas, las unifica; si es el primero o el
+ *   último, ajusta el inicio/fin de la tarea; si es el único, borra la tarea.
+ * El plan se recalcula acá con lo que hay en la DB (no se confía en el cliente).
+ * Las horas facturadas no se tocan. Duración y monto los recalcula el trigger.
+ */
+export async function editTimeEntrySegment(raw: EditTimeEntrySegment): Promise<ActionResponse<{ deletedEntry: boolean }>> {
+    const parsed = editTimeEntrySegmentSchema.safeParse(raw);
+    if (!parsed.success) {
+        return { success: false, error: zodErrorMessage(parsed.error) };
+    }
+    const input = parsed.data;
+    const ref = input.segment as SegmentRef;
+
+    try {
+        const check = await ensureCanOperateEntry(input.entryId);
+        if (!check.ok) return check.response;
+        const entry = check.entry as typeof check.entry & {
+            time_entry_breaks: { id: string; start_time: Date; end_time: Date | null }[];
+        };
+        if (entry.is_billed) {
+            return { success: false, error: "Las horas facturadas no se pueden modificar." };
+        }
+
+        const now = Date.now();
+        if (!findSegment(entry, ref, now)) {
+            return { success: false, error: "Ese bloque ya no existe. Recargá la página." };
+        }
+
+        let next: typeof entry;
+        let deletedBreakIds: string[] = [];
+        if (input.op === "move") {
+            next = moveSegment(entry, ref, input.deltaMs, now);
+        } else {
+            const removal = removeSegment(entry, ref, now);
+            if (removal.kind === "error") return { success: false, error: removal.error };
+            if (removal.kind === "delete-entry") {
+                await prisma.time_entries.delete({ where: { id: entry.id } });
+                revalidatePath("/dashboard/my-hours");
+                revalidatePath("/dashboard/time-tracker");
+                return { success: true, data: { deletedEntry: true } };
+            }
+            next = removal.entry;
+            deletedBreakIds = removal.deletedBreakIds;
+        }
+
+        const invalid = entryTimesError(next, now);
+        if (invalid) return { success: false, error: invalid };
+
+        const time = (d: Date | string | number | null) => (d === null ? null : new Date(d).getTime());
+        const original = new Map(entry.time_entry_breaks.map((b) => [b.id, b]));
+        const changedBreaks = (next.time_entry_breaks ?? []).filter((b) => {
+            const o = original.get(b.id);
+            return o && (time(o.start_time) !== time(b.start_time) || time(o.end_time) !== time(b.end_time));
+        });
+
+        await prisma.$transaction([
+            ...(deletedBreakIds.length
+                ? [prisma.time_entry_breaks.deleteMany({ where: { id: { in: deletedBreakIds }, time_entry_id: entry.id } })]
+                : []),
+            ...changedBreaks.map((b) =>
+                prisma.time_entry_breaks.update({
+                    where: { id: b.id, time_entry_id: entry.id },
+                    data: { start_time: new Date(b.start_time), end_time: b.end_time ? new Date(b.end_time) : null },
+                })
+            ),
+            // Al final, para que el trigger recalcule duración y monto con las pausas ya cambiadas.
+            prisma.time_entries.update({
+                where: { id: entry.id },
+                data: {
+                    start_time: new Date(next.start_time),
+                    end_time: next.end_time ? new Date(next.end_time) : null,
+                    updated_at: new Date(),
+                },
+            }),
+        ]);
+
+        revalidatePath("/dashboard/my-hours");
+        revalidatePath("/dashboard/time-tracker");
+        return { success: true, data: { deletedEntry: false } };
+    } catch (error) {
+        console.error("Error in editTimeEntrySegment:", error);
+        return { success: false, error: "No se pudo modificar el bloque." };
     }
 }
 

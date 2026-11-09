@@ -202,12 +202,22 @@ export function edgeMoveError(entry: EntryLike, edge: EdgeRef, t: number, now: n
         if (!b) return "Pausa no encontrada.";
         if (edge.kind === "break-end" && !b.end_time) return "La pausa sigue en curso.";
     }
-    const next = applyEdge(entry, edge, t);
-    const start = ms(next.start_time);
-    const end = next.end_time ? ms(next.end_time) : null;
     if (t > now + MIN_MS) return "No se puede mover al futuro.";
+    return entryTimesError(applyEdge(entry, edge, t), now);
+}
+
+/**
+ * Horarios coherentes de una entrada: termina después de empezar y no en el
+ * futuro, y cada pausa queda dentro de la tarea con su inicio antes del fin.
+ * Devuelve el motivo del problema, o null.
+ */
+export function entryTimesError(entry: EntryLike, now: number): string | null {
+    const start = ms(entry.start_time);
+    const end = entry.end_time ? ms(entry.end_time) : null;
+    if (start > now + MIN_MS) return "No se puede mover al futuro.";
+    if (end !== null && end > now + MIN_MS) return "No se puede mover al futuro.";
     if (end !== null && end <= start) return "La tarea tiene que terminar después de empezar.";
-    for (const b of next.time_entry_breaks ?? []) {
+    for (const b of entry.time_entry_breaks ?? []) {
         const bs = ms(b.start_time);
         const be = b.end_time ? ms(b.end_time) : null;
         if (be !== null && be <= bs) return "La pausa tiene que terminar después de empezar.";
@@ -215,6 +225,128 @@ export function edgeMoveError(entry: EntryLike, edge: EdgeRef, t: number, now: n
         if (end !== null && be !== null && be > end) return "Una pausa no puede terminar después que la tarea.";
     }
     return null;
+}
+
+// ── Bloques (tramos trabajados) enteros ──────────────────────────────────────
+
+/** Un bloque se identifica por sus dos extremos (los dos tienen que poder moverse). */
+export interface SegmentRef {
+    start: EdgeRef;
+    end: EdgeRef;
+}
+
+const edgeKey = (e: EdgeRef) => ("breakId" in e ? `${e.kind}:${e.breakId}` : e.kind);
+
+/** El bloque de la entrada con esos extremos (sin recortar al día), o null. */
+export function findSegment(entry: EntryLike, ref: SegmentRef, now: number): TaggedSegment | null {
+    return (
+        taggedSegments(entry, now).find(
+            (s) => s.startEdge && s.endEdge && edgeKey(s.startEdge) === edgeKey(ref.start) && edgeKey(s.endEdge) === edgeKey(ref.end)
+        ) ?? null
+    );
+}
+
+/**
+ * Corre un bloque entero `delta` ms sin cambiar su duración (el neto queda
+ * igual): sus extremos se mueven juntos, así que la pausa de un lado se achica
+ * y la del otro se agranda (o se corre el inicio/fin de la tarea).
+ */
+export function moveSegment<E extends EntryLike>(entry: E, ref: SegmentRef, delta: number, now: number): E {
+    const seg = findSegment(entry, ref, now);
+    if (!seg) return entry;
+    return applyEdge(applyEdge(entry, ref.start, seg.start + delta), ref.end, seg.end + delta);
+}
+
+/**
+ * Cuánto se puede correr un bloque (delta mínimo y máximo, en ms): sin comerse
+ * del todo la pausa vecina (queda al menos un minuto), sin salir del día, sin
+ * pasar de ahora y sin pisar otra tarea del mismo proyecto. null = no se mueve.
+ */
+export function segmentMoveLimits(
+    entry: EntryLike,
+    ref: SegmentRef,
+    now: number,
+    window: Interval,
+    neighbors: Interval[] = []
+): Interval | null {
+    const seg = findSegment(entry, ref, now);
+    if (!seg || seg.start < window.start || seg.end > window.end) return null;
+    const brk = (id: string) => (entry.time_entry_breaks ?? []).find((x) => x.id === id);
+
+    let min: number;
+    if (ref.start.kind === "entry-start") {
+        min = Math.max(window.start, ...neighbors.filter((n) => n.end <= seg.start).map((n) => n.end)) - seg.start;
+    } else {
+        const b = brk((ref.start as { breakId: string }).breakId);
+        if (!b) return null;
+        min = ms(b.start_time) + MIN_MS - seg.start;
+    }
+
+    let max: number;
+    if (ref.end.kind === "entry-end") {
+        max = Math.min(window.end, now, ...neighbors.filter((n) => n.start >= seg.end).map((n) => n.start)) - seg.end;
+    } else {
+        const b = brk((ref.end as { breakId: string }).breakId);
+        if (!b) return null;
+        max = (b.end_time ? ms(b.end_time) : now) - MIN_MS - seg.end;
+    }
+    return { start: Math.min(0, min), end: Math.max(0, max) };
+}
+
+export type SegmentRemoval<E> =
+    | { kind: "entry"; entry: E; deletedBreakIds: string[] }
+    | { kind: "delete-entry" }
+    | { kind: "error"; error: string };
+
+/**
+ * Eliminar un bloque:
+ * - entre dos pausas: las pausas se unifican en una sola, más larga;
+ * - el primero o el último: la tarea empieza después / termina antes, y la
+ *   pausa que lo separaba del resto desaparece;
+ * - el único bloque: se elimina la tarea entera.
+ */
+export function removeSegment<E extends EntryLike>(entry: E, ref: SegmentRef, now: number): SegmentRemoval<E> {
+    const seg = findSegment(entry, ref, now);
+    if (!seg) return { kind: "error", error: "Ese bloque ya no existe." };
+    const breaks = entry.time_entry_breaks ?? [];
+    const brk = (e: EdgeRef) => breaks.find((b) => "breakId" in e && b.id === e.breakId);
+    const without = (id: string | undefined) => breaks.filter((b) => b.id !== id);
+
+    if (ref.start.kind === "entry-start" && ref.end.kind === "entry-end") return { kind: "delete-entry" };
+
+    if (ref.start.kind === "break-end" && ref.end.kind === "break-start") {
+        const before = brk(ref.start)!;
+        const after = brk(ref.end)!;
+        return {
+            kind: "entry",
+            entry: {
+                ...entry,
+                time_entry_breaks: without(after.id).map((b) => (b.id === before.id ? { ...b, end_time: after.end_time } : b)),
+            },
+            deletedBreakIds: [after.id!],
+        };
+    }
+
+    if (ref.start.kind === "entry-start" && ref.end.kind === "break-start") {
+        const after = brk(ref.end)!;
+        if (!after.end_time) return { kind: "error", error: "La pausa que le sigue está en curso." };
+        return {
+            kind: "entry",
+            entry: { ...entry, start_time: new Date(ms(after.end_time)), time_entry_breaks: without(after.id) },
+            deletedBreakIds: [after.id!],
+        };
+    }
+
+    if (ref.start.kind === "break-end" && ref.end.kind === "entry-end") {
+        const before = brk(ref.start)!;
+        return {
+            kind: "entry",
+            entry: { ...entry, end_time: new Date(ms(before.start_time)), time_entry_breaks: without(before.id) },
+            deletedBreakIds: [before.id!],
+        };
+    }
+
+    return { kind: "error", error: "Ese bloque no se puede eliminar." };
 }
 
 /**
@@ -227,6 +359,21 @@ export function snapTime(t: number, candidates: number[], threshold: number): nu
         if (Math.abs(c - t) <= threshold && (best === null || Math.abs(c - t) < Math.abs(best - t))) best = c;
     }
     return best ?? Math.round(t / MIN_MS) * MIN_MS;
+}
+
+/**
+ * Corrimiento de un bloque al soltar: si su inicio o su fin cae a menos de
+ * `threshold` ms de una marca, se pega a la más cercana; si no, minutos enteros.
+ */
+export function snapDelta(edges: number[], rawDelta: number, candidates: number[], threshold: number): number {
+    let best: { dist: number; delta: number } | null = null;
+    for (const t of edges) {
+        for (const c of candidates) {
+            const dist = Math.abs(t + rawDelta - c);
+            if (dist <= threshold && (!best || dist < best.dist)) best = { dist, delta: c - t };
+        }
+    }
+    return best ? best.delta : Math.round(rawDelta / MIN_MS) * MIN_MS;
 }
 
 /**

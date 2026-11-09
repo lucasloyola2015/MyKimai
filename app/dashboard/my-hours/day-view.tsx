@@ -2,8 +2,8 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "@/hooks/use-toast";
-import { moveTimeEntryEdge } from "@/lib/actions/time-entries";
-import { CalendarDays, ChevronLeft, ChevronRight, Pencil } from "lucide-react";
+import { editTimeEntrySegment, moveTimeEntryEdge } from "@/lib/actions/time-entries";
+import { CalendarDays, ChevronLeft, ChevronRight, Pencil, Trash2 } from "lucide-react";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { formatInTimeZone } from "date-fns-tz";
@@ -30,12 +30,17 @@ import {
   edgeLimits,
   groupRowsByProject,
   hourTicks,
+  moveSegment,
+  removeSegment,
+  segmentMoveLimits,
   shiftDayKey,
+  snapDelta,
   snapTime,
   taggedSegments,
   workedSegments,
   type EdgeRef,
   type Interval,
+  type SegmentRef,
   type TaggedSegment,
 } from "@/lib/utils/day-view";
 
@@ -68,12 +73,29 @@ interface DayEntry {
 /** Píxeles de distancia a los que un extremo se pega al inicio/fin de otra tarea. */
 const SNAP_PX = 6;
 
-/** Arrastre en curso de un extremo de una barra. */
+/** Cambio sobre una entrada, para la vista previa (mientras se arrastra o se guarda). */
+type EntryOp =
+  | { type: "edge"; edge: EdgeRef; time: number }
+  | { type: "segment"; segment: SegmentRef; delta: number }
+  | { type: "remove"; segment: SegmentRef };
+
+/** La entrada con el cambio aplicado; null = la entrada desaparece (se elimina entera). */
+function applyOp(entry: any, op: EntryOp, now: number): any | null {
+  if (op.type === "edge") return applyEdge(entry, op.edge, op.time);
+  if (op.type === "segment") return moveSegment(entry, op.segment, op.delta, now);
+  const r = removeSegment(entry, op.segment, now);
+  return r.kind === "entry" ? r.entry : r.kind === "delete-entry" ? null : entry;
+}
+
+/** Arrastre en curso: un extremo (edge) o un bloque entero (segment). */
 interface DragState {
   entryId: string;
-  edge: EdgeRef;
-  time: number;
-  original: number;
+  op: Extract<EntryOp, { type: "edge" | "segment" }>;
+  /** edge: hora original del extremo. segment: inicio y fin originales del bloque. */
+  original: Interval;
+  /** Hora bajo el mouse al agarrar (para el corrimiento del bloque). */
+  grab: number;
+  /** edge: horas mínima y máxima. segment: corrimiento mínimo y máximo. */
   limits: Interval;
   /** Eje y orden de filas congelados mientras se arrastra, para que nada salte bajo el mouse. */
   axis: Interval;
@@ -81,6 +103,17 @@ interface DragState {
   track: { left: number; width: number };
   snaps: number[];
 }
+
+/** Menú del click derecho sobre un bloque. */
+interface BlockMenu {
+  x: number;
+  y: number;
+  entry: DayEntry;
+  segment: TaggedSegment;
+}
+
+const segRef = (s: TaggedSegment): SegmentRef | null =>
+  s.startEdge && s.endEdge ? { start: s.startEdge, end: s.endEdge } : null;
 
 const EDGE_TEXT: Record<EdgeRef["kind"], string> = {
   "entry-start": "el inicio de la tarea",
@@ -123,39 +156,60 @@ export function DayView({
   const [hover, setHover] = useState<{ entry: DayEntry; x: number; y: number } | null>(null);
   const [calendarOpen, setCalendarOpen] = useState(false);
   const [drag, setDrag] = useState<DragState | null>(null);
-  // Lo soltado que se está guardando: se sigue mostrando hasta que llega la recarga.
-  const [saving, setSaving] = useState<{ entryId: string; edge: EdgeRef; time: number } | null>(null);
+  // Lo soltado/elegido que se está guardando: se sigue mostrando hasta que llega la recarga.
+  const [saving, setSaving] = useState<{ entryId: string; op: EntryOp } | null>(null);
+  const [menu, setMenu] = useState<BlockMenu | null>(null);
   const dragRef = useRef<DragState | null>(null);
   dragRef.current = drag;
   const bounds = useMemo(() => arDayBounds(dayKey), [dayKey]);
   const today = arDayKey(now);
 
-  // Escape cancela el arrastre (vuelve todo a como estaba).
+  // Escape cancela el arrastre (vuelve todo a como estaba) y cierra el menú.
   useEffect(() => {
-    if (!drag) return;
+    if (!drag && !menu) return;
     const onKey = (ev: KeyboardEvent) => {
-      if (ev.key === "Escape") setDrag(null);
+      if (ev.key === "Escape") {
+        setDrag(null);
+        setMenu(null);
+      }
     };
+    const close = () => setMenu(null);
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [drag]);
+    if (menu) {
+      window.addEventListener("pointerdown", close);
+      window.addEventListener("scroll", close, true);
+      window.addEventListener("resize", close);
+    }
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("pointerdown", close);
+      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("resize", close);
+    };
+  }, [drag, menu]);
 
-  const preview = drag ?? saving;
+  const preview: { entryId: string; op: EntryOp } | null = drag ?? saving;
   const shownEntries = useMemo(
     () =>
       preview
-        ? entries.map((e) => (e.id === preview.entryId ? applyEdge(e, preview.edge, preview.time) : e))
+        ? entries.flatMap((e) => {
+            if (e.id !== preview.entryId) return [e];
+            const next = applyOp(e, preview.op, now);
+            return next ? [next] : [];
+          })
         : entries,
-    [entries, preview]
+    [entries, preview, now]
   );
-  // Minutos trabajados que suma o resta lo que se está moviendo (las horas de una
+  // Minutos trabajados que suma o resta lo que se está cambiando (las horas de una
   // tarea terminada vienen de la DB; esto es solo la vista previa hasta recargar).
   const previewDeltaMin = useMemo(() => {
     if (!preview) return 0;
     const original = entries.find((e) => e.id === preview.entryId);
     if (!original?.end_time) return 0; // una tarea en curso ya se calcula en vivo
+    const next = applyOp(original, preview.op, now);
+    if (!next) return 0;
     const worked = (e: any) => workedSegments(e, now).reduce((s, x) => s + x.end - x.start, 0);
-    return Math.round((worked(applyEdge(original, preview.edge, preview.time)) - worked(original)) / 60000);
+    return Math.round((worked(next) - worked(original)) / 60000);
   }, [entries, preview, now]);
 
   const dayEntries: DayEntry[] = useMemo(
@@ -249,89 +303,170 @@ export function DayView({
   const label = (e: DayEntry) =>
     `${hm(e.span.start)}–${e.raw.end_time ? hm(e.span.end) : "ahora"} · ${e.raw.title || e.raw.tasks?.name || "—"}`;
 
-  // ── Arrastrar los extremos de las barras ──────────────────────────────────
-  const startDrag = (ev: React.PointerEvent<HTMLElement>, e: DayEntry, edge: EdgeRef, at: number) => {
-    if (ev.button !== 0 || saving) return;
+  // ── Arrastrar extremos y bloques, y el menú del click derecho ─────────────
+  const neighborsOf = (e: DayEntry) =>
+    dayEntries.filter((x) => x.projectId === e.projectId && x.id !== e.id).map((x) => x.span);
+
+  const pointerTime = (clientX: number, d: Pick<DragState, "axis" | "track">) =>
+    d.axis.start + ((clientX - d.track.left) / d.track.width) * (d.axis.end - d.axis.start);
+
+  /** Arranca un arrastre: de un extremo (manija) o del bloque entero (cuerpo de la barra). */
+  const startDrag = (
+    ev: React.PointerEvent<HTMLElement>,
+    e: DayEntry,
+    op: DragState["op"],
+    original: Interval,
+    limits: Interval | null
+  ) => {
+    if (ev.button !== 0 || saving || !limits) return;
     const trackEl = ev.currentTarget.closest("[data-track]");
     if (!trackEl) return;
-    const neighbors = dayEntries.filter((x) => x.projectId === e.projectId && x.id !== e.id).map((x) => x.span);
-    const limits = edgeLimits(e.raw, edge, now, bounds, neighbors);
-    if (!limits) return;
     ev.preventDefault();
     ev.stopPropagation();
     try {
-      ev.currentTarget.setPointerCapture(ev.pointerId); // sigue al mouse aunque salga de la manija
+      ev.currentTarget.setPointerCapture(ev.pointerId); // sigue al mouse aunque salga de la barra
     } catch {
       /* puntero ya liberado: el arrastre igual funciona mientras esté encima */
     }
     const rect = trackEl.getBoundingClientRect();
+    const track = { left: rect.left, width: rect.width };
     setHover(null);
+    setMenu(null);
     setDrag({
       entryId: e.id,
-      edge,
-      time: at,
-      original: at,
+      op,
+      original,
+      grab: pointerTime(ev.clientX, { axis: liveAxis, track }),
       limits,
       axis: liveAxis,
       rowOrder: rows.map((r) => r.projectId),
-      track: { left: rect.left, width: rect.width },
+      track,
       snaps: dayEntries.filter((x) => x.id !== e.id).flatMap((x) => [x.span.start, x.span.end]),
     });
+  };
+
+  const startEdgeDrag = (ev: React.PointerEvent<HTMLElement>, e: DayEntry, edge: EdgeRef, at: number) =>
+    startDrag(ev, e, { type: "edge", edge, time: at }, { start: at, end: at }, edgeLimits(e.raw, edge, now, bounds, neighborsOf(e)));
+
+  const startSegmentDrag = (ev: React.PointerEvent<HTMLElement>, e: DayEntry, s: TaggedSegment) => {
+    const segment = segRef(s);
+    if (!segment || e.raw.is_billed) return;
+    startDrag(
+      ev,
+      e,
+      { type: "segment", segment, delta: 0 },
+      { start: s.start, end: s.end },
+      segmentMoveLimits(e.raw, segment, now, bounds, neighborsOf(e))
+    );
   };
 
   const moveDrag = (ev: React.PointerEvent<HTMLElement>) => {
     const d = dragRef.current;
     if (!d) return;
-    const span = d.axis.end - d.axis.start;
-    const raw = d.axis.start + ((ev.clientX - d.track.left) / d.track.width) * span;
-    const snapped = snapTime(raw, d.snaps, (SNAP_PX / d.track.width) * span);
-    const time = Math.min(d.limits.end, Math.max(d.limits.start, snapped));
-    if (time !== d.time) setDrag({ ...d, time });
+    const threshold = (SNAP_PX / d.track.width) * (d.axis.end - d.axis.start);
+    const t = pointerTime(ev.clientX, d);
+    const clamp = (x: number) => Math.min(d.limits.end, Math.max(d.limits.start, x));
+    if (d.op.type === "edge") {
+      const time = clamp(snapTime(t, d.snaps, threshold));
+      if (time !== d.op.time) setDrag({ ...d, op: { ...d.op, time } });
+    } else {
+      const delta = clamp(snapDelta([d.original.start, d.original.end], t - d.grab, d.snaps, threshold));
+      if (delta !== d.op.delta) setDrag({ ...d, op: { ...d.op, delta } });
+    }
+  };
+
+  /** Guarda un cambio mostrando la vista previa hasta que llega la recarga. */
+  const persist = async (entryId: string, op: EntryOp, save: () => Promise<{ success: boolean; error?: string }>, okText: string) => {
+    setSaving({ entryId, op });
+    try {
+      const res = await save();
+      if (!res.success) {
+        toast({ title: "No se pudo guardar", description: res.error, variant: "destructive" });
+      } else {
+        toast({ title: "Horario actualizado", description: okText });
+      }
+      await onChanged();
+    } catch (error) {
+      console.error("Error al guardar el horario:", error);
+      toast({ title: "No se pudo guardar", description: "Error de conexión. Probá de nuevo.", variant: "destructive" });
+    } finally {
+      setSaving(null);
+    }
   };
 
   const endDrag = async () => {
     const d = dragRef.current;
     if (!d) return;
+    // El pointerup de la manija sube también a la barra: se suelta una sola vez.
+    dragRef.current = null;
     setDrag(null);
-    if (Math.abs(d.time - d.original) < 30_000) return; // fue un clic, no un arrastre
-    setSaving({ entryId: d.entryId, edge: d.edge, time: d.time });
-    try {
-      const res = await moveTimeEntryEdge({
-        entryId: d.entryId,
-        edge: d.edge.kind,
-        breakId: "breakId" in d.edge ? d.edge.breakId : undefined,
-        time: new Date(d.time),
-      });
-      if (!res.success) {
-        toast({ title: "No se pudo mover", description: res.error, variant: "destructive" });
-      } else {
-        toast({
-          title: "Horario actualizado",
-          description: `Se movió ${EDGE_TEXT[d.edge.kind]}: ${hm(d.original)} → ${hm(d.time)} (${signedMinutes(d.time - d.original)}).`,
-        });
-      }
-      await onChanged();
-    } catch (error) {
-      console.error("Error al mover el horario:", error);
-      toast({ title: "No se pudo mover", description: "Error de conexión. Probá de nuevo.", variant: "destructive" });
-    } finally {
-      setSaving(null);
+    const op = d.op;
+    if (op.type === "edge") {
+      if (Math.abs(op.time - d.original.start) < 30_000) return; // fue un clic, no un arrastre
+      await persist(
+        d.entryId,
+        op,
+        () =>
+          moveTimeEntryEdge({
+            entryId: d.entryId,
+            edge: op.edge.kind,
+            breakId: "breakId" in op.edge ? op.edge.breakId : undefined,
+            time: new Date(op.time),
+          }),
+        `Se movió ${EDGE_TEXT[op.edge.kind]}: ${hm(d.original.start)} → ${hm(op.time)} (${signedMinutes(op.time - d.original.start)}).`
+      );
+    } else {
+      if (Math.abs(op.delta) < 30_000) return;
+      await persist(
+        d.entryId,
+        op,
+        () => editTimeEntrySegment({ op: "move", entryId: d.entryId, segment: op.segment, deltaMs: Math.round(op.delta) }),
+        `Bloque ${hm(d.original.start)}–${hm(d.original.end)} → ${hm(d.original.start + op.delta)}–${hm(d.original.end + op.delta)} (${signedMinutes(op.delta)}). El neto no cambia.`
+      );
     }
+  };
+
+  const openMenu = (ev: React.MouseEvent<HTMLElement>, e: DayEntry, s: TaggedSegment) => {
+    ev.preventDefault();
+    if (dragRef.current || saving) return;
+    setHover(null);
+    setMenu({ x: ev.clientX, y: ev.clientY, entry: e, segment: s });
+  };
+
+  const removeBlock = async (m: BlockMenu) => {
+    setMenu(null);
+    const segment = segRef(m.segment);
+    if (!segment) return;
+    const only = m.entry.segments.length === 1 && segment.start.kind === "entry-start" && segment.end.kind === "entry-end";
+    if (only && !confirm("Este es el único bloque de la tarea: se elimina la tarea entera. ¿Seguro?")) return;
+    const between = segment.start.kind === "break-end" && segment.end.kind === "break-start";
+    await persist(
+      m.entry.id,
+      { type: "remove", segment },
+      () => editTimeEntrySegment({ op: "remove", entryId: m.entry.id, segment }),
+      only
+        ? "Se eliminó la tarea."
+        : between
+          ? `Se eliminó el bloque ${hm(m.segment.start)}–${hm(m.segment.end)} y las dos pausas quedaron unificadas.`
+          : `Se eliminó el bloque ${hm(m.segment.start)}–${hm(m.segment.end)} y se ajustó el horario de la tarea.`
+    );
   };
 
   /** Manija en un extremo de un tramo: arrastrarla mueve ese horario. */
   const handle = (e: DayEntry, edge: EdgeRef | null, at: number, side: "left" | "right") => {
     if (!edge || e.raw.is_billed) return null;
     const isBreak = edge.kind === "break-start" || edge.kind === "break-end";
-    const active = drag?.entryId === e.id && drag.edge.kind === edge.kind &&
-      (!("breakId" in edge) || ("breakId" in drag.edge && drag.edge.breakId === edge.breakId));
+    const dragged = drag?.entryId === e.id && drag.op.type === "edge" ? drag.op.edge : null;
+    const active =
+      !!dragged && dragged.kind === edge.kind &&
+      (!("breakId" in edge) || ("breakId" in dragged && dragged.breakId === edge.breakId));
     return (
       <div
         role="slider"
         aria-label={`Mover ${EDGE_TEXT[edge.kind]}`}
         aria-valuetext={hm(at)}
         title={`Arrastrá para mover ${EDGE_TEXT[edge.kind]} (${hm(at)})`}
-        onPointerDown={(ev) => startDrag(ev, e, edge, at)}
+        onPointerDown={(ev) => startEdgeDrag(ev, e, edge, at)}
         onPointerMove={moveDrag}
         onPointerUp={endDrag}
         onPointerCancel={() => setDrag(null)}
@@ -351,8 +486,18 @@ export function DayView({
     );
   };
 
+  /** Etiqueta flotante con la hora (extremo) o el horario nuevo (bloque) mientras se arrastra. */
+  const dragLabel = (d: DragState) => {
+    if (d.op.type === "edge") {
+      return { at: d.op.time, text: hm(d.op.time), delta: d.op.time - d.original.start };
+    }
+    const s = d.original.start + d.op.delta;
+    const e = d.original.end + d.op.delta;
+    return { at: (s + e) / 2, text: `${hm(s)}–${hm(e)}`, delta: d.op.delta };
+  };
+
   return (
-    <Card className={cn(drag && "cursor-ew-resize select-none")}>
+    <Card className={cn(drag && "select-none", drag?.op.type === "edge" && "cursor-ew-resize", drag?.op.type === "segment" && "cursor-grabbing")}>
       <CardHeader className="space-y-0 pb-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2">
@@ -500,11 +645,18 @@ export function DayView({
                         <div
                           key={`${e.id}-${i}`}
                           aria-label={label(e)}
-                          onMouseEnter={(ev) => !dragRef.current && setHover({ entry: e, x: ev.clientX, y: ev.clientY })}
-                          onMouseMove={(ev) => !dragRef.current && setHover({ entry: e, x: ev.clientX, y: ev.clientY })}
+                          onMouseEnter={(ev) => !dragRef.current && !menu && setHover({ entry: e, x: ev.clientX, y: ev.clientY })}
+                          onMouseMove={(ev) => !dragRef.current && !menu && setHover({ entry: e, x: ev.clientX, y: ev.clientY })}
                           onMouseLeave={() => setHover(null)}
+                          onPointerDown={(ev) => startSegmentDrag(ev, e, s)}
+                          onPointerMove={moveDrag}
+                          onPointerUp={endDrag}
+                          onPointerCancel={() => setDrag(null)}
+                          onContextMenu={(ev) => openMenu(ev, e, s)}
                           className={cn(
-                            "group absolute top-1/2 h-5 -translate-y-1/2 rounded-sm",
+                            "group absolute top-1/2 h-5 -translate-y-1/2 touch-none rounded-sm",
+                            !e.raw.is_billed && segRef(s) && "cursor-grab",
+                            menu?.entry.id === e.id && menu.segment.start === s.start && "ring-2 ring-primary ring-offset-1 ring-offset-card",
                             e.raw.end_time
                               ? "bg-blue-500 shadow-[0_0_6px_rgba(59,130,246,0.45)]"
                               : "bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.45)]",
@@ -519,15 +671,18 @@ export function DayView({
                       ))
                     )}
                     {/* Hora del extremo que se está arrastrando. */}
-                    {drag && row.entries.some((e) => e.id === drag.entryId) && (
-                      <span
-                        className="pointer-events-none absolute top-0 z-20 whitespace-nowrap rounded bg-slate-900 px-1.5 py-0.5 font-mono text-[10px] font-bold text-white shadow dark:bg-slate-100 dark:text-slate-900"
-                        style={{ left: `${pct(drag.time)}%`, transform: anchor(pct(drag.time)) }}
-                      >
-                        {hm(drag.time)}
-                        <span className="ml-1 font-normal opacity-70">{signedMinutes(drag.time - drag.original)}</span>
-                      </span>
-                    )}
+                    {drag && row.entries.some((e) => e.id === drag.entryId) && (() => {
+                      const l = dragLabel(drag);
+                      return (
+                        <span
+                          className="pointer-events-none absolute top-0 z-20 whitespace-nowrap rounded bg-slate-900 px-1.5 py-0.5 font-mono text-[10px] font-bold text-white shadow dark:bg-slate-100 dark:text-slate-900"
+                          style={{ left: `${pct(l.at)}%`, transform: anchor(pct(l.at)) }}
+                        >
+                          {l.text}
+                          <span className="ml-1 font-normal opacity-70">{signedMinutes(l.delta)}</span>
+                        </span>
+                      );
+                    })()}
                     </div>
                   </div>
 
@@ -539,7 +694,17 @@ export function DayView({
             })}
           </div>
         )}
-        {hover && !drag && <EntryTooltip entry={hover.entry} x={hover.x} y={hover.y} now={now} />}
+        {hover && !drag && !menu && <EntryTooltip entry={hover.entry} x={hover.x} y={hover.y} now={now} />}
+        {menu && (
+          <BlockContextMenu
+            menu={menu}
+            onEdit={() => {
+              setMenu(null);
+              onEdit(menu.entry.raw);
+            }}
+            onRemove={() => removeBlock(menu)}
+          />
+        )}
       </CardContent>
     </Card>
   );
@@ -659,6 +824,87 @@ function EntryTooltip({ entry, x, y, now }: { entry: DayEntry; x: number; y: num
       {raw.description && (
         <p className="mt-2 line-clamp-4 whitespace-pre-wrap border-t pt-2 text-muted-foreground">{raw.description}</p>
       )}
+    </div>
+  );
+}
+
+const MENU_W = 256; // w-64
+
+/**
+ * Menú del click derecho sobre un bloque: editar la tarea o eliminar el bloque.
+ * Explica qué va a pasar: entre dos pausas se unifican; el primero/último ajusta
+ * el horario de la tarea; el único bloque elimina la tarea.
+ */
+function BlockContextMenu({ menu, onEdit, onRemove }: { menu: BlockMenu; onEdit: () => void; onRemove: () => void }) {
+  const { entry, segment: s } = menu;
+  const ref = segRef(s);
+  const breaks: any[] = entry.raw.time_entry_breaks ?? [];
+  const brk = (id: string) => breaks.find((b) => b.id === id);
+
+  let removeLabel = "Eliminar bloque";
+  let hint = "";
+  let disabled: string | null = null;
+  if (entry.raw.is_billed) {
+    disabled = "Las horas facturadas no se pueden modificar.";
+  } else if (!ref) {
+    disabled = s.endEdge ? "El bloque sigue de otro día." : "El bloque está en curso.";
+  } else if (ref.start.kind === "entry-start" && ref.end.kind === "entry-end") {
+    removeLabel = "Eliminar tarea";
+    hint = "Es el único bloque: se elimina la tarea entera.";
+  } else if (ref.start.kind === "break-end" && ref.end.kind === "break-start") {
+    const a = brk(ref.start.breakId);
+    const b = brk(ref.end.breakId);
+    hint = `Las pausas se unifican: ${hm(a.start_time)}–${b.end_time ? hm(b.end_time) : "…"}.`;
+  } else if (ref.start.kind === "entry-start" && ref.end.kind === "break-start") {
+    const b = brk(ref.end.breakId);
+    if (!b.end_time) disabled = "La pausa que le sigue está en curso.";
+    else hint = `La tarea pasa a empezar a las ${hm(b.end_time)}.`;
+  } else if (ref.end.kind === "entry-end" && ref.start.kind === "break-end") {
+    hint = `La tarea pasa a terminar a las ${hm(brk(ref.start.breakId).start_time)}.`;
+  }
+
+  const vw = typeof window !== "undefined" ? window.innerWidth : 1024;
+  const vh = typeof window !== "undefined" ? window.innerHeight : 768;
+  const left = Math.max(8, Math.min(menu.x, vw - MENU_W - 8));
+  const placeAbove = menu.y > vh - 200;
+
+  return (
+    <div
+      role="menu"
+      onPointerDown={(ev) => ev.stopPropagation()}
+      onContextMenu={(ev) => ev.preventDefault()}
+      className="fixed z-50 w-64 overflow-hidden rounded-md border bg-popover p-1 text-sm text-popover-foreground shadow-lg"
+      style={placeAbove ? { left, bottom: vh - menu.y } : { left, top: menu.y }}
+    >
+      <div className="px-2 py-1.5">
+        <p className="font-mono text-xs font-bold">
+          {hm(s.start)}–{hm(s.end)}
+          <span className="ml-1 font-normal text-muted-foreground">{signedMinutes(s.end - s.start).slice(1)}</span>
+        </p>
+        <p className="truncate text-xs text-muted-foreground">{entry.raw.title || entry.raw.tasks?.name || "—"}</p>
+      </div>
+      <div className="-mx-1 my-1 h-px bg-muted" />
+      <button
+        type="button"
+        role="menuitem"
+        onClick={onEdit}
+        className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left hover:bg-accent focus:bg-accent focus:outline-none"
+      >
+        <Pencil className="h-3.5 w-3.5" /> Editar tarea…
+      </button>
+      <button
+        type="button"
+        role="menuitem"
+        onClick={onRemove}
+        disabled={!!disabled}
+        className="flex w-full items-start gap-2 rounded-sm px-2 py-1.5 text-left text-red-600 hover:bg-red-50 focus:bg-red-50 focus:outline-none disabled:cursor-not-allowed disabled:text-muted-foreground disabled:hover:bg-transparent dark:text-red-400 dark:hover:bg-red-500/10"
+      >
+        <Trash2 className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+        <span>
+          {removeLabel}
+          <span className="block text-[11px] font-normal text-muted-foreground">{disabled ?? hint}</span>
+        </span>
+      </button>
     </div>
   );
 }

@@ -5,6 +5,11 @@ import {
   axisPercent,
   edgeLimits,
   edgeMoveError,
+  entryTimesError,
+  moveSegment,
+  removeSegment,
+  segmentMoveLimits,
+  snapDelta,
   snapTime,
   taggedSegments,
   boundaryMarks,
@@ -216,6 +221,83 @@ describe("arrastrar extremos", () => {
   it("al soltar se pega a una marca cercana o se redondea al minuto", () => {
     expect(snapTime(at("10:00") + 40_000, [at("10:03")], 60_000)).toBe(at("10:01"));
     expect(snapTime(at("10:02") + 20_000, [at("10:03")], 60_000)).toBe(at("10:03"));
+  });
+});
+
+describe("bloques enteros", () => {
+  const win = arDayBounds(DAY);
+  const NOW = at("23:00");
+  const M = 60_000;
+  // 08:00–18:00 con pausas 10:00–10:30 y 13:00–14:00 → bloques 08–10, 10:30–13, 14–18.
+  const entry = {
+    start_time: at("08:00"),
+    end_time: at("18:00"),
+    time_entry_breaks: [
+      { id: "p1", start_time: at("10:00"), end_time: at("10:30") },
+      { id: "p2", start_time: at("13:00"), end_time: at("14:00") },
+    ],
+  };
+  const first = { start: { kind: "entry-start" }, end: { kind: "break-start", breakId: "p1" } } as const;
+  const middle = { start: { kind: "break-end", breakId: "p1" }, end: { kind: "break-start", breakId: "p2" } } as const;
+  const last = { start: { kind: "break-end", breakId: "p2" }, end: { kind: "entry-end" } } as const;
+  const worked = (e: any) => workedSegments(e, NOW).reduce((s, x) => s + x.end - x.start, 0);
+
+  it("correr el bloque del medio achica una pausa y agranda la otra; el neto no cambia", () => {
+    const moved = moveSegment(entry, middle, 20 * M, NOW);
+    expect(workedSegments(moved, NOW)).toEqual([
+      { start: at("08:00"), end: at("10:00") },
+      { start: at("10:50"), end: at("13:20") },
+      { start: at("14:00"), end: at("18:00") },
+    ]);
+    expect(worked(moved)).toBe(worked(entry));
+  });
+
+  it("correr el primer bloque mueve el inicio de la tarea", () => {
+    const moved = moveSegment(entry, first, -30 * M, NOW);
+    expect(moved.start_time).toEqual(new Date(at("07:30")));
+    expect(worked(moved)).toBe(worked(entry));
+  });
+
+  it("límites del corrimiento", () => {
+    expect(segmentMoveLimits(entry, middle, NOW, win)).toEqual({ start: -29 * M, end: 59 * M });
+    expect(segmentMoveLimits(entry, last, NOW, win)).toEqual({ start: -59 * M, end: at("23:00") - at("18:00") });
+    expect(segmentMoveLimits(entry, first, NOW, win, [{ start: at("06:00"), end: at("07:45") }])).toEqual({
+      start: -15 * M,
+      end: 29 * M,
+    });
+  });
+
+  it("eliminar un bloque entre dos pausas las unifica", () => {
+    const r = removeSegment(entry, middle, NOW);
+    expect(r.kind).toBe("entry");
+    if (r.kind !== "entry") return;
+    expect(r.deletedBreakIds).toEqual(["p2"]);
+    expect(r.entry.time_entry_breaks).toEqual([{ id: "p1", start_time: at("10:00"), end_time: at("14:00") }]);
+    expect(workedSegments(r.entry, NOW)).toEqual([
+      { start: at("08:00"), end: at("10:00") },
+      { start: at("14:00"), end: at("18:00") },
+    ]);
+  });
+
+  it("eliminar el primero o el último ajusta la tarea y saca la pausa", () => {
+    const a = removeSegment(entry, first, NOW);
+    expect(a.kind === "entry" && [new Date(a.entry.start_time).getTime(), a.deletedBreakIds]).toEqual([at("10:30"), ["p1"]]);
+    const z = removeSegment(entry, last, NOW);
+    expect(z.kind === "entry" && [new Date(z.entry.end_time!).getTime(), z.deletedBreakIds]).toEqual([at("13:00"), ["p2"]]);
+    if (z.kind === "entry") expect(entryTimesError(z.entry, NOW)).toBeNull();
+  });
+
+  it("al soltar un bloque se pega por cualquiera de sus extremos, o va de a minutos", () => {
+    // Bloque 10:30–13:00 corrido ~+28 min: el fin queda a 2 min de 13:30 → se pega (+30).
+    expect(snapDelta([at("10:30"), at("13:00")], 28 * M, [at("13:30")], 3 * M)).toBe(30 * M);
+    // Lejos de toda marca: minutos enteros.
+    expect(snapDelta([at("10:30"), at("13:00")], 28 * M + 20_000, [at("16:00")], 3 * M)).toBe(28 * M);
+  });
+
+  it("el único bloque elimina la tarea; un bloque que no existe da error", () => {
+    const solo = { start_time: at("09:00"), end_time: at("10:00") };
+    expect(removeSegment(solo, { start: { kind: "entry-start" }, end: { kind: "entry-end" } }, NOW)).toEqual({ kind: "delete-entry" });
+    expect(removeSegment(solo, middle, NOW).kind).toBe("error");
   });
 });
 

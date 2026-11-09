@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { moveTimeEntryEdgeSchema, timeEntriesFilterSchema } from "@/lib/validations/time-entries";
+import { editTimeEntrySegmentSchema, moveTimeEntryEdgeSchema, timeEntriesFilterSchema } from "@/lib/validations/time-entries";
 
 const ID = "3f2b8c1e-5d4a-4b7e-9c2d-1a2b3c4d5e6f";
 
@@ -40,5 +40,20 @@ describe("moveTimeEntryEdgeSchema", () => {
     expect(moveTimeEntryEdgeSchema.safeParse({ entryId: ID, edge: "break-start", time }).success).toBe(false);
     expect(moveTimeEntryEdgeSchema.safeParse({ entryId: ID, edge: "middle", time }).success).toBe(false);
     expect(moveTimeEntryEdgeSchema.safeParse({ entryId: ID, edge: "entry-end", time: "nope" }).success).toBe(false);
+  });
+});
+
+describe("editTimeEntrySegmentSchema", () => {
+  const segment = { start: { kind: "break-end", breakId: ID }, end: { kind: "entry-end" } };
+  it("acepta correr minutos enteros y eliminar", () => {
+    expect(editTimeEntrySegmentSchema.safeParse({ op: "move", entryId: ID, segment, deltaMs: -15 * 60_000 }).success).toBe(true);
+    expect(editTimeEntrySegmentSchema.safeParse({ op: "remove", entryId: ID, segment }).success).toBe(true);
+  });
+  it("rechaza corrimientos nulos, no enteros o de más de un día, y pausas sin id", () => {
+    for (const deltaMs of [0, 1.5, 2 * 86_400_000]) {
+      expect(editTimeEntrySegmentSchema.safeParse({ op: "move", entryId: ID, segment, deltaMs }).success).toBe(false);
+    }
+    const bad = { start: { kind: "break-end" }, end: { kind: "entry-end" } };
+    expect(editTimeEntrySegmentSchema.safeParse({ op: "remove", entryId: ID, segment: bad }).success).toBe(false);
   });
 });

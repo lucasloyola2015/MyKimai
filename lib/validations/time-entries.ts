@@ -101,3 +101,34 @@ export const moveTimeEntryEdgeSchema = z
     });
 
 export type MoveTimeEntryEdge = z.infer<typeof moveTimeEntryEdgeSchema>;
+
+const edgeRefSchema = z.discriminatedUnion("kind", [
+    z.object({ kind: z.literal("entry-start") }),
+    z.object({ kind: z.literal("entry-end") }),
+    z.object({ kind: z.literal("break-start"), breakId: uuid }),
+    z.object({ kind: z.literal("break-end"), breakId: uuid }),
+]);
+
+/**
+ * Operar sobre un bloque entero (tramo trabajado) desde la vista Day: correrlo
+ * `deltaMs` sin cambiar su duración, o eliminarlo. El bloque se identifica por
+ * sus dos extremos.
+ */
+export const editTimeEntrySegmentSchema = z.discriminatedUnion("op", [
+    z.object({
+        op: z.literal("move"),
+        entryId: uuid,
+        segment: z.object({ start: edgeRefSchema, end: edgeRefSchema }),
+        // Hasta un día para cada lado (ms enteros).
+        deltaMs: z.number().int().refine((n) => n !== 0 && Math.abs(n) <= 86_400_000, {
+            message: "Corrimiento inválido",
+        }),
+    }),
+    z.object({
+        op: z.literal("remove"),
+        entryId: uuid,
+        segment: z.object({ start: edgeRefSchema, end: edgeRefSchema }),
+    }),
+]);
+
+export type EditTimeEntrySegment = z.infer<typeof editTimeEntrySegmentSchema>;
