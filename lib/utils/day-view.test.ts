@@ -1,7 +1,12 @@
 import { describe, it, expect } from "vitest";
 import {
+  applyEdge,
   arDayBounds,
   axisPercent,
+  edgeLimits,
+  edgeMoveError,
+  snapTime,
+  taggedSegments,
   boundaryMarks,
   dayAxis,
   dayTotals,
@@ -142,6 +147,75 @@ describe("groupRowsByProject", () => {
       ["A", ["3", "1"]],
       ["B", ["2"]],
     ]);
+  });
+});
+
+describe("arrastrar extremos", () => {
+  const win = arDayBounds(DAY);
+  const entry = {
+    start_time: at("09:00"),
+    end_time: at("18:00"),
+    time_entry_breaks: [{ id: "b1", start_time: at("12:00"), end_time: at("13:00") }],
+  };
+  const NOW = at("23:00");
+
+  it("cada extremo sabe si es de la tarea o de la pausa", () => {
+    expect(taggedSegments(entry, NOW, win)).toEqual([
+      { start: at("09:00"), end: at("12:00"), startEdge: { kind: "entry-start" }, endEdge: { kind: "break-start", breakId: "b1" } },
+      { start: at("13:00"), end: at("18:00"), startEdge: { kind: "break-end", breakId: "b1" }, endEdge: { kind: "entry-end" } },
+    ]);
+  });
+
+  it("lo recortado por el día, lo abierto y las pausas abiertas no se mueven", () => {
+    const segs = taggedSegments(
+      { start_time: at("00:00") - 3_600_000, end_time: null, time_entry_breaks: [{ id: "b", start_time: at("10:00"), end_time: null }] },
+      at("11:00"),
+      win
+    );
+    expect(segs).toEqual([{ start: win.start, end: at("10:00"), startEdge: null, endEdge: { kind: "break-start", breakId: "b" } }]);
+    expect(taggedSegments({ start_time: at("09:00"), end_time: null }, at("11:00"), win)[0].endEdge).toBeNull();
+  });
+
+  it("mover el fin de la pausa le saca trabajo a la tarde y se lo suma a la pausa", () => {
+    const moved = applyEdge(entry, { kind: "break-end", breakId: "b1" }, at("13:30"));
+    expect(workedSegments(moved, NOW)).toEqual([
+      { start: at("09:00"), end: at("12:00") },
+      { start: at("13:30"), end: at("18:00") },
+    ]);
+    expect(moved.start_time).toBe(entry.start_time);
+    expect(entry.time_entry_breaks[0].end_time).toBe(at("13:00")); // no muta el original
+  });
+
+  it("límites: siempre queda un minuto de trabajo y de pausa", () => {
+    const M = 60_000;
+    expect(edgeLimits(entry, { kind: "entry-start" }, NOW, win)).toEqual({ start: win.start, end: at("12:00") - M });
+    expect(edgeLimits(entry, { kind: "entry-end" }, NOW, win)).toEqual({ start: at("13:00") + M, end: NOW });
+    expect(edgeLimits(entry, { kind: "break-start", breakId: "b1" }, NOW, win)).toEqual({ start: at("09:00") + M, end: at("13:00") - M });
+    expect(edgeLimits(entry, { kind: "break-end", breakId: "b1" }, NOW, win)).toEqual({ start: at("12:00") + M, end: at("18:00") - M });
+  });
+
+  it("no se pisa con otra tarea del mismo proyecto", () => {
+    const neighbors = [
+      { start: at("07:00"), end: at("08:15") },
+      { start: at("19:00"), end: at("20:00") },
+    ];
+    expect(edgeLimits(entry, { kind: "entry-start" }, NOW, win, neighbors)?.start).toBe(at("08:15"));
+    expect(edgeLimits(entry, { kind: "entry-end" }, NOW, win, neighbors)?.end).toBe(at("19:00"));
+  });
+
+  it("validación del servidor", () => {
+    expect(edgeMoveError(entry, { kind: "entry-start" }, at("08:00"), NOW)).toBeNull();
+    expect(edgeMoveError(entry, { kind: "entry-start" }, at("12:30"), NOW)).toMatch(/pausa/);
+    expect(edgeMoveError(entry, { kind: "entry-end" }, at("12:30"), NOW)).toMatch(/pausa/);
+    expect(edgeMoveError(entry, { kind: "entry-end" }, at("23:30"), NOW)).toMatch(/futuro/);
+    expect(edgeMoveError(entry, { kind: "break-end", breakId: "b1" }, at("11:00"), NOW)).toMatch(/pausa/);
+    expect(edgeMoveError(entry, { kind: "break-end", breakId: "zz" }, at("13:10"), NOW)).toMatch(/no encontrada/);
+    expect(edgeMoveError({ ...entry, end_time: null }, { kind: "entry-end" }, at("17:00"), NOW)).toMatch(/en curso/);
+  });
+
+  it("al soltar se pega a una marca cercana o se redondea al minuto", () => {
+    expect(snapTime(at("10:00") + 40_000, [at("10:03")], 60_000)).toBe(at("10:01"));
+    expect(snapTime(at("10:02") + 20_000, [at("10:03")], 60_000)).toBe(at("10:03"));
   });
 });
 

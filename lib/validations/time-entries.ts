@@ -83,3 +83,21 @@ export const timeEntriesFilterSchema = z
     });
 
 export type TimeEntriesFilter = z.infer<typeof timeEntriesFilterSchema>;
+
+/**
+ * Mover un extremo desde la vista Day: el inicio o el fin de la tarea, o el
+ * inicio o el fin de una de sus pausas (entonces lleva `breakId`).
+ */
+export const moveTimeEntryEdgeSchema = z
+    .object({
+        entryId: uuid,
+        edge: z.enum(["entry-start", "entry-end", "break-start", "break-end"]),
+        breakId: uuid.optional(),
+        time: z.coerce.date(),
+    })
+    .refine((d) => d.edge.startsWith("entry") || !!d.breakId, {
+        message: "Falta la pausa",
+        path: ["breakId"],
+    });
+
+export type MoveTimeEntryEdge = z.infer<typeof moveTimeEntryEdgeSchema>;

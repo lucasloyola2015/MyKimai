@@ -1,6 +1,8 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { toast } from "@/hooks/use-toast";
+import { moveTimeEntryEdge } from "@/lib/actions/time-entries";
 import { CalendarDays, ChevronLeft, ChevronRight, Pencil } from "lucide-react";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -19,16 +21,22 @@ import { cn } from "@/lib/utils";
 import { AR_TZ, arDayKey, arFormat } from "@/lib/timezone";
 import { liveAmount, liveTotals } from "@/lib/utils/entry-live";
 import {
+  applyEdge,
   arDayBounds,
   axisPercent,
   boundaryMarks,
   dayAxis,
   dayTotals,
+  edgeLimits,
   groupRowsByProject,
   hourTicks,
   shiftDayKey,
+  snapTime,
+  taggedSegments,
   workedSegments,
+  type EdgeRef,
   type Interval,
+  type TaggedSegment,
 } from "@/lib/utils/day-view";
 
 const hm = (t: Date | string | number) => arFormat(t, "HH:mm");
@@ -52,9 +60,40 @@ interface DayEntry {
   projectName: string;
   clientName: string;
   raw: any;
-  segments: Interval[];
+  segments: TaggedSegment[];
   span: Interval;
   netoMin: number;
+}
+
+/** Píxeles de distancia a los que un extremo se pega al inicio/fin de otra tarea. */
+const SNAP_PX = 6;
+
+/** Arrastre en curso de un extremo de una barra. */
+interface DragState {
+  entryId: string;
+  edge: EdgeRef;
+  time: number;
+  original: number;
+  limits: Interval;
+  /** Eje y orden de filas congelados mientras se arrastra, para que nada salte bajo el mouse. */
+  axis: Interval;
+  rowOrder: string[];
+  track: { left: number; width: number };
+  snaps: number[];
+}
+
+const EDGE_TEXT: Record<EdgeRef["kind"], string> = {
+  "entry-start": "el inicio de la tarea",
+  "entry-end": "el fin de la tarea",
+  "break-start": "el inicio de la pausa",
+  "break-end": "el fin de la pausa",
+};
+
+function signedMinutes(ms: number) {
+  const m = Math.round(ms / 60000);
+  const abs = Math.abs(m);
+  const txt = abs >= 60 ? `${Math.floor(abs / 60)}h${String(abs % 60).padStart(2, "0")}` : `${abs} min`;
+  return `${m < 0 ? "−" : "+"}${txt}`;
 }
 
 /**
@@ -70,6 +109,7 @@ export function DayView({
   loading,
   now,
   onEdit,
+  onChanged,
 }: {
   dayKey: string;
   onDayChange: (dayKey: string) => void;
@@ -77,18 +117,53 @@ export function DayView({
   loading: boolean;
   now: number;
   onEdit: (entry: any) => void;
+  /** Recarga las horas tras mover un horario. */
+  onChanged: () => Promise<void>;
 }) {
   const [hover, setHover] = useState<{ entry: DayEntry; x: number; y: number } | null>(null);
   const [calendarOpen, setCalendarOpen] = useState(false);
+  const [drag, setDrag] = useState<DragState | null>(null);
+  // Lo soltado que se está guardando: se sigue mostrando hasta que llega la recarga.
+  const [saving, setSaving] = useState<{ entryId: string; edge: EdgeRef; time: number } | null>(null);
+  const dragRef = useRef<DragState | null>(null);
+  dragRef.current = drag;
   const bounds = useMemo(() => arDayBounds(dayKey), [dayKey]);
   const today = arDayKey(now);
 
+  // Escape cancela el arrastre (vuelve todo a como estaba).
+  useEffect(() => {
+    if (!drag) return;
+    const onKey = (ev: KeyboardEvent) => {
+      if (ev.key === "Escape") setDrag(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [drag]);
+
+  const preview = drag ?? saving;
+  const shownEntries = useMemo(
+    () =>
+      preview
+        ? entries.map((e) => (e.id === preview.entryId ? applyEdge(e, preview.edge, preview.time) : e))
+        : entries,
+    [entries, preview]
+  );
+  // Minutos trabajados que suma o resta lo que se está moviendo (las horas de una
+  // tarea terminada vienen de la DB; esto es solo la vista previa hasta recargar).
+  const previewDeltaMin = useMemo(() => {
+    if (!preview) return 0;
+    const original = entries.find((e) => e.id === preview.entryId);
+    if (!original?.end_time) return 0; // una tarea en curso ya se calcula en vivo
+    const worked = (e: any) => workedSegments(e, now).reduce((s, x) => s + x.end - x.start, 0);
+    return Math.round((worked(applyEdge(original, preview.edge, preview.time)) - worked(original)) / 60000);
+  }, [entries, preview, now]);
+
   const dayEntries: DayEntry[] = useMemo(
     () =>
-      entries
+      shownEntries
         .map((e) => {
           const project = e.tasks?.projects;
-          const segments = workedSegments(e, now, bounds);
+          const segments = taggedSegments(e, now, bounds);
           return {
             id: e.id,
             start_time: new Date(e.start_time),
@@ -100,18 +175,28 @@ export function DayView({
             span: segments.length
               ? { start: segments[0].start, end: segments[segments.length - 1].end }
               : { start: 0, end: 0 },
-            netoMin: liveTotals(e, now).neto,
+            netoMin: liveTotals(e, now).neto + (e.id === preview?.entryId ? previewDeltaMin : 0),
           };
         })
         .filter((e) => e.segments.length > 0),
-    [entries, now, bounds]
+    [shownEntries, now, bounds, preview, previewDeltaMin]
   );
 
-  const rows = useMemo(() => groupRowsByProject(dayEntries), [dayEntries]);
-  const axis = useMemo(
+  const frozenOrder = drag?.rowOrder;
+  const rows = useMemo(() => {
+    const r = groupRowsByProject(dayEntries);
+    if (!frozenOrder) return r;
+    const pos = (id: string) => {
+      const i = frozenOrder.indexOf(id);
+      return i < 0 ? frozenOrder.length : i;
+    };
+    return [...r].sort((a, b) => pos(a.projectId) - pos(b.projectId));
+  }, [dayEntries, frozenOrder]);
+  const liveAxis = useMemo(
     () => dayAxis(dayEntries.flatMap((e) => e.segments), bounds.start),
     [dayEntries, bounds]
   );
+  const axis = drag ? drag.axis : liveAxis;
   const marks = useMemo(() => boundaryMarks(dayEntries.map((e) => e.span)), [dayEntries]);
   const totals = useMemo(
     () =>
@@ -164,8 +249,110 @@ export function DayView({
   const label = (e: DayEntry) =>
     `${hm(e.span.start)}–${e.raw.end_time ? hm(e.span.end) : "ahora"} · ${e.raw.title || e.raw.tasks?.name || "—"}`;
 
+  // ── Arrastrar los extremos de las barras ──────────────────────────────────
+  const startDrag = (ev: React.PointerEvent<HTMLElement>, e: DayEntry, edge: EdgeRef, at: number) => {
+    if (ev.button !== 0 || saving) return;
+    const trackEl = ev.currentTarget.closest("[data-track]");
+    if (!trackEl) return;
+    const neighbors = dayEntries.filter((x) => x.projectId === e.projectId && x.id !== e.id).map((x) => x.span);
+    const limits = edgeLimits(e.raw, edge, now, bounds, neighbors);
+    if (!limits) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    try {
+      ev.currentTarget.setPointerCapture(ev.pointerId); // sigue al mouse aunque salga de la manija
+    } catch {
+      /* puntero ya liberado: el arrastre igual funciona mientras esté encima */
+    }
+    const rect = trackEl.getBoundingClientRect();
+    setHover(null);
+    setDrag({
+      entryId: e.id,
+      edge,
+      time: at,
+      original: at,
+      limits,
+      axis: liveAxis,
+      rowOrder: rows.map((r) => r.projectId),
+      track: { left: rect.left, width: rect.width },
+      snaps: dayEntries.filter((x) => x.id !== e.id).flatMap((x) => [x.span.start, x.span.end]),
+    });
+  };
+
+  const moveDrag = (ev: React.PointerEvent<HTMLElement>) => {
+    const d = dragRef.current;
+    if (!d) return;
+    const span = d.axis.end - d.axis.start;
+    const raw = d.axis.start + ((ev.clientX - d.track.left) / d.track.width) * span;
+    const snapped = snapTime(raw, d.snaps, (SNAP_PX / d.track.width) * span);
+    const time = Math.min(d.limits.end, Math.max(d.limits.start, snapped));
+    if (time !== d.time) setDrag({ ...d, time });
+  };
+
+  const endDrag = async () => {
+    const d = dragRef.current;
+    if (!d) return;
+    setDrag(null);
+    if (Math.abs(d.time - d.original) < 30_000) return; // fue un clic, no un arrastre
+    setSaving({ entryId: d.entryId, edge: d.edge, time: d.time });
+    try {
+      const res = await moveTimeEntryEdge({
+        entryId: d.entryId,
+        edge: d.edge.kind,
+        breakId: "breakId" in d.edge ? d.edge.breakId : undefined,
+        time: new Date(d.time),
+      });
+      if (!res.success) {
+        toast({ title: "No se pudo mover", description: res.error, variant: "destructive" });
+      } else {
+        toast({
+          title: "Horario actualizado",
+          description: `Se movió ${EDGE_TEXT[d.edge.kind]}: ${hm(d.original)} → ${hm(d.time)} (${signedMinutes(d.time - d.original)}).`,
+        });
+      }
+      await onChanged();
+    } catch (error) {
+      console.error("Error al mover el horario:", error);
+      toast({ title: "No se pudo mover", description: "Error de conexión. Probá de nuevo.", variant: "destructive" });
+    } finally {
+      setSaving(null);
+    }
+  };
+
+  /** Manija en un extremo de un tramo: arrastrarla mueve ese horario. */
+  const handle = (e: DayEntry, edge: EdgeRef | null, at: number, side: "left" | "right") => {
+    if (!edge || e.raw.is_billed) return null;
+    const isBreak = edge.kind === "break-start" || edge.kind === "break-end";
+    const active = drag?.entryId === e.id && drag.edge.kind === edge.kind &&
+      (!("breakId" in edge) || ("breakId" in drag.edge && drag.edge.breakId === edge.breakId));
+    return (
+      <div
+        role="slider"
+        aria-label={`Mover ${EDGE_TEXT[edge.kind]}`}
+        aria-valuetext={hm(at)}
+        title={`Arrastrá para mover ${EDGE_TEXT[edge.kind]} (${hm(at)})`}
+        onPointerDown={(ev) => startDrag(ev, e, edge, at)}
+        onPointerMove={moveDrag}
+        onPointerUp={endDrag}
+        onPointerCancel={() => setDrag(null)}
+        className={cn(
+          "absolute -inset-y-1.5 z-10 flex w-3 cursor-ew-resize touch-none items-center justify-center",
+          side === "left" ? "-left-1.5" : "-right-1.5"
+        )}
+      >
+        <span
+          className={cn(
+            "h-full w-1 rounded-full border shadow-sm transition-opacity",
+            isBreak ? "border-orange-500 bg-orange-100" : "border-blue-700 bg-white",
+            active ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+          )}
+        />
+      </div>
+    );
+  };
+
   return (
-    <Card>
+    <Card className={cn(drag && "cursor-ew-resize select-none")}>
       <CardHeader className="space-y-0 pb-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2">
@@ -306,26 +493,40 @@ export function DayView({
                   </div>
 
                   <div className="relative min-h-[3.5rem]">
-                    <div className={TRACK}>
+                    <div className={TRACK} data-track>
                     {guides}
                     {row.entries.flatMap((e) =>
                       e.segments.map((s, i) => (
                         <div
                           key={`${e.id}-${i}`}
                           aria-label={label(e)}
-                          onMouseEnter={(ev) => setHover({ entry: e, x: ev.clientX, y: ev.clientY })}
-                          onMouseMove={(ev) => setHover({ entry: e, x: ev.clientX, y: ev.clientY })}
+                          onMouseEnter={(ev) => !dragRef.current && setHover({ entry: e, x: ev.clientX, y: ev.clientY })}
+                          onMouseMove={(ev) => !dragRef.current && setHover({ entry: e, x: ev.clientX, y: ev.clientY })}
                           onMouseLeave={() => setHover(null)}
                           className={cn(
-                            "absolute top-1/2 h-5 -translate-y-1/2 rounded-sm transition-opacity hover:opacity-80",
+                            "group absolute top-1/2 h-5 -translate-y-1/2 rounded-sm",
                             e.raw.end_time
                               ? "bg-blue-500 shadow-[0_0_6px_rgba(59,130,246,0.45)]"
                               : "bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.45)]",
-                            !e.raw.billable && "opacity-50"
+                            !e.raw.billable && "opacity-50",
+                            saving?.entryId === e.id && "animate-pulse"
                           )}
                           style={{ left: `${pct(s.start)}%`, width: `max(${pct(s.end) - pct(s.start)}%, 2px)` }}
-                        />
+                        >
+                          {handle(e, s.startEdge, s.start, "left")}
+                          {handle(e, s.endEdge, s.end, "right")}
+                        </div>
                       ))
+                    )}
+                    {/* Hora del extremo que se está arrastrando. */}
+                    {drag && row.entries.some((e) => e.id === drag.entryId) && (
+                      <span
+                        className="pointer-events-none absolute top-0 z-20 whitespace-nowrap rounded bg-slate-900 px-1.5 py-0.5 font-mono text-[10px] font-bold text-white shadow dark:bg-slate-100 dark:text-slate-900"
+                        style={{ left: `${pct(drag.time)}%`, transform: anchor(pct(drag.time)) }}
+                      >
+                        {hm(drag.time)}
+                        <span className="ml-1 font-normal opacity-70">{signedMinutes(drag.time - drag.original)}</span>
+                      </span>
                     )}
                     </div>
                   </div>
@@ -338,7 +539,7 @@ export function DayView({
             })}
           </div>
         )}
-        {hover && <EntryTooltip entry={hover.entry} x={hover.x} y={hover.y} now={now} />}
+        {hover && !drag && <EntryTooltip entry={hover.entry} x={hover.x} y={hover.y} now={now} />}
       </CardContent>
     </Card>
   );

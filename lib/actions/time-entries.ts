@@ -20,8 +20,10 @@ import {
     deleteTimeEntrySchema,
     updateTimeEntrySchema,
     timeEntriesFilterSchema,
+    moveTimeEntryEdgeSchema,
     type TimeEntriesFilter,
 } from "@/lib/validations/time-entries";
+import { edgeMoveError, type EdgeRef } from "@/lib/utils/day-view";
 import { ZodError } from "zod";
 
 export type ActionResponse<T> =
@@ -909,6 +911,66 @@ export async function updateTimeEntryBreak(
         return { success: true, data: updatedBreak };
     } catch (error) {
         return { success: false, error: "Error al actualizar pausa" };
+    }
+}
+
+/**
+ * Mueve un extremo desde la vista Day (arrastrando el borde de una barra).
+ * - Inicio/fin de la tarea: cambia start_time / end_time.
+ * - Inicio/fin de una pausa: cambia la pausa, así lo que se le saca al trabajo
+ *   pasa a la pausa y al revés.
+ * Las horas facturadas no se tocan. Duración y monto los recalcula el trigger.
+ */
+export async function moveTimeEntryEdge(raw: {
+    entryId: string;
+    edge: EdgeRef["kind"];
+    breakId?: string;
+    time: Date | string;
+}): Promise<ActionResponse<null>> {
+    const parsed = moveTimeEntryEdgeSchema.safeParse(raw);
+    if (!parsed.success) {
+        return { success: false, error: zodErrorMessage(parsed.error) };
+    }
+    const { entryId, edge: kind, breakId, time } = parsed.data;
+
+    try {
+        const check = await ensureCanOperateEntry(entryId);
+        if (!check.ok) return check.response;
+        const entry = check.entry as typeof check.entry & {
+            time_entry_breaks: { id: string; start_time: Date; end_time: Date | null }[];
+        };
+
+        if (entry.is_billed) {
+            return { success: false, error: "Las horas facturadas no se pueden mover." };
+        }
+
+        const edge = (kind.startsWith("break") ? { kind, breakId: breakId! } : { kind }) as EdgeRef;
+        const invalid = edgeMoveError(entry, edge, time.getTime(), Date.now());
+        if (invalid) return { success: false, error: invalid };
+
+        if (edge.kind === "entry-start" || edge.kind === "entry-end") {
+            await prisma.time_entries.update({
+                where: { id: entryId },
+                data: {
+                    [edge.kind === "entry-start" ? "start_time" : "end_time"]: time,
+                    updated_at: new Date(), // el trigger recalcula duración y monto
+                },
+            });
+        } else {
+            // La pausa tiene que ser de ESTA entrada (ya validada arriba).
+            await prisma.time_entry_breaks.update({
+                where: { id: edge.breakId, time_entry_id: entryId },
+                data: { [edge.kind === "break-start" ? "start_time" : "end_time"]: time },
+            });
+            await recalculateEntry(entryId);
+        }
+
+        revalidatePath("/dashboard/my-hours");
+        revalidatePath("/dashboard/time-tracker");
+        return { success: true, data: null };
+    } catch (error) {
+        console.error("Error in moveTimeEntryEdge:", error);
+        return { success: false, error: "No se pudo mover el horario." };
     }
 }
 

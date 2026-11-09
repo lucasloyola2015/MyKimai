@@ -609,6 +609,7 @@ export default function Page() {
           loading={dayLoading}
           now={nowTick}
           onEdit={handleEdit}
+          onChanged={reloadEntries}
         />
       )}
 

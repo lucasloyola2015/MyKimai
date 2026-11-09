@@ -37,7 +37,76 @@ export interface Interval {
 export interface EntryLike {
     start_time: When;
     end_time: When | null;
-    time_entry_breaks?: { start_time: When; end_time: When | null }[] | null;
+    time_entry_breaks?: { id?: string; start_time: When; end_time: When | null }[] | null;
+}
+
+/**
+ * Qué representa cada extremo de un tramo trabajado: el inicio o el fin de la
+ * tarea, o el inicio o el fin de una pausa. Es lo que cambia al arrastrarlo.
+ */
+export type EdgeRef =
+    | { kind: "entry-start" }
+    | { kind: "entry-end" }
+    | { kind: "break-start"; breakId: string }
+    | { kind: "break-end"; breakId: string };
+
+export interface TaggedSegment extends Interval {
+    /** null = no se puede mover (lo recorta el día, o es "ahora"). */
+    startEdge: EdgeRef | null;
+    endEdge: EdgeRef | null;
+}
+
+/**
+ * Tramos trabajados con lo que representa cada extremo. Mismo cálculo que
+ * `workedSegments`: [inicio, fin] menos las pausas; lo abierto corre hasta `now`.
+ */
+export function taggedSegments(entry: EntryLike, now: number, window?: Interval): TaggedSegment[] {
+    let start = ms(entry.start_time);
+    let end = entry.end_time ? ms(entry.end_time) : Math.max(now, start);
+    let startEdge: EdgeRef | null = { kind: "entry-start" };
+    let endEdge: EdgeRef | null = entry.end_time ? { kind: "entry-end" } : null;
+    if (window) {
+        if (window.start > start) {
+            start = window.start;
+            startEdge = null;
+        }
+        if (window.end < end) {
+            end = window.end;
+            endEdge = null;
+        }
+    }
+    if (end <= start) return [];
+
+    const breaks = (entry.time_entry_breaks ?? [])
+        .map((b) => ({
+            id: b.id ?? null,
+            start: ms(b.start_time),
+            end: b.end_time ? ms(b.end_time) : now,
+            open: !b.end_time,
+        }))
+        .filter((b) => b.end > b.start)
+        .sort((a, b) => a.start - b.start);
+
+    const out: TaggedSegment[] = [];
+    let cursor = start;
+    let cursorEdge: EdgeRef | null = startEdge;
+    for (const b of breaks) {
+        if (b.end <= cursor) continue;
+        if (b.start >= end) break;
+        if (b.start > cursor) {
+            out.push({
+                start: cursor,
+                end: b.start,
+                startEdge: cursorEdge,
+                endEdge: b.id ? { kind: "break-start", breakId: b.id } : null,
+            });
+        }
+        cursor = b.end;
+        cursorEdge = b.id && !b.open ? { kind: "break-end", breakId: b.id } : null;
+        if (cursor >= end) break;
+    }
+    if (cursor < end) out.push({ start: cursor, end, startEdge: cursorEdge, endEdge });
+    return out;
 }
 
 /**
@@ -45,30 +114,119 @@ export interface EntryLike {
  * o pausa abierta corre hasta `now`. Si se pasa `window`, se recortan a ella.
  */
 export function workedSegments(entry: EntryLike, now: number, window?: Interval): Interval[] {
-    let start = ms(entry.start_time);
-    let end = entry.end_time ? ms(entry.end_time) : Math.max(now, start);
-    if (window) {
-        start = Math.max(start, window.start);
-        end = Math.min(end, window.end);
-    }
-    if (end <= start) return [];
+    return taggedSegments(entry, now, window).map(({ start, end }) => ({ start, end }));
+}
 
-    const breaks = (entry.time_entry_breaks ?? [])
-        .map((b) => ({ start: ms(b.start_time), end: b.end_time ? ms(b.end_time) : now }))
-        .filter((b) => b.end > b.start)
-        .sort((a, b) => a.start - b.start);
+const MIN_MS = 60_000;
 
-    const out: Interval[] = [];
-    let cursor = start;
-    for (const b of breaks) {
-        if (b.end <= cursor) continue;
-        if (b.start >= end) break;
-        if (b.start > cursor) out.push({ start: cursor, end: b.start });
-        cursor = Math.max(cursor, b.end);
-        if (cursor >= end) break;
+const sameEdge = (a: EdgeRef | null, b: EdgeRef) =>
+    !!a && a.kind === b.kind && ("breakId" in a ? a.breakId === (b as { breakId: string }).breakId : true);
+
+/**
+ * Hasta dónde se puede arrastrar un extremo sin que un tramo quede vacío ni se
+ * dé vuelta: siempre queda al menos un minuto de trabajo y de pausa.
+ * `neighbors` son las otras tareas del mismo proyecto, que no se pisan entre sí.
+ * Devuelve null si el extremo no está en el día o no se puede mover.
+ */
+export function edgeLimits(
+    entry: EntryLike,
+    edge: EdgeRef,
+    now: number,
+    window: Interval,
+    neighbors: Interval[] = []
+): Interval | null {
+    const segs = taggedSegments(entry, now, window);
+    const brk = (id: string) => {
+        const b = (entry.time_entry_breaks ?? []).find((x) => x.id === id);
+        return b ? { start: ms(b.start_time), end: b.end_time ? ms(b.end_time) : null } : null;
+    };
+
+    switch (edge.kind) {
+        case "entry-start": {
+            const seg = segs.find((s) => sameEdge(s.startEdge, edge));
+            if (!seg) return null;
+            const min = Math.max(window.start, ...neighbors.filter((n) => n.end <= seg.start).map((n) => n.end));
+            return { start: min, end: seg.end - MIN_MS };
+        }
+        case "entry-end": {
+            const seg = segs.find((s) => sameEdge(s.endEdge, edge));
+            if (!seg) return null;
+            const max = Math.min(window.end, now, ...neighbors.filter((n) => n.start >= seg.end).map((n) => n.start));
+            return { start: seg.start + MIN_MS, end: Math.max(seg.start + MIN_MS, max) };
+        }
+        case "break-start": {
+            const seg = segs.find((s) => sameEdge(s.endEdge, edge));
+            const b = brk(edge.breakId);
+            if (!seg || !b) return null;
+            return { start: seg.start + MIN_MS, end: (b.end ?? now) - MIN_MS };
+        }
+        case "break-end": {
+            const seg = segs.find((s) => sameEdge(s.startEdge, edge));
+            const b = brk(edge.breakId);
+            if (!seg || !b || b.end === null) return null;
+            return { start: b.start + MIN_MS, end: seg.end - MIN_MS };
+        }
     }
-    if (cursor < end) out.push({ start: cursor, end });
-    return out;
+}
+
+/** La entrada con un extremo movido a `t` (vista previa al arrastrar). */
+export function applyEdge<E extends EntryLike>(entry: E, edge: EdgeRef, t: number): E {
+    const at = new Date(t);
+    switch (edge.kind) {
+        case "entry-start":
+            return { ...entry, start_time: at };
+        case "entry-end":
+            return { ...entry, end_time: at };
+        case "break-start":
+        case "break-end": {
+            const field = edge.kind === "break-start" ? "start_time" : "end_time";
+            return {
+                ...entry,
+                time_entry_breaks: (entry.time_entry_breaks ?? []).map((b) =>
+                    b.id === edge.breakId ? { ...b, [field]: at } : b
+                ),
+            };
+        }
+    }
+}
+
+/**
+ * Valida mover un extremo a `t` (lo usa el servidor antes de guardar): la tarea
+ * termina después de empezar y no en el futuro, y cada pausa queda dentro de la
+ * tarea con su inicio antes del fin. Devuelve el motivo del rechazo, o null.
+ */
+export function edgeMoveError(entry: EntryLike, edge: EdgeRef, t: number, now: number): string | null {
+    if (edge.kind === "entry-end" && !entry.end_time) return "La tarea sigue en curso.";
+    if (edge.kind === "break-start" || edge.kind === "break-end") {
+        const b = (entry.time_entry_breaks ?? []).find((x) => x.id === edge.breakId);
+        if (!b) return "Pausa no encontrada.";
+        if (edge.kind === "break-end" && !b.end_time) return "La pausa sigue en curso.";
+    }
+    const next = applyEdge(entry, edge, t);
+    const start = ms(next.start_time);
+    const end = next.end_time ? ms(next.end_time) : null;
+    if (t > now + MIN_MS) return "No se puede mover al futuro.";
+    if (end !== null && end <= start) return "La tarea tiene que terminar después de empezar.";
+    for (const b of next.time_entry_breaks ?? []) {
+        const bs = ms(b.start_time);
+        const be = b.end_time ? ms(b.end_time) : null;
+        if (be !== null && be <= bs) return "La pausa tiene que terminar después de empezar.";
+        if (bs < start) return "Una pausa no puede empezar antes que la tarea.";
+        if (end !== null && be !== null && be > end) return "Una pausa no puede terminar después que la tarea.";
+    }
+    return null;
+}
+
+/**
+ * Instante al soltar: pegado a la marca más cercana (inicio o fin de otra
+ * tarea) si está a menos de `threshold` ms; si no, redondeado al minuto.
+ */
+export function snapTime(t: number, candidates: number[], threshold: number): number {
+    let best: number | null = null;
+    for (const c of candidates) {
+        if (Math.abs(c - t) <= threshold && (best === null || Math.abs(c - t) < Math.abs(best - t))) best = c;
+    }
+    return best ?? Math.round(t / MIN_MS) * MIN_MS;
 }
 
 /**
