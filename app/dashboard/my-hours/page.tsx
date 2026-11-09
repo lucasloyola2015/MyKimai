@@ -43,6 +43,8 @@ import { toast } from "@/hooks/use-toast";
 import { cn, calculateNetDurationMinutes } from "@/lib/utils";
 import type { clients, projects, time_entries } from "@prisma/client";
 import { DayTimeline } from "@/components/dashboard/DayTimeline";
+import { ClientMultiSelect } from "@/components/dashboard/ClientMultiSelect";
+import { projectsOfClients } from "@/lib/utils/client-selection";
 import { EntryDescription } from "@/components/dashboard/EntryDescription";
 import { dayKey, timelineStartHourByDay, DEFAULT_TIMELINE_START_HOUR } from "@/lib/utils/timeline";
 
@@ -103,7 +105,8 @@ export default function Page() {
     () => timelineStartHourByDay(entries.map((e) => new Date(e.start_time))),
     [entries]
   );
-  const [selectedClient, setSelectedClient] = useState<string>("");
+  // Clientes elegidos en el filtro: vacío = todos.
+  const [selectedClients, setSelectedClients] = useState<string[]>([]);
   const [selectedProject, setSelectedProject] = useState<string>("");
   // §paginación — por defecto mostrar últimos 90 días (no traer años de historial).
   const [showAll, setShowAll] = useState(false);
@@ -144,18 +147,19 @@ export default function Page() {
     loadData();
   }, []);
 
+  // Si el proyecto elegido ya no es de un cliente seleccionado, se suelta.
   useEffect(() => {
-    if (selectedClient) {
-      loadProjects(selectedClient);
-    } else {
-      setProjects([]);
+    if (
+      selectedProject &&
+      !projectsOfClients(projects, selectedClients).some((p) => p.id === selectedProject)
+    ) {
       setSelectedProject("");
     }
-  }, [selectedClient]);
+  }, [selectedClients, projects, selectedProject]);
 
   useEffect(() => {
     loadEntries();
-  }, [selectedClient, selectedProject, showAll]);
+  }, [selectedClients, selectedProject, showAll]);
 
   useEffect(() => {
     if (isDialogOpen && formData.client_id) {
@@ -166,32 +170,25 @@ export default function Page() {
 
   // Filtro de entradas con ventana temporal (90 días por defecto).
   const buildEntriesFilter = () => ({
-    clientId: selectedClient || undefined,
+    clientIds: selectedClients.length > 0 ? selectedClients : undefined,
     projectId: selectedProject || undefined,
     startDate: showAll ? undefined : new Date(Date.now() - 90 * 86400000),
   });
 
   const loadData = async () => {
     try {
-      const [clientsData, entriesData] = await Promise.all([
+      const [clientsData, projectsData, entriesData] = await Promise.all([
         getClients(),
+        getProjects(),
         getTimeEntries(buildEntriesFilter()),
       ]);
       setClients(clientsData);
+      setProjects(projectsData);
       setEntries(entriesData);
     } catch (error) {
       console.error("Error loading data:", error);
     } finally {
       setLoading(false);
-    }
-  };
-
-  const loadProjects = async (clientId: string) => {
-    try {
-      const projectsData = await getProjects(clientId);
-      setProjects(projectsData);
-    } catch (error) {
-      console.error("Error loading projects:", error);
     }
   };
 
@@ -213,9 +210,10 @@ export default function Page() {
     }
   };
 
-  const filteredProjects = selectedClient
-    ? projects.filter((p) => p.client_id === selectedClient)
-    : [];
+  // Proyectos de los clientes elegidos; con varios clientes se antepone el
+  // nombre del cliente para distinguir proyectos homónimos.
+  const filteredProjects = projectsOfClients(projects, selectedClients);
+  const showClientInProject = selectedClients.length > 1;
 
   const handleEdit = (entry: any) => {
     setEditingEntry(entry);
@@ -473,25 +471,13 @@ export default function Page() {
         <CardContent>
           <div className="grid gap-4 md:grid-cols-2">
             <div className="grid gap-2">
-              <Label htmlFor="client_filter">Cliente</Label>
-              <Select
-                value={selectedClient || "all"}
-                onValueChange={(value) => {
-                  setSelectedClient(value === "all" ? "" : value);
-                }}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Todos los clientes" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">Todos los clientes</SelectItem>
-                  {clients.map((client) => (
-                    <SelectItem key={client.id} value={client.id}>
-                      {client.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <Label htmlFor="client_filter">Clientes</Label>
+              <ClientMultiSelect
+                id="client_filter"
+                clients={clients}
+                value={selectedClients}
+                onChange={setSelectedClients}
+              />
             </div>
             <div className="grid gap-2">
               <Label htmlFor="project_filter">Proyecto</Label>
@@ -500,7 +486,7 @@ export default function Page() {
                 onValueChange={(value) => {
                   setSelectedProject(value === "all" ? "" : value);
                 }}
-                disabled={!selectedClient}
+                disabled={selectedClients.length === 0}
               >
                 <SelectTrigger>
                   <SelectValue placeholder="Todos los proyectos" />
@@ -509,7 +495,7 @@ export default function Page() {
                   <SelectItem value="all">Todos los proyectos</SelectItem>
                   {filteredProjects.map((project) => (
                     <SelectItem key={project.id} value={project.id}>
-                      {project.name}
+                      {showClientInProject ? `${project.clients?.name} · ${project.name}` : project.name}
                     </SelectItem>
                   ))}
                 </SelectContent>

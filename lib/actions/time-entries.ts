@@ -535,6 +535,8 @@ export async function getAvailableTasks() {
  */
 export async function getTimeEntries(filters?: {
     clientId?: string;
+    /** Varios clientes (Mis Horas). Vacío o ausente = sin filtro de cliente. */
+    clientIds?: string[];
     projectId?: string;
     startDate?: Date;
     endDate?: Date;
@@ -566,7 +568,11 @@ export async function getTimeEntries(filters?: {
         // (AND) sobre el scope de ownerId, nunca lo reemplazan.
         const ctx = await getOwnerContext();
         const projectScope: any = { clients: { user_id: ctx.ownerId } };
-        if (filters?.clientId) projectScope.client_id = filters.clientId;
+        if (filters?.clientIds && filters.clientIds.length > 0) {
+            projectScope.client_id = { in: filters.clientIds };
+        } else if (filters?.clientId) {
+            projectScope.client_id = filters.clientId;
+        }
         where.tasks = { projects: projectScope };
         if (filters?.projectId) where.tasks.project_id = filters.projectId;
     }
