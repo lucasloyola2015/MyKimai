@@ -1,7 +1,9 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { ChevronLeft, ChevronRight, Pencil } from "lucide-react";
+import { CalendarDays, ChevronLeft, ChevronRight, Pencil } from "lucide-react";
+import { Calendar } from "@/components/ui/calendar";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { formatInTimeZone } from "date-fns-tz";
 import { es } from "date-fns/locale";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -29,6 +31,14 @@ import {
 } from "@/lib/utils/day-view";
 
 const hm = (t: Date | string | number) => arFormat(t, "HH:mm");
+
+// El calendario trabaja con fechas locales del navegador: solo se usa el año/mes/día.
+const keyToLocalDate = (key: string) => {
+  const [y, m, d] = key.split("-").map(Number);
+  return new Date(y, m - 1, d);
+};
+const localDateToKey = (d: Date) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 /** Distancia mínima (en % del eje) entre dos etiquetas de hora para que no se pisen. */
 const MIN_LABEL_GAP = 4;
 
@@ -66,6 +76,7 @@ export function DayView({
   onEdit: (entry: any) => void;
 }) {
   const [hover, setHover] = useState<{ entry: DayEntry; x: number; y: number } | null>(null);
+  const [calendarOpen, setCalendarOpen] = useState(false);
   const bounds = useMemo(() => arDayBounds(dayKey), [dayKey]);
   const today = arDayKey(now);
 
@@ -185,9 +196,34 @@ export function DayView({
                 <ChevronRight className="h-4 w-4" />
               </Button>
             </div>
-            <h2 className="text-lg font-semibold capitalize">
-              {formatInTimeZone(bounds.start, AR_TZ, "EEEE dd/MM/yyyy", { locale: es })}
-            </h2>
+            {/* La fecha abre un calendario para saltar a cualquier día. */}
+            <Popover open={calendarOpen} onOpenChange={setCalendarOpen}>
+              <PopoverTrigger asChild>
+                <button
+                  type="button"
+                  className="flex items-center gap-2 rounded-md px-2 py-1 text-lg font-semibold capitalize hover:bg-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  title="Elegir fecha"
+                >
+                  <CalendarDays className="h-4 w-4 text-muted-foreground" />
+                  <h2 className="text-lg font-semibold">{formatInTimeZone(bounds.start, AR_TZ, "EEEE dd/MM/yyyy", { locale: es })}</h2>
+                </button>
+              </PopoverTrigger>
+              <PopoverContent className="w-auto p-0" align="start">
+                <Calendar
+                  mode="single"
+                  locale={es}
+                  weekStartsOn={1}
+                  selected={keyToLocalDate(dayKey)}
+                  defaultMonth={keyToLocalDate(dayKey)}
+                  onSelect={(d) => {
+                    if (!d) return;
+                    onDayChange(localDateToKey(d));
+                    setCalendarOpen(false);
+                  }}
+                  initialFocus
+                />
+              </PopoverContent>
+            </Popover>
           </div>
 
           {/* Contador global de la jornada (clientes seleccionados). */}
