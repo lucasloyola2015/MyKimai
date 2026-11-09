@@ -71,32 +71,38 @@ export function workedSegments(entry: EntryLike, now: number, window?: Interval)
     return out;
 }
 
-export const DAY_AXIS_DEFAULT_FROM = 7;
-export const DAY_AXIS_MIN_SPAN = 4;
-
 /**
- * Rango de horas del eje (relativas al inicio del día): arranca a las 07:00
- * salvo que algo empiece antes, y termina en la hora en punto siguiente al
- * último fin (mínimo 4 h de ancho, nunca después de las 24).
+ * Rango del eje: exactamente del primer inicio al último fin trabajado del día,
+ * sin las horas vacías de antes y de después. Sin trabajo, 07:00–19:00.
  */
-export function dayAxis(segments: Interval[], dayStart: number): { fromHour: number; toHour: number } {
+export function dayAxis(segments: Interval[], dayStart: number): Interval {
     if (segments.length === 0) {
-        return { fromHour: DAY_AXIS_DEFAULT_FROM, toHour: DAY_AXIS_DEFAULT_FROM + DAY_AXIS_MIN_SPAN * 3 };
+        return { start: dayStart + 7 * HOUR_MS, end: dayStart + 19 * HOUR_MS };
     }
-    const first = Math.min(...segments.map((s) => s.start));
-    const last = Math.max(...segments.map((s) => s.end));
-    const fromHour = Math.max(0, Math.min(DAY_AXIS_DEFAULT_FROM, Math.floor((first - dayStart) / HOUR_MS)));
-    const lastHour = Math.ceil((last - dayStart) / HOUR_MS);
-    const toHour = Math.min(24, Math.max(lastHour, fromHour + DAY_AXIS_MIN_SPAN));
-    return { fromHour, toHour };
+    const start = Math.min(...segments.map((s) => s.start));
+    const end = Math.max(...segments.map((s) => s.end));
+    // Un rango de largo cero no se puede dibujar.
+    return { start, end: end > start ? end : start + 60_000 };
 }
 
 /** Posición (0–100 %) de un instante en el eje. */
-export function axisPercent(t: number, dayStart: number, fromHour: number, toHour: number): number {
-    const from = dayStart + fromHour * HOUR_MS;
-    const span = (toHour - fromHour) * HOUR_MS;
+export function axisPercent(t: number, axis: Interval): number {
+    const span = axis.end - axis.start;
     if (span <= 0) return 0;
-    return Math.max(0, Math.min(100, ((t - from) / span) * 100));
+    return Math.max(0, Math.min(100, ((t - axis.start) / span) * 100));
+}
+
+/**
+ * Horas en punto que caen dentro del eje (para las marcas de fondo y sus
+ * etiquetas). Con más de 12 h de rango, una cada dos horas (las pares).
+ */
+export function hourTicks(axis: Interval, dayStart: number): { t: number; hour: number }[] {
+    const step = axis.end - axis.start > 12 * HOUR_MS ? 2 : 1;
+    const out: { t: number; hour: number }[] = [];
+    for (let h = Math.ceil((axis.start - dayStart) / HOUR_MS); dayStart + h * HOUR_MS <= axis.end; h++) {
+        if (h % step === 0) out.push({ t: dayStart + h * HOUR_MS, hour: h });
+    }
+    return out;
 }
 
 /** Instantes (sin repetir, ordenados) donde empieza o termina cada tarea: las líneas de puntos. */

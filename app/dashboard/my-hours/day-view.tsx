@@ -25,6 +25,7 @@ import {
   dayAxis,
   dayTotals,
   groupRowsByProject,
+  hourTicks,
   shiftDayKey,
   workedSegments,
   type Interval,
@@ -39,6 +40,8 @@ const keyToLocalDate = (key: string) => {
 };
 const localDateToKey = (d: Date) =>
   `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+/** Pista de la línea de tiempo: un margen a los lados para que la primera y la última barra no toquen el borde. */
+const TRACK = "absolute inset-y-0 left-3 right-3";
 /** Distancia mínima (en % del eje) entre dos etiquetas de hora para que no se pisen. */
 const MIN_LABEL_GAP = 4;
 
@@ -122,11 +125,10 @@ export function DayView({
     [dayEntries]
   );
 
-  const pct = (t: number) => axisPercent(t, bounds.start, axis.fromHour, axis.toHour);
-  const span = axis.toHour - axis.fromHour;
-  const hourStep = span > 12 ? 2 : 1;
-  const hourTicks: number[] = [];
-  for (let h = axis.fromHour; h <= axis.toHour; h += hourStep) hourTicks.push(h);
+  const pct = (t: number) => axisPercent(t, axis);
+  const ticks = hourTicks(axis, bounds.start);
+  /** Ancla de una etiqueta según dónde cae, para que no se salga del eje. */
+  const anchor = (p: number) => (p < 4 ? "none" : p > 96 ? "translateX(-100%)" : "translateX(-50%)");
 
   // Etiquetas HH:mm de las líneas de puntos, salteando las que se pisarían.
   const markLabels: { t: number; p: number }[] = [];
@@ -142,11 +144,11 @@ export function DayView({
   /** Fondo compartido por todas las filas: horas en punto y líneas de puntos. */
   const guides = (
     <>
-      {hourTicks.map((h) => (
+      {ticks.map(({ t }) => (
         <div
-          key={`h${h}`}
+          key={`h${t}`}
           className="absolute inset-y-0 border-l border-slate-100 dark:border-slate-800/70"
-          style={{ left: `${((h - axis.fromHour) / span) * 100}%` }}
+          style={{ left: `${pct(t)}%` }}
         />
       ))}
       {marks.map((t) => (
@@ -264,28 +266,27 @@ export function DayView({
             <div className={cn(gridCols, "border-b dark:border-slate-800")}>
               <div />
               <div className="relative h-10">
-                {guides}
-                {hourTicks.map((h, i) => (
-                  <span
-                    key={h}
-                    className="absolute top-0.5 bg-card px-0.5 text-[10px] font-medium text-muted-foreground"
-                    style={{
-                      left: `${((h - axis.fromHour) / span) * 100}%`,
-                      transform: i === 0 ? "none" : i === hourTicks.length - 1 ? "translateX(-100%)" : "translateX(-50%)",
-                    }}
-                  >
-                    {String(h).padStart(2, "0")}h
-                  </span>
-                ))}
-                {markLabels.map(({ t, p }) => (
-                  <span
-                    key={t}
-                    className="absolute bottom-0.5 bg-card px-0.5 font-mono text-[9px] text-slate-500"
-                    style={{ left: `${p}%`, transform: p > 92 ? "translateX(-100%)" : p < 4 ? "none" : "translateX(-50%)" }}
-                  >
-                    {hm(t)}
-                  </span>
-                ))}
+                <div className={TRACK}>
+                  {guides}
+                  {ticks.map(({ t, hour }) => (
+                    <span
+                      key={t}
+                      className="absolute top-0.5 bg-card px-0.5 text-[10px] font-medium text-muted-foreground"
+                      style={{ left: `${pct(t)}%`, transform: anchor(pct(t)) }}
+                    >
+                      {String(hour).padStart(2, "0")}h
+                    </span>
+                  ))}
+                  {markLabels.map(({ t, p }) => (
+                    <span
+                      key={t}
+                      className="absolute bottom-0.5 bg-card px-0.5 font-mono text-[9px] text-slate-500"
+                      style={{ left: `${p}%`, transform: anchor(p) }}
+                    >
+                      {hm(t)}
+                    </span>
+                  ))}
+                </div>
               </div>
               <div />
             </div>
@@ -305,6 +306,7 @@ export function DayView({
                   </div>
 
                   <div className="relative min-h-[3.5rem]">
+                    <div className={TRACK}>
                     {guides}
                     {row.entries.flatMap((e) =>
                       e.segments.map((s, i) => (
@@ -325,6 +327,7 @@ export function DayView({
                         />
                       ))
                     )}
+                    </div>
                   </div>
 
                   <div className="flex items-center justify-center px-1">

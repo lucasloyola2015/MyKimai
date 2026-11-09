@@ -6,6 +6,7 @@ import {
   dayAxis,
   dayTotals,
   groupRowsByProject,
+  hourTicks,
   shiftDayKey,
   workedSegments,
 } from "@/lib/utils/day-view";
@@ -81,24 +82,38 @@ describe("workedSegments", () => {
   });
 });
 
-describe("dayAxis / axisPercent", () => {
+describe("dayAxis / axisPercent / hourTicks", () => {
   const { start } = arDayBounds(DAY);
-  it("arranca 07:00 y termina en la hora siguiente al último fin", () => {
-    expect(dayAxis([{ start: at("09:15"), end: at("17:20") }], start)).toEqual({ fromHour: 7, toHour: 18 });
+  it("va exactamente del primer inicio al último fin, sin horas vacías", () => {
+    expect(
+      dayAxis(
+        [
+          { start: at("09:00"), end: at("12:00") },
+          { start: at("07:35"), end: at("08:10") },
+          { start: at("14:00"), end: at("20:55") },
+        ],
+        start
+      )
+    ).toEqual({ start: at("07:35"), end: at("20:55") });
   });
-  it("arranca antes si hay trabajo de madrugada", () => {
-    expect(dayAxis([{ start: at("02:40"), end: at("05:00") }], start)).toEqual({ fromHour: 2, toHour: 6 });
+  it("trabajo de madrugada también recorta", () => {
+    expect(dayAxis([{ start: at("02:40"), end: at("05:00") }], start)).toEqual({ start: at("02:40"), end: at("05:00") });
   });
-  it("al menos 4 h de ancho y nunca pasa de 24", () => {
-    expect(dayAxis([{ start: at("08:00"), end: at("08:30") }], start)).toEqual({ fromHour: 7, toHour: 11 });
-    expect(dayAxis([{ start: at("20:00"), end: at("23:59") }], start).toHour).toBe(24);
+  it("sin trabajo, 07:00–19:00", () => {
+    expect(dayAxis([], start)).toEqual({ start: at("07:00"), end: at("19:00") });
   });
   it("posiciones en el eje", () => {
-    expect(axisPercent(at("07:00"), start, 7, 17)).toBe(0);
-    expect(axisPercent(at("12:00"), start, 7, 17)).toBe(50);
-    expect(axisPercent(at("17:00"), start, 7, 17)).toBe(100);
-    expect(axisPercent(at("05:00"), start, 7, 17)).toBe(0);
-    expect(axisPercent(at("20:00"), start, 7, 17)).toBe(100);
+    const axis = { start: at("07:00"), end: at("17:00") };
+    expect(axisPercent(at("07:00"), axis)).toBe(0);
+    expect(axisPercent(at("12:00"), axis)).toBe(50);
+    expect(axisPercent(at("17:00"), axis)).toBe(100);
+    expect(axisPercent(at("05:00"), axis)).toBe(0);
+    expect(axisPercent(at("20:00"), axis)).toBe(100);
+  });
+  it("horas en punto dentro del rango; de a dos si pasa de 12 h", () => {
+    expect(hourTicks({ start: at("07:35"), end: at("10:00") }, start).map((x) => x.hour)).toEqual([8, 9, 10]);
+    expect(hourTicks({ start: at("07:35"), end: at("20:55") }, start).map((x) => x.hour)).toEqual([8, 10, 12, 14, 16, 18, 20]);
+    expect(hourTicks({ start: at("09:10"), end: at("09:50") }, start)).toEqual([]);
   });
 });
 
