@@ -1,7 +1,7 @@
 "use client";
 
-import { useMemo, type ReactNode } from "react";
-import { ChevronLeft, ChevronRight, Eye, Pencil } from "lucide-react";
+import { useMemo, useState } from "react";
+import { ChevronLeft, ChevronRight, Pencil } from "lucide-react";
 import { formatInTimeZone } from "date-fns-tz";
 import { es } from "date-fns/locale";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -57,7 +57,6 @@ export function DayView({
   loading,
   now,
   onEdit,
-  onDetail,
 }: {
   dayKey: string;
   onDayChange: (dayKey: string) => void;
@@ -65,8 +64,8 @@ export function DayView({
   loading: boolean;
   now: number;
   onEdit: (entry: any) => void;
-  onDetail: (entry: any) => void;
 }) {
+  const [hover, setHover] = useState<{ entry: DayEntry; x: number; y: number } | null>(null);
   const bounds = useMemo(() => arDayBounds(dayKey), [dayKey]);
   const today = arDayKey(now);
 
@@ -127,7 +126,7 @@ export function DayView({
     }
   }
 
-  const gridCols = "grid grid-cols-[6rem_minmax(0,1fr)_6.25rem] sm:grid-cols-[13rem_minmax(0,1fr)_6.5rem]";
+  const gridCols = "grid grid-cols-[6rem_minmax(0,1fr)_3.5rem] sm:grid-cols-[13rem_minmax(0,1fr)_3.75rem]";
 
   /** Fondo compartido por todas las filas: horas en punto y líneas de puntos. */
   const guides = (
@@ -273,11 +272,12 @@ export function DayView({
                     {guides}
                     {row.entries.flatMap((e) =>
                       e.segments.map((s, i) => (
-                        <button
+                        <div
                           key={`${e.id}-${i}`}
-                          type="button"
-                          onClick={() => onDetail(e.raw)}
-                          title={label(e)}
+                          aria-label={label(e)}
+                          onMouseEnter={(ev) => setHover({ entry: e, x: ev.clientX, y: ev.clientY })}
+                          onMouseMove={(ev) => setHover({ entry: e, x: ev.clientX, y: ev.clientY })}
+                          onMouseLeave={() => setHover(null)}
                           className={cn(
                             "absolute top-1/2 h-5 -translate-y-1/2 rounded-sm transition-opacity hover:opacity-80",
                             e.raw.end_time
@@ -292,84 +292,133 @@ export function DayView({
                   </div>
 
                   <div className="flex items-center justify-center px-1">
-                    <RowActions entries={row.entries} label={label} onEdit={onEdit} onDetail={onDetail} />
+                    <RowActions entries={row.entries} label={label} onEdit={onEdit} />
                   </div>
                 </div>
               );
             })}
           </div>
         )}
+        {hover && <EntryTooltip entry={hover.entry} x={hover.x} y={hover.y} now={now} />}
       </CardContent>
     </Card>
   );
 }
 
-/** Editar / Ver detalle. Si el proyecto tiene varias tareas ese día, se elige cuál. */
+/** Editar. Si el proyecto tiene varias tareas ese día, se elige cuál. */
 function RowActions({
   entries,
   label,
   onEdit,
-  onDetail,
 }: {
   entries: DayEntry[];
   label: (e: DayEntry) => string;
   onEdit: (entry: any) => void;
-  onDetail: (entry: any) => void;
 }) {
-  const boxClass =
-    "flex items-center overflow-hidden rounded-md border border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-950";
-  const btnClass = "h-8 w-8 rounded-none text-slate-400 transition-colors hover:bg-white dark:hover:bg-slate-900";
+  const btnClass =
+    "h-8 w-8 rounded-md border border-slate-200 bg-slate-50 text-slate-400 transition-colors hover:bg-white hover:text-primary dark:border-slate-800 dark:bg-slate-950 dark:hover:bg-slate-900";
 
   if (entries.length === 1) {
-    const e = entries[0];
     return (
-      <div className={boxClass}>
-        <Button
-          variant="ghost"
-          size="icon"
-          className={cn(btnClass, "border-r hover:text-primary dark:border-slate-800")}
-          onClick={() => onEdit(e.raw)}
-          aria-label="Editar"
-          title="Editar"
-        >
-          <Pencil className="h-3.5 w-3.5" />
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon"
-          className={cn(btnClass, "hover:text-blue-600")}
-          onClick={() => onDetail(e.raw)}
-          aria-label="Ver detalle"
-          title="Ver detalle"
-        >
-          <Eye className="h-3.5 w-3.5" />
-        </Button>
-      </div>
+      <Button
+        variant="ghost"
+        size="icon"
+        className={btnClass}
+        onClick={() => onEdit(entries[0].raw)}
+        aria-label="Editar"
+        title="Editar"
+      >
+        <Pencil className="h-3.5 w-3.5" />
+      </Button>
     );
   }
 
-  const menu = (icon: ReactNode, title: string, action: (entry: any) => void, extra: string) => (
+  return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="icon" className={cn(btnClass, extra)} aria-label={title} title={title}>
-          {icon}
+        <Button variant="ghost" size="icon" className={btnClass} aria-label="Editar" title="Editar">
+          <Pencil className="h-3.5 w-3.5" />
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
-        <DropdownMenuLabel>{title}</DropdownMenuLabel>
+        <DropdownMenuLabel>Editar</DropdownMenuLabel>
         {entries.map((e) => (
-          <DropdownMenuItem key={e.id} onSelect={() => action(e.raw)}>
+          <DropdownMenuItem key={e.id} onSelect={() => onEdit(e.raw)}>
             {label(e)}
           </DropdownMenuItem>
         ))}
       </DropdownMenuContent>
     </DropdownMenu>
   );
+}
+
+const TOOLTIP_W = 288; // w-72
+const hours = (min: number) => `${(min / 60).toFixed(2)}h`;
+
+/** Detalle de la tarea al pasar el mouse por su barra. Sigue al cursor y no se sale de la pantalla. */
+function EntryTooltip({ entry, x, y, now }: { entry: DayEntry; x: number; y: number; now: number }) {
+  const raw = entry.raw;
+  const project = raw.tasks?.projects;
+  const totals = liveTotals(raw, now);
+  const amount = liveAmount(raw, totals.neto);
+  const breaks: any[] = [...(raw.time_entry_breaks ?? [])].sort(
+    (a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime()
+  );
+  const vw = typeof window !== "undefined" ? window.innerWidth : 1024;
+  const vh = typeof window !== "undefined" ? window.innerHeight : 768;
+  const left = x + 14 + TOOLTIP_W > vw ? Math.max(8, x - 14 - TOOLTIP_W) : x + 14;
+  const placeAbove = y > vh * 0.6;
 
   return (
-    <div className={boxClass}>
-      {menu(<Pencil className="h-3.5 w-3.5" />, "Editar", onEdit, "border-r hover:text-primary dark:border-slate-800")}
-      {menu(<Eye className="h-3.5 w-3.5" />, "Ver detalle", onDetail, "hover:text-blue-600")}
+    <div
+      role="tooltip"
+      className="pointer-events-none fixed z-50 w-72 rounded-lg border bg-popover p-3 text-xs text-popover-foreground shadow-lg"
+      style={placeAbove ? { left, bottom: vh - y + 14 } : { left, top: y + 14 }}
+    >
+      <p className="flex items-center gap-1.5 text-sm font-bold leading-tight">
+        <span className="line-clamp-2">{raw.title || raw.tasks?.name || "—"}</span>
+        {raw.source === "api" && <span title="Cargada por un agente de IA">🤖</span>}
+      </p>
+      <p className="mt-0.5 text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+        {entry.clientName} · {entry.projectName}
+      </p>
+
+      <p className="mt-2 font-mono">
+        {hm(raw.start_time)} – {raw.end_time ? hm(raw.end_time) : "en curso"}
+      </p>
+      {breaks.length > 0 && (
+        <p className="font-mono text-orange-600 dark:text-orange-400">
+          Pausas: {breaks.map((b) => `${hm(b.start_time)}–${b.end_time ? hm(b.end_time) : "…"}`).join(", ")}
+        </p>
+      )}
+
+      <div className="mt-2 flex items-center justify-between gap-2 rounded-md bg-muted/60 px-2 py-1 font-mono">
+        <span className="text-muted-foreground">{hours(totals.bruto)}</span>
+        <span className="text-orange-600 dark:text-orange-400">− {hours(totals.pausas)}</span>
+        <span className="font-bold text-blue-700 dark:text-blue-400">= {hours(totals.neto)}</span>
+        <span className="font-bold">
+          {amount.toFixed(2)} <span className="text-[9px] font-normal opacity-60">{project?.currency}</span>
+        </span>
+      </div>
+
+      {(!raw.billable || raw.is_billed) && (
+        <div className="mt-2 flex gap-1.5">
+          {!raw.billable && (
+            <span className="rounded bg-orange-100 px-1.5 py-0.5 text-[9px] font-bold uppercase text-orange-700 dark:bg-orange-500/10 dark:text-orange-400">
+              No facturable
+            </span>
+          )}
+          {raw.is_billed && (
+            <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-[9px] font-bold uppercase text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400">
+              Facturada
+            </span>
+          )}
+        </div>
+      )}
+
+      {raw.description && (
+        <p className="mt-2 line-clamp-4 whitespace-pre-wrap border-t pt-2 text-muted-foreground">{raw.description}</p>
+      )}
     </div>
   );
 }

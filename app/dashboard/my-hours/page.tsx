@@ -46,10 +46,10 @@ import { DayTimeline } from "@/components/dashboard/DayTimeline";
 import { ClientMultiSelect } from "@/components/dashboard/ClientMultiSelect";
 import { projectsOfClients } from "@/lib/utils/client-selection";
 import { liveAmount, liveTotals } from "@/lib/utils/entry-live";
-import { arDayBounds } from "@/lib/utils/day-view";
+import { arDayBounds, dayTotals } from "@/lib/utils/day-view";
+import { listDateBounds, quickRanges, rangeError, type DayRange } from "@/lib/utils/date-range";
 import { arDayKey, startOfDayAr, endOfDayAr } from "@/lib/timezone";
 import { DayView } from "./day-view";
-import { EntryDetailDialog } from "./entry-detail-dialog";
 import { EntryDescription } from "@/components/dashboard/EntryDescription";
 import { dayKey, timelineStartHourByDay, DEFAULT_TIMELINE_START_HOUR } from "@/lib/utils/timeline";
 
@@ -71,9 +71,12 @@ export default function Page() {
   const [dayKeyAr, setDayKeyAr] = useState<string>(() => arDayKey(new Date()));
   const [dayEntries, setDayEntries] = useState<any[]>([]);
   const [dayLoading, setDayLoading] = useState(false);
-  const [detailEntry, setDetailEntry] = useState<any | null>(null);
   // §paginación — por defecto mostrar últimos 90 días (no traer años de historial).
   const [showAll, setShowAll] = useState(false);
+  // Rango Desde/Hasta del listado (días AR, "hasta" incluido). Vacío = ventana de 90 días.
+  const [range, setRange] = useState<DayRange>({ from: "", to: "" });
+  const rangeProblem = rangeError(range);
+  const hasRange = Boolean(range.from || range.to);
   // Deep-link de edición: /dashboard/my-hours?edit=<id> abre el modal de esa
   // entrada (lo usa el lápiz del panel "Tareas activas" del dashboard).
   const searchParams = useSearchParams();
@@ -123,7 +126,7 @@ export default function Page() {
 
   useEffect(() => {
     loadEntries();
-  }, [selectedClients, selectedProject, showAll]);
+  }, [selectedClients, selectedProject, showAll, range.from, range.to]);
 
   useEffect(() => {
     if (view === "day") loadDayEntries();
@@ -136,12 +139,28 @@ export default function Page() {
   }, [formData.client_id, isDialogOpen]);
 
 
-  // Filtro de entradas con ventana temporal (90 días por defecto).
+  // Filtro del listado: rango Desde/Hasta si hay; si no, ventana de 90 días (o todo).
   const buildEntriesFilter = () => ({
     clientIds: selectedClients.length > 0 ? selectedClients : undefined,
     projectId: selectedProject || undefined,
-    startDate: showAll ? undefined : new Date(Date.now() - 90 * 86400000),
+    ...listDateBounds(range, showAll, Date.now()),
   });
+
+  // Totales del listado (respetan clientes, proyecto y rango).
+  const listTotals = useMemo(
+    () =>
+      dayTotals(
+        (entries as any[]).map((e) => {
+          const netoMin = liveTotals(e, nowTick).neto;
+          return {
+            netoMin,
+            amount: liveAmount(e, netoMin),
+            currency: e.tasks?.projects?.currency ?? "USD",
+          };
+        })
+      ),
+    [entries, nowTick]
+  );
 
   const loadData = async () => {
     try {
@@ -518,16 +537,66 @@ export default function Page() {
               </Select>
             </div>
           </div>
-          {/* §paginación — ventana temporal por defecto (90 días) con toggle (solo LIST). */}
+          {/* Rango de fechas (solo LIST). Sin rango: ventana de 90 días con toggle. */}
           {view === "list" && (
-          <div className="mt-4 flex items-center justify-between gap-2 text-sm">
-            <span className="text-muted-foreground">
-              {showAll ? "Mostrando todo el historial" : "Mostrando los últimos 90 días"}
-            </span>
-            <Button variant="outline" size="sm" onClick={() => setShowAll((v) => !v)}>
-              {showAll ? "Ver últimos 90 días" : "Ver todo el historial"}
-            </Button>
-          </div>
+            <div className="mt-4 space-y-3">
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="grid gap-2">
+                  <Label htmlFor="range_from">Desde</Label>
+                  <Input
+                    id="range_from"
+                    type="date"
+                    value={range.from}
+                    max={range.to || undefined}
+                    onChange={(e) => setRange((r) => ({ ...r, from: e.target.value }))}
+                  />
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="range_to">Hasta</Label>
+                  <Input
+                    id="range_to"
+                    type="date"
+                    value={range.to}
+                    min={range.from || undefined}
+                    onChange={(e) => setRange((r) => ({ ...r, to: e.target.value }))}
+                  />
+                </div>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                {quickRanges(arDayKey(nowTick)).map((q) => (
+                  <Button
+                    key={q.key}
+                    variant={range.from === q.from && range.to === q.to ? "secondary" : "outline"}
+                    size="sm"
+                    onClick={() => setRange({ from: q.from, to: q.to })}
+                  >
+                    {q.label}
+                  </Button>
+                ))}
+                {hasRange && (
+                  <Button variant="ghost" size="sm" onClick={() => setRange({ from: "", to: "" })}>
+                    <X className="mr-1 h-4 w-4" />
+                    Quitar rango
+                  </Button>
+                )}
+              </div>
+              <div className="flex items-center justify-between gap-2 text-sm">
+                <span className={rangeProblem ? "text-destructive" : "text-muted-foreground"}>
+                  {rangeProblem
+                    ? `${rangeProblem}: se muestran los últimos 90 días`
+                    : hasRange
+                      ? `Mostrando ${range.from ? `desde el ${range.from.split("-").reverse().join("/")}` : "todo"}${range.to ? ` hasta el ${range.to.split("-").reverse().join("/")}` : " hasta hoy"}`
+                      : showAll
+                        ? "Mostrando todo el historial"
+                        : "Mostrando los últimos 90 días"}
+                </span>
+                {!hasRange && (
+                  <Button variant="outline" size="sm" onClick={() => setShowAll((v) => !v)}>
+                    {showAll ? "Ver últimos 90 días" : "Ver todo el historial"}
+                  </Button>
+                )}
+              </div>
+            </div>
           )}
         </CardContent>
       </Card>
@@ -540,16 +609,38 @@ export default function Page() {
           loading={dayLoading}
           now={nowTick}
           onEdit={handleEdit}
-          onDetail={setDetailEntry}
         />
       )}
 
       {view === "list" && (
       <Card>
         <CardHeader>
-          <CardTitle>
-            Entradas de Tiempo ({entries.length} resultados)
-          </CardTitle>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <CardTitle>
+              Entradas de Tiempo ({entries.length} resultados)
+            </CardTitle>
+            {entries.length > 0 && (
+              <div className="flex items-center gap-4 rounded-lg border bg-slate-50 px-3 py-1.5 dark:border-slate-800 dark:bg-slate-950">
+                <div className="text-right">
+                  <p className="text-[9px] font-black uppercase tracking-widest text-blue-400 leading-none mb-0.5">Neto</p>
+                  <p className="font-mono text-sm font-black text-blue-700 dark:text-blue-400 leading-none">
+                    {(listTotals.netoMin / 60).toFixed(2)}h
+                  </p>
+                </div>
+                <div className="text-right">
+                  <p className="text-[9px] font-black uppercase tracking-widest text-slate-400 leading-none mb-0.5">Inversión</p>
+                  <p className="text-sm font-black text-slate-800 dark:text-slate-100 leading-none">
+                    {listTotals.byCurrency.map((c, i) => (
+                      <span key={c.currency}>
+                        {i > 0 && <span className="mx-1 font-normal opacity-40">+</span>}
+                        {c.amount.toFixed(2)} <span className="text-[9px] font-medium opacity-40">{c.currency}</span>
+                      </span>
+                    ))}
+                  </p>
+                </div>
+              </div>
+            )}
+          </div>
         </CardHeader>
         <CardContent>
           {loading ? (
@@ -705,18 +796,6 @@ export default function Page() {
         </CardContent>
       </Card>
       )}
-
-      <EntryDetailDialog
-        entry={detailEntry}
-        now={nowTick}
-        onOpenChange={(open) => {
-          if (!open) setDetailEntry(null);
-        }}
-        onEdit={(entry) => {
-          setDetailEntry(null);
-          handleEdit(entry);
-        }}
-      />
 
       <Dialog open={isDialogOpen} onOpenChange={(open) => {
         setIsDialogOpen(open);

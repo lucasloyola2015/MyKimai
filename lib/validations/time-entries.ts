@@ -62,3 +62,24 @@ export const updateTimeEntrySchema = z
                 message: "Se requiere al menos un campo a actualizar",
             }),
     });
+
+/**
+ * Filtros de `getTimeEntries` (lectura). Siempre se aplican DENTRO del scope del
+ * workspace (ownerId) o del portal; esto solo rechaza payloads malformados,
+ * como un rango de fechas invertido.
+ */
+export const timeEntriesFilterSchema = z
+    .object({
+        clientId: uuid.optional(),
+        clientIds: z.array(uuid).max(500).optional(),
+        projectId: uuid.optional(),
+        startDate: z.coerce.date().optional(),
+        endDate: z.coerce.date().optional(),
+        onlyCompleted: z.boolean().optional(),
+    })
+    .refine((f) => !f.startDate || !f.endDate || f.startDate <= f.endDate, {
+        message: "La fecha de inicio es posterior a la de fin",
+        path: ["startDate"],
+    });
+
+export type TimeEntriesFilter = z.infer<typeof timeEntriesFilterSchema>;

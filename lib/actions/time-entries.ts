@@ -19,6 +19,8 @@ import {
     stopTimeEntrySchema,
     deleteTimeEntrySchema,
     updateTimeEntrySchema,
+    timeEntriesFilterSchema,
+    type TimeEntriesFilter,
 } from "@/lib/validations/time-entries";
 import { ZodError } from "zod";
 
@@ -533,7 +535,7 @@ export async function getAvailableTasks() {
 /**
  * Obtiene time entries con filtros opcionales
  */
-export async function getTimeEntries(filters?: {
+export async function getTimeEntries(rawFilters?: {
     clientId?: string;
     /** Varios clientes (Mis Horas). Vacío o ausente = sin filtro de cliente. */
     clientIds?: string[];
@@ -542,6 +544,14 @@ export async function getTimeEntries(filters?: {
     endDate?: Date;
     onlyCompleted?: boolean; // Solo entradas con end_time
 }) {
+    // Es una Server Action: el filtro llega del cliente y se valida acá.
+    let filters: TimeEntriesFilter | undefined;
+    if (rawFilters) {
+        const parsed = timeEntriesFilterSchema.safeParse(rawFilters);
+        if (!parsed.success) throw new Error(zodErrorMessage(parsed.error));
+        filters = parsed.data;
+    }
+
     const portalFilter = await getPortalProjectFilter();
 
     const where: any = {};
