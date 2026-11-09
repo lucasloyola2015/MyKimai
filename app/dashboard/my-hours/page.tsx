@@ -45,55 +45,13 @@ import type { clients, projects, time_entries } from "@prisma/client";
 import { DayTimeline } from "@/components/dashboard/DayTimeline";
 import { ClientMultiSelect } from "@/components/dashboard/ClientMultiSelect";
 import { projectsOfClients } from "@/lib/utils/client-selection";
+import { liveAmount, liveTotals } from "@/lib/utils/entry-live";
+import { arDayBounds } from "@/lib/utils/day-view";
+import { arDayKey, startOfDayAr, endOfDayAr } from "@/lib/timezone";
+import { DayView } from "./day-view";
+import { EntryDetailDialog } from "./entry-detail-dialog";
 import { EntryDescription } from "@/components/dashboard/EntryDescription";
 import { dayKey, timelineStartHourByDay, DEFAULT_TIMELINE_START_HOUR } from "@/lib/utils/timeline";
-
-/**
- * Bruto/Pausas/Neto en MINUTOS. Para entradas completadas usa lo persistido
- * (lo calcula el trigger de DB). Para entradas ACTIVAS (sin end_time) lo calcula
- * en vivo: bruto = ahora − inicio; pausas = suma de pausas (la abierta corre
- * hasta ahora); neto = bruto − pausas.
- */
-function liveTotals(entry: any, now: number): { bruto: number; pausas: number; neto: number } {
-  if (entry.end_time) {
-    const bruto = entry.duration_total || 0;
-    const neto = entry.duration_neto || 0;
-    return { bruto, pausas: Math.max(0, bruto - neto), neto };
-  }
-  const start = new Date(entry.start_time).getTime();
-  const brutoMs = Math.max(0, now - start);
-  let pausasMs = 0;
-  for (const b of entry.time_entry_breaks ?? []) {
-    const bs = new Date(b.start_time).getTime();
-    const be = b.end_time ? new Date(b.end_time).getTime() : now;
-    pausasMs += Math.max(0, be - bs);
-  }
-  pausasMs = Math.min(pausasMs, brutoMs);
-  return {
-    bruto: Math.floor(brutoMs / 60000),
-    pausas: Math.floor(pausasMs / 60000),
-    neto: Math.max(0, Math.floor((brutoMs - pausasMs) / 60000)),
-  };
-}
-
-/** Tarifa efectiva por hora de una entrada: cascada Tarea > Proyecto > Cliente
- * (mismos `!= null` que resolveRate; un 0 explícito es una tarifa válida). */
-function resolveEntryRate(entry: any): number {
-  const task = entry.tasks;
-  const project = task?.projects;
-  const client = project?.clients;
-  const r = task?.rate ?? project?.rate ?? client?.default_rate ?? 0;
-  return Number(r) || 0;
-}
-
-/** Inversión (monto) de la entrada. Completada: usa el `amount` persistido (lo
- * calcula el trigger). Activa: lo calcula en vivo = (neto/60) * tarifa, salvo que
- * no sea facturable. */
-function liveAmount(entry: any, netoMin: number): number {
-  if (entry.end_time) return Number(entry.amount || 0);
-  if (!entry.billable) return 0;
-  return (netoMin / 60) * resolveEntryRate(entry);
-}
 
 export default function Page() {
   const [loading, setLoading] = useState(true);
@@ -108,6 +66,12 @@ export default function Page() {
   // Clientes elegidos en el filtro: vacío = todos.
   const [selectedClients, setSelectedClients] = useState<string[]>([]);
   const [selectedProject, setSelectedProject] = useState<string>("");
+  // Vista: LIST (listado) o Day (un día, líneas de tiempo sincronizadas).
+  const [view, setView] = useState<"list" | "day">("list");
+  const [dayKeyAr, setDayKeyAr] = useState<string>(() => arDayKey(new Date()));
+  const [dayEntries, setDayEntries] = useState<any[]>([]);
+  const [dayLoading, setDayLoading] = useState(false);
+  const [detailEntry, setDetailEntry] = useState<any | null>(null);
   // §paginación — por defecto mostrar últimos 90 días (no traer años de historial).
   const [showAll, setShowAll] = useState(false);
   // Deep-link de edición: /dashboard/my-hours?edit=<id> abre el modal de esa
@@ -162,6 +126,10 @@ export default function Page() {
   }, [selectedClients, selectedProject, showAll]);
 
   useEffect(() => {
+    if (view === "day") loadDayEntries();
+  }, [view, dayKeyAr, selectedClients, selectedProject]);
+
+  useEffect(() => {
     if (isDialogOpen && formData.client_id) {
       loadModalProjects(formData.client_id);
     }
@@ -199,6 +167,37 @@ export default function Page() {
     } catch (error) {
       console.error("Error loading entries:", error);
     }
+  };
+
+  // Vista Day: las entradas que arrancan en el día elegido (hora AR), con el mismo filtro.
+  const loadDayEntries = async () => {
+    setDayLoading(true);
+    try {
+      const { start, end } = arDayBounds(dayKeyAr);
+      const data = await getTimeEntries({
+        clientIds: selectedClients.length > 0 ? selectedClients : undefined,
+        projectId: selectedProject || undefined,
+        startDate: new Date(start),
+        endDate: new Date(end - 1),
+      });
+      setDayEntries(data);
+    } catch (error) {
+      console.error("Error loading day entries:", error);
+    } finally {
+      setDayLoading(false);
+    }
+  };
+
+  /** Recarga lo que se ve tras editar/borrar (el listado y, si está abierta, la vista Day). */
+  const reloadEntries = async () => {
+    await Promise.all([loadEntries(), view === "day" ? loadDayEntries() : Promise.resolve()]);
+  };
+
+  /** Versión actualizada de una entrada (la busca en su día, esté o no en la ventana del listado). */
+  const fetchFreshEntry = async (entry: any) => {
+    const start = new Date(entry.start_time);
+    const data = await getTimeEntries({ startDate: startOfDayAr(start), endDate: endOfDayAr(start) });
+    return data.find((e: any) => e.id === entry.id);
   };
 
   const loadModalProjects = async (clientId: string) => {
@@ -282,7 +281,7 @@ export default function Page() {
       setEditingEntry((prev: any) =>
         prev ? { ...prev, consumed_from_package_id: packageId } : prev
       );
-      await loadEntries();
+      await reloadEntries();
     } catch (error) {
       toast({
         title: "Error",
@@ -306,7 +305,7 @@ export default function Page() {
         title: "Éxito",
         description: "Entrada de tiempo eliminada correctamente.",
       });
-      loadEntries();
+      reloadEntries();
     } catch (error) {
       toast({
         title: "Error",
@@ -326,7 +325,7 @@ export default function Page() {
         title: "Tarifa Recalculada",
         description: "El precio de la jornada se ha actualizado con la configuración vigente.",
       });
-      await loadEntries();
+      await reloadEntries();
     } catch (error) {
       toast({
         title: "Error",
@@ -377,7 +376,7 @@ export default function Page() {
 
       setIsDialogOpen(false);
       setEditingEntry(null);
-      loadEntries();
+      reloadEntries();
     } catch (error) {
       toast({
         title: "Error",
@@ -393,9 +392,8 @@ export default function Page() {
     const start = new Date(now.getTime() - 5 * 60000);
     const result = await addTimeEntryBreak(editingEntry.id, start, now);
     if (result.success) {
-      await loadEntries();
-      const updatedEntries = await getTimeEntries(buildEntriesFilter());
-      const updated = updatedEntries.find((e: any) => e.id === editingEntry.id);
+      await reloadEntries();
+      const updated = await fetchFreshEntry(editingEntry);
       if (updated) {
         setEditingEntry(updated);
         setBreakFormValues((prev) => {
@@ -421,9 +419,8 @@ export default function Page() {
 
     const result = await updateTimeEntryBreak(breakId, start, end);
     if (result.success) {
-      await loadEntries();
-      const updatedEntries = await getTimeEntries(buildEntriesFilter());
-      const updated = updatedEntries.find((e: any) => e.id === editingEntry.id);
+      await reloadEntries();
+      const updated = await fetchFreshEntry(editingEntry);
       if (updated) setEditingEntry(updated);
     }
   };
@@ -432,9 +429,8 @@ export default function Page() {
     if (!confirm("¿Eliminar esta pausa?")) return;
     const result = await deleteTimeEntryBreak(breakId);
     if (result.success) {
-      loadEntries();
-      const updatedEntries = await getTimeEntries();
-      const updated = updatedEntries.find((e: any) => e.id === editingEntry.id);
+      reloadEntries();
+      const updated = await fetchFreshEntry(editingEntry);
       if (updated) setEditingEntry(updated);
     }
   };
@@ -457,11 +453,31 @@ export default function Page() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold">Mis Horas</h1>
-        <p className="text-muted-foreground">
-          Gestiona todas tus entradas de tiempo trabajadas
-        </p>
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <h1 className="text-3xl font-bold">Mis Horas</h1>
+          <p className="text-muted-foreground">
+            Gestiona todas tus entradas de tiempo trabajadas
+          </p>
+        </div>
+        <div className="inline-flex rounded-md border p-0.5" role="tablist" aria-label="Vista">
+          {([
+            ["list", "LIST"],
+            ["day", "Day"],
+          ] as const).map(([value, text]) => (
+            <Button
+              key={value}
+              role="tab"
+              aria-selected={view === value}
+              variant={view === value ? "default" : "ghost"}
+              size="sm"
+              className="h-8 px-4"
+              onClick={() => setView(value)}
+            >
+              {text}
+            </Button>
+          ))}
+        </div>
       </div>
 
       <Card>
@@ -502,7 +518,8 @@ export default function Page() {
               </Select>
             </div>
           </div>
-          {/* §paginación — ventana temporal por defecto (90 días) con toggle. */}
+          {/* §paginación — ventana temporal por defecto (90 días) con toggle (solo LIST). */}
+          {view === "list" && (
           <div className="mt-4 flex items-center justify-between gap-2 text-sm">
             <span className="text-muted-foreground">
               {showAll ? "Mostrando todo el historial" : "Mostrando los últimos 90 días"}
@@ -511,9 +528,23 @@ export default function Page() {
               {showAll ? "Ver últimos 90 días" : "Ver todo el historial"}
             </Button>
           </div>
+          )}
         </CardContent>
       </Card>
 
+      {view === "day" && (
+        <DayView
+          dayKey={dayKeyAr}
+          onDayChange={setDayKeyAr}
+          entries={dayEntries}
+          loading={dayLoading}
+          now={nowTick}
+          onEdit={handleEdit}
+          onDetail={setDetailEntry}
+        />
+      )}
+
+      {view === "list" && (
       <Card>
         <CardHeader>
           <CardTitle>
@@ -673,6 +704,19 @@ export default function Page() {
           )}
         </CardContent>
       </Card>
+      )}
+
+      <EntryDetailDialog
+        entry={detailEntry}
+        now={nowTick}
+        onOpenChange={(open) => {
+          if (!open) setDetailEntry(null);
+        }}
+        onEdit={(entry) => {
+          setDetailEntry(null);
+          handleEdit(entry);
+        }}
+      />
 
       <Dialog open={isDialogOpen} onOpenChange={(open) => {
         setIsDialogOpen(open);
