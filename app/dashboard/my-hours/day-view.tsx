@@ -511,15 +511,34 @@ export function DayView({
               >
                 <ChevronLeft className="h-4 w-4" />
               </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-9 rounded-none border-x px-3"
-                onClick={() => onDayChange(today)}
-                disabled={dayKey === today}
-              >
-                Hoy
-              </Button>
+              {/* La fecha va entre las flechas y abre un calendario para saltar a cualquier día. */}
+              <Popover open={calendarOpen} onOpenChange={setCalendarOpen}>
+                <PopoverTrigger asChild>
+                  <button
+                    type="button"
+                    className="flex h-9 items-center gap-2 border-x px-3 capitalize hover:bg-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    title="Elegir fecha"
+                  >
+                    <CalendarDays className="h-4 w-4 text-muted-foreground" />
+                    <h2 className="text-base font-semibold">{formatInTimeZone(bounds.start, AR_TZ, "EEEE dd/MM/yyyy", { locale: es })}</h2>
+                  </button>
+                </PopoverTrigger>
+                <PopoverContent className="w-auto p-0" align="start">
+                  <Calendar
+                    mode="single"
+                    locale={es}
+                    weekStartsOn={1}
+                    selected={keyToLocalDate(dayKey)}
+                    defaultMonth={keyToLocalDate(dayKey)}
+                    onSelect={(d) => {
+                      if (!d) return;
+                      onDayChange(localDateToKey(d));
+                      setCalendarOpen(false);
+                    }}
+                    initialFocus
+                  />
+                </PopoverContent>
+              </Popover>
               <Button
                 variant="ghost"
                 size="icon"
@@ -530,34 +549,16 @@ export function DayView({
                 <ChevronRight className="h-4 w-4" />
               </Button>
             </div>
-            {/* La fecha abre un calendario para saltar a cualquier día. */}
-            <Popover open={calendarOpen} onOpenChange={setCalendarOpen}>
-              <PopoverTrigger asChild>
-                <button
-                  type="button"
-                  className="flex items-center gap-2 rounded-md px-2 py-1 text-lg font-semibold capitalize hover:bg-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                  title="Elegir fecha"
-                >
-                  <CalendarDays className="h-4 w-4 text-muted-foreground" />
-                  <h2 className="text-lg font-semibold">{formatInTimeZone(bounds.start, AR_TZ, "EEEE dd/MM/yyyy", { locale: es })}</h2>
-                </button>
-              </PopoverTrigger>
-              <PopoverContent className="w-auto p-0" align="start">
-                <Calendar
-                  mode="single"
-                  locale={es}
-                  weekStartsOn={1}
-                  selected={keyToLocalDate(dayKey)}
-                  defaultMonth={keyToLocalDate(dayKey)}
-                  onSelect={(d) => {
-                    if (!d) return;
-                    onDayChange(localDateToKey(d));
-                    setCalendarOpen(false);
-                  }}
-                  initialFocus
-                />
-              </PopoverContent>
-            </Popover>
+            {/* Volver a hoy: solo aparece cuando se está viendo otro día. */}
+            {dayKey === today ? (
+              <span className="rounded-md bg-blue-500/10 px-2 py-1 text-xs font-semibold text-blue-700 dark:text-blue-400">
+                Hoy
+              </span>
+            ) : (
+              <Button variant="outline" size="sm" className="h-9" onClick={() => onDayChange(today)}>
+                Ir a hoy
+              </Button>
+            )}
           </div>
 
           {/* Contador global de la jornada (clientes seleccionados). */}
